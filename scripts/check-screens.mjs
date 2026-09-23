@@ -481,7 +481,9 @@ async function reachable(url) {
 
 async function ensureServer() {
   if (await reachable(URL_BASE)) return null;
-  const child = spawn('npx', ['vite', 'preview', '--port', '5181', '--strictPort', '--host', '127.0.0.1'], { cwd: new URL('apps/pos/', ROOT), stdio: 'ignore' });
+  // npx를 거치면 리눅스에서 kill()이 vite를 멈추지 못한다. node로 vite를 바로 띄운다.
+  const viteBin = new URL('node_modules/vite/bin/vite.js', ROOT).pathname;
+  const child = spawn(process.execPath, [viteBin, 'preview', '--port', '5181', '--strictPort', '--host', '127.0.0.1'], { cwd: new URL('apps/pos/', ROOT), stdio: 'ignore' });
   for (let i = 0; i < 50; i += 1) {
     if (await reachable(URL_BASE)) return child;
     await new Promise((r) => setTimeout(r, 200));

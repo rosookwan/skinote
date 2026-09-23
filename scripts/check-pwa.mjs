@@ -11,6 +11,7 @@
 //   SKINOTE_UI_OUT(찍은 화면, 기본 work/screens/step3), SKINOTE_PWA_DEV=0이면 ⑥을 건너뜀
 import { spawn } from 'node:child_process';
 import { mkdirSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 
 const ROOT = new URL('../', import.meta.url);
@@ -21,6 +22,21 @@ const check = (name, ok, detail = '') => {
   results.push({ name, ok: Boolean(ok), detail });
   console.log((ok ? '✓ ' : '✗ ') + name + (detail ? '  ' + detail : ''));
 };
+
+// npx를 거치면 리눅스에서 kill()이 npx만 멈추고 vite는 남는다. node로 vite를 바로 띄워 멈춤을 확실히 한다.
+const VITE_BIN = fileURLToPath(new URL('node_modules/vite/bin/vite.js', ROOT));
+const APP_DIR = fileURLToPath(new URL('apps/pos/', ROOT));
+const startVite = (args) => spawn(process.execPath, [VITE_BIN, ...args], { cwd: APP_DIR, stdio: 'ignore' });
+
+/** 서버 프로세스를 멈추고 정말 끝날 때까지(최대 5초) 기다린다. */
+async function stopServer(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const exited = new Promise((r) => child.once('exit', r));
+  child.kill();
+  const timer = setTimeout(() => child.kill('SIGKILL'), 3000);
+  await Promise.race([exited, new Promise((r) => setTimeout(r, 5000))]);
+  clearTimeout(timer);
+}
 
 async function reachable(url) {
   try { return (await fetch(url)).ok; } catch { return false; }
@@ -39,13 +55,13 @@ async function waitFor(url, child) {
 async function ensurePreview() {
   if (await reachable(URL_BASE)) return null;
   const url = new URL(URL_BASE);
-  const child = spawn('npx', ['vite', 'preview', '--port', url.port, '--strictPort', '--host', url.hostname, '--base', url.pathname], { cwd: new URL('apps/pos/', ROOT), stdio: 'ignore' });
+  const child = startVite(['preview', '--port', url.port, '--strictPort', '--host', url.hostname, '--base', url.pathname]);
   return waitFor(URL_BASE, child);
 }
 
 async function devCheck(browser) {
   const devUrl = 'http://127.0.0.1:5184/';
-  const child = spawn('npx', ['vite', '--port', '5184', '--strictPort', '--host', '127.0.0.1'], { cwd: new URL('apps/pos/', ROOT), stdio: 'ignore' });
+  const child = startVite(['--port', '5184', '--strictPort', '--host', '127.0.0.1']);
   try {
     await waitFor(devUrl, child);
     const context = await browser.newContext({ viewport: { width: 1024, height: 600 } });
@@ -57,7 +73,7 @@ async function devCheck(browser) {
     check('개발 서버에서는 서비스 워커를 등록하지 않는다', registrations === 0, '등록 ' + registrations + '개');
     await context.close();
   } finally {
-    child.kill();
+    await stopServer(child);
   }
 }
 
@@ -144,9 +160,8 @@ async function main() {
 
     // ⑤ 서버를 멈춘 뒤 새 창(같은 브라우저 저장소)
     if (server) {
-      server.kill();
+      await stopServer(server);
       server = null;
-      await new Promise((r) => setTimeout(r, 500));
       check('서버가 멈췄다', !(await reachable(URL_BASE)));
       const phone = await context.newPage();
       await phone.setViewportSize({ width: 360, height: 640 });
@@ -165,7 +180,7 @@ async function main() {
     if (process.env.SKINOTE_PWA_DEV !== '0') await devCheck(browser);
   } finally {
     await browser.close();
-    server?.kill();
+    if (server) await stopServer(server);
   }
   const failed = results.filter((r) => !r.ok).length;
   console.log('\nPWA 검사 ' + results.length + '개 · 어긋남 ' + failed + '건');
