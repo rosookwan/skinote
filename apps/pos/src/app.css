@@ -1,0 +1,98 @@
+/* 포스 앱의 화면 틀 모양(부품 모양은 @skinote/ui). 크기는 부품과 같이 DeviceProfile의 --sn-* 변수만 쓴다(px 숫자 없음).
+   화면 전체는 창 높이에 맞고 스크롤이 없다: 넘치는 목록은 잰 높이로 쪽을 나눈다. */
+
+html, body { margin: 0; height: 100%; overflow: hidden; }
+#root { height: 100%; }
+.sn-root { height: 100%; }
+
+/* 접수증 화면: 왼쪽 종이 접수증, 오른쪽 판(남은 일 + 주 버튼 + 옆 동작). 폭은 6-2의 오른쪽 판 값. */
+.pos-slip-desk { gap: var(--sn-slip-gap); padding-top: var(--sn-desk-gap); }
+.pos-side {
+  display: flex; flex-direction: column; gap: var(--sn-space-s); flex: none; width: var(--sn-slip-side); min-height: 0;
+  padding: var(--sn-space-m); background: var(--sn-paper); border-radius: var(--sn-radius-paper) var(--sn-radius-paper) 0 0;
+  box-shadow: 0 var(--sn-line-strong) var(--sn-space-m) var(--sn-shadow);
+}
+.pos-side-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sn-space-s); flex: none; }
+.pos-side-actions .sn-button { min-width: 0; padding: 0 var(--sn-space-s); }
+.pos-side-actions .sn-fit { flex: 0 1 auto; }
+
+/* 바닥줄 왼쪽: '‹ 장부'와 팀 한 줄 */
+.pos-footer-back { display: flex; align-items: center; gap: var(--sn-space-m); min-width: 0; }
+.pos-footer-back .sn-fit { flex: 1 1 0; font-size: var(--sn-font-body); font-weight: 800; }
+
+/* 확인 창 안: 결제 수단 · 알림 한 줄 */
+.pos-methods { display: flex; flex-wrap: wrap; gap: var(--sn-space-s); }
+.pos-method { min-width: var(--sn-method-min); }
+.pos-method[aria-pressed='true'] { background: var(--sn-ink); color: var(--sn-paper); }
+.pos-dialog-error {
+  padding: var(--sn-space-s) var(--sn-space-m); border-radius: var(--sn-radius-s);
+  background: var(--sn-now-wash); color: var(--sn-ink); font-size: var(--sn-font-body); font-weight: 800;
+}
+.pos-notice .sn-dialog-body { line-height: var(--sn-line-body); }
+.pos-notice-actions { display: flex; align-items: center; gap: var(--sn-space-s); }
+
+/* 고르기 판(더 보기 · 여러 팀) */
+.pos-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sn-space-s); }
+.pos-choice-button { justify-content: flex-start; min-width: 0; min-height: var(--sn-primary-h); padding: var(--sn-space-xs) var(--sn-space-m); text-align: left; }
+.pos-choice-text { display: flex; flex-direction: column; flex: 1 1 0; min-width: 0; }
+.pos-choice-note { font-size: var(--sn-font-min); font-weight: 600; color: var(--sn-ink-muted); }
+.pos-choices-foot { display: flex; align-items: center; gap: var(--sn-space-m); }
+/* 목록을 읽지 못했을 때 종이 위의 한 문장(다시 읽는 중). */
+.pos-sheet-note { padding: var(--sn-space-l) 0; font-size: var(--sn-font-body); font-weight: 800; color: var(--sn-ink); }
+
+/* 종이 한 장 화면(처음 화면 · 나가기 · 기사 화면 자리) */
+.pos-plain {
+  display: flex; align-items: center; justify-content: center; flex: 1 1 0; height: 100%; min-height: 0;
+  padding: var(--sn-space-l); background: var(--sn-desk);
+}
+.sn-screen > .pos-plain { height: auto; }
+.pos-card {
+  display: flex; flex-direction: column; gap: var(--sn-space-m); width: 100%; max-width: var(--sn-card-max);
+  padding: var(--sn-space-l) calc(var(--sn-space-l) * 1.5); background: var(--sn-paper); border-radius: var(--sn-radius-paper);
+  box-shadow: 0 var(--sn-line-strong) var(--sn-space-m) var(--sn-shadow);
+}
+.pos-card-title { font-family: var(--sn-font-serif); font-size: var(--sn-font-title); font-weight: 700; padding-bottom: var(--sn-space-s); box-shadow: inset 0 calc(var(--sn-line-strong) * -1) 0 var(--sn-ink); }
+.pos-card-subtitle { font-size: var(--sn-font-body); font-weight: 900; }
+.pos-card-line { font-size: var(--sn-font-body); font-weight: 700; color: var(--sn-ink-soft); }
+.pos-card-note { font-size: var(--sn-font-base); font-weight: 600; color: var(--sn-ink-muted); line-height: var(--sn-line-body); }
+.pos-card-row { display: flex; flex-wrap: wrap; gap: var(--sn-space-s); }
+.pos-card-section { display: flex; flex-direction: column; gap: var(--sn-space-s); padding-top: var(--sn-space-m); box-shadow: inset 0 var(--sn-line) 0 var(--sn-rule); }
+.pos-card-choices { display: flex; flex-direction: column; gap: var(--sn-space-s); }
+.pos-big-choice {
+  display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: var(--sn-space-xs);
+  width: 100%; min-height: var(--sn-choice-h); padding: var(--sn-space-s) var(--sn-space-l); text-align: left;
+}
+.pos-big-choice > span { font-size: var(--sn-font-big); font-weight: 900; }
+.pos-big-choice > small { font-size: var(--sn-font-body); font-weight: 700; }
+.sn-button.pos-big-choice > small { color: var(--sn-ink-muted); }
+
+/* 기사 태블릿의 오른쪽 숫자판(높이 600px 이상): 목록 종이 옆의 종이 한 장. */
+.sn-desk > .sn-keypad.is-side { border-radius: var(--sn-radius-paper) var(--sn-radius-paper) 0 0; box-shadow: 0 var(--sn-line-strong) var(--sn-space-m) var(--sn-shadow); }
+
+/* 방문 결과 판(못 받음): 버튼만. 태블릿은 한 줄에 셋, 휴대폰은 한 줄에 하나. */
+.pos-visit-question { font-size: var(--sn-font-body); font-weight: 900; }
+.pos-visit-choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(calc(var(--sn-method-min) * 2), 1fr)); gap: var(--sn-space-s); }
+.pos-visit-choice { min-width: 0; padding: 0 var(--sn-space-m); }
+.pos-visit-choice .sn-fit { flex: 0 1 auto; }
+.pos-visit-choice[aria-pressed='true'] { background: var(--sn-ink); color: var(--sn-paper); }
+.pos-visit-block { display: flex; flex-direction: column; gap: var(--sn-space-s); }
+.pos-visit-keypad { display: flex; flex-direction: column; gap: var(--sn-space-s); }
+.pos-visit-review { display: flex; flex-direction: column; gap: var(--sn-space-xs); font-size: var(--sn-font-title); font-weight: 900; }
+
+/* 차에 있는 것: 합계 한 줄 + 팀 줄(쪽 넘김). */
+.pos-van-total { font-size: var(--sn-font-body); font-weight: 900; }
+.pos-van-rows { display: flex; flex-direction: column; gap: var(--sn-space-s); }
+.pos-van-row {
+  display: flex; align-items: center; gap: var(--sn-space-m); min-height: var(--sn-target); padding: 0 var(--sn-space-s);
+  box-shadow: inset 0 calc(var(--sn-line) * -1) 0 var(--sn-rule-soft);
+}
+.pos-van-name { flex: none; font-weight: 900; white-space: nowrap; }
+.pos-van-items { flex: 1 1 0; font-weight: 700; color: var(--sn-ink-soft); }
+
+/* 넓은 화면에서 기사 휴대폰 모양으로 보기(#/driver/:date?device=phone): 휴대폰 크기 틀. 창 · 판(position: fixed)은 틀 안에 뜬다. */
+.sn-root.pos-phone-stage { display: flex; align-items: center; justify-content: center; background: var(--sn-ink-soft); }
+.pos-phone-frame {
+  position: relative; flex: none; overflow: hidden; contain: layout paint; background: var(--sn-desk);
+  border-radius: var(--sn-radius-m); box-shadow: 0 var(--sn-space-m) calc(var(--sn-space-l) * 2) var(--sn-shadow);
+}
+.pos-phone-frame .sn-screen { height: 100%; }

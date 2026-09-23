@@ -1,0 +1,30 @@
+{
+  "name": "@skinote/ui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "스키노트 화면 부품(종이 장부 · 도장 · 접수증 · 수거 목록), DeviceProfile, 디자인 토큰, 묶은 글꼴(Pretendard).",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./device-profile": "./src/device-profile.ts",
+    "./styles.css": "./src/styles/index.css",
+    "./fonts/*": "./fonts/*"
+  },
+  "engines": { "node": ">=22.13.0" },
+  "dependencies": {
+    "@skinote/contract": "*",
+    "@skinote/layout": "*"
+  },
+  "peerDependencies": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  }
+}

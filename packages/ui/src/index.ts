@@ -1,0 +1,27 @@
+// @skinote/ui — 종이 장부 모양의 화면 부품(ui 5절), DeviceProfile(3-7), 문구 표(3-9), 디자인 토큰과 묶은 글꼴.
+// 부품은 업무 규칙을 계산하지 않는다: 읽기 모델과 설정을 그리고, 크기는 모두 DeviceProfile에서 온다.
+// 쓰는 법: 앱이 '@skinote/ui/styles.css'를 한 번 가져오고, 화면을 DeviceProfileProvider 안에 둔다.
+export * from './device-profile.ts';
+export * from './context.tsx';
+export * from './measure.ts';
+export * from './format.ts';
+export * from './strings.ko-KR.ts';
+export * from './icons.tsx';
+export * from './components/AppHeader.tsx';
+export * from './components/ConnectionStrip.tsx';
+export * from './components/IndexTabs.tsx';
+export * from './components/Ledger.tsx';
+export * from './components/LedgerRow.tsx';
+export * from './components/Stamp.tsx';
+export * from './components/NowLine.tsx';
+export * from './components/Slip.tsx';
+export * from './components/Checklist.tsx';
+export * from './components/ConfirmDialog.tsx';
+export * from './components/Keypad.tsx';
+export * from './components/RowActionBar.tsx';
+export * from './components/ReorderButtons.tsx';
+export * from './components/PinBar.tsx';
+export * from './components/Pager.tsx';
+export * from './components/TextFit.tsx';
+export * from './components/FooterBar.tsx';
+export * from './components/PrimaryButton.tsx';

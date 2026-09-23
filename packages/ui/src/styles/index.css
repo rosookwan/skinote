@@ -1,0 +1,4 @@
+/* @skinote/ui 모양 한 벌: 글꼴 → 색 토큰 → 부품. 앱은 이 파일 하나를 가져온다. */
+@import './fonts.css';
+@import './tokens.css';
+@import './components.css';

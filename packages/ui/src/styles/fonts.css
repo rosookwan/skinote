@@ -1,0 +1,11 @@
+/* 묶은 글꼴(Pretendard Variable, SIL OFL — fonts/LICENSE-Pretendard). 앱에 묶어 PWA가 미리 받아 두므로
+   카운터 PC에서 Malgun Gothic으로 바뀌어 칸 폭이 달라지는 일이 없다(ui 4-2). 글꼴을 다 읽기 전에는 그리지 않고(block),
+   다 읽으면 글자 맞추기 · 칸 폭이 다시 돈다(useFontsVersion). */
+@font-face {
+  font-family: 'Skinote Pretendard';
+  src: url('../../fonts/PretendardVariable.woff2') format('woff2-variations'),
+       url('../../fonts/PretendardVariable.woff2') format('woff2');
+  font-weight: 45 920;
+  font-style: normal;
+  font-display: block;
+}

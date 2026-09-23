@@ -1,0 +1,66 @@
+# 스키노트 공개 체험판: main에 올라온 커밋의 CI(시험 · 검사 · 빌드 · PWA · 화면 규칙)가 모두 통과하면, 그 커밋을 빌드해
+# GitHub Pages에 올린다(CI가 어긋난 커밋은 올리지 않는다). 손으로 돌리면(workflow_dispatch) 그때의 커밋을 올린다.
+# 주소는 https://rosookwan.github.io/skinote/ (하위 경로). 빌드는 base './'와 # 경로라 하위 경로에서 그대로 열리고,
+# 서비스 워커는 './sw.js'(범위 './')라 /skinote/ 폴더가 범위다. 올리기 전에 check:dist가 이것을 확인한다.
+# 체험판은 FixtureClient(브라우저 안의 예시 자료)로만 돈다. 서버 · 관리자 콘솔 · 계정 정보는 넣지 않는다.
+# 저장소 설정 Settings → Pages → Build and deployment → Source를 'GitHub Actions'로 한 번 정해 두어야 한다.
+name: Pages
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # main에 push된 커밋의 CI가 성공했을 때만(pull request · 실패 · 취소는 올리지 않는다), 또는 손으로 돌렸을 때.
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # CI가 검사한 바로 그 커밋(그사이 main에 다른 커밋이 올라와도 검사하지 않은 것을 올리지 않게).
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          check-latest: true
+
+      - name: 의존성 설치(npm ci)
+        run: npm ci
+
+      - name: 빌드(apps/pos)
+        run: npm run build
+
+      - name: 체험판 빌드 확인(상대 주소 · PWA · 넣지 않는 것)
+        run: npm run check:dist
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: apps/pos/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: GitHub Pages에 올리기
+        id: deployment
+        uses: actions/deploy-pages@v5

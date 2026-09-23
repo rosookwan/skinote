@@ -1,0 +1,70 @@
+# 스키노트 CI: 모든 push와 pull request에서 시험 · 검사 · 빌드 · 화면 규칙 검사를 돈다.
+# 순서는 루트 npm run check와 같다(test → lint → typecheck → build → check:dist → test:pwa → test:rules).
+# 브라우저 검사 둘(PWA · 화면 규칙)은 하나가 어긋나도 다른 하나를 끝까지 돌고,
+# 어긋나면 찍은 화면과 report.json(work/screens/)을 내려받을 수 있게 올린다.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          check-latest: true
+          cache: npm
+
+      - name: 의존성 설치(npm ci)
+        run: npm ci
+
+      - name: 시험(옛 core 222개 · schema · vitest)
+        run: npm test
+
+      - name: 검사(마이그레이션 lint · 가져오기 경계)
+        run: npm run lint
+
+      - name: 형식 검사(TypeScript)
+        run: npm run typecheck
+
+      - name: 빌드(apps/pos)
+        run: npm run build
+
+      - name: 체험판 빌드 확인(상대 주소 · PWA · 넣지 않는 것)
+        run: npm run check:dist
+
+      - name: Playwright chromium 설치
+        id: playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: PWA 검사(하위 경로 /skinote/ · 서비스 워커 범위 · 오프라인)
+        if: ${{ !cancelled() && steps.playwright.outcome == 'success' }}
+        run: npm run test:pwa
+        env:
+          SKINOTE_UI_OUT: work/screens/pwa
+
+      - name: 화면 규칙 검사
+        if: ${{ !cancelled() && steps.playwright.outcome == 'success' }}
+        run: npm run test:rules
+
+      - name: 어긋난 화면 올리기
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: screens-${{ github.run_id }}-${{ github.run_attempt }}
+          path: work/screens/
+          if-no-files-found: ignore
+          retention-days: 14

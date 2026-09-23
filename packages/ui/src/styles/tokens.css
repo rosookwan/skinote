@@ -1,0 +1,61 @@
+/* 색 토큰(C 종이 장부): 따뜻한 종이, 남색 먹, 도장 주홍. 크기는 여기 없다(DeviceProfile의 --sn-* 크기 변수).
+   빨강(--sn-late)은 늦은 것에만 쓴다(N8). 도장 주홍(--sn-seal)은 늦음 빨강과 다른 색이고 경고에 쓰지 않는다.
+   주 버튼 색(--sn-accent)은 등급이 정한다: 포스 주황, 기사 보라. 한 화면에 주 버튼은 하나다.
+   글자 대비는 종이 위에서 4.5 : 1 이상(주 버튼의 흰 글자는 20px 굵은 글자라 3 : 1 이상). */
+.sn-root {
+  --sn-font-family: 'Skinote Pretendard', 'Pretendard Variable', Pretendard, 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif;
+  /* 장부 · 접수증 제목만 명조(시안 C의 종이 장부 느낌). 기기에 있는 명조를 쓰고, 없으면 본문 글꼴. 제목은 잰 폭으로 맞추므로 글꼴이 바뀌어도 넘치지 않는다. */
+  --sn-font-serif: 'Noto Serif KR', 'Nanum Myeongjo', 'AppleMyungjo', 'Batang', var(--sn-font-family);
+
+  --sn-desk: #E9E3D6;
+  --sn-paper: #FFFDF7;
+  --sn-paper-shade: #F6F0E3;
+  --sn-ink: #1B2A4A;
+  --sn-ink-soft: #34425F;
+  --sn-ink-muted: #56627A;
+  --sn-rule: #C9D3E0;
+  --sn-rule-soft: #E3E8EF;
+
+  --sn-seal: #CC3D14;
+  --sn-seal-wash: #FCEFEA;
+  --sn-late: #B01030;
+  --sn-late-wash: #FBEAEC;
+
+  --sn-orange: #E8540F;
+  --sn-orange-ink: #B8400A;
+  --sn-orange-wash: #FFF1EA;
+  --sn-purple: #5F33E1;
+  --sn-purple-ink: #4A25BC;
+  --sn-purple-wash: #EFEAFF;
+  --sn-blue: #1D5BB8;
+  --sn-blue-wash: #E6EFFB;
+  --sn-green: #1E7A3C;
+  --sn-green-wash: #E7F4EA;
+  --sn-grey: #6B7280;
+
+  --sn-now: #F5B400;
+  --sn-now-ink: #3A2A00;
+  --sn-now-wash: #FFF6D6;
+  --sn-strip: #FFF3C4;
+  --sn-focus: #1D5BB8;
+  --sn-on-accent: #FFFFFF;
+  --sn-scrim: rgba(27, 42, 74, 0.45);
+  --sn-shadow: rgba(27, 42, 74, 0.18);
+
+  --sn-accent: var(--sn-orange);
+}
+
+.sn-root[data-accent='orange'] { --sn-accent: var(--sn-orange); }
+.sn-root[data-accent='purple'] { --sn-accent: var(--sn-purple); }
+.sn-root[data-accent='navy'] { --sn-accent: var(--sn-ink); }
+.sn-root[data-accent='mono'] { --sn-accent: #000000; }
+
+/* 상태 문구 · 돈 칸의 색(sys_tones). red는 늦음 전용이라 tone-late로만 칠한다. */
+.sn-root .tone-late { color: var(--sn-late); font-weight: 800; }
+.sn-root .tone-seal { color: var(--sn-seal); }
+.sn-root .tone-orange { color: var(--sn-orange-ink); }
+.sn-root .tone-green { color: var(--sn-green); }
+.sn-root .tone-blue { color: var(--sn-blue); }
+.sn-root .tone-purple { color: var(--sn-purple-ink); }
+.sn-root .tone-grey { color: var(--sn-grey); }
+.sn-root .tone-ink { color: var(--sn-ink); }

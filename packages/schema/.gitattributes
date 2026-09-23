@@ -1,0 +1,2 @@
+# 마이그레이션과 스키마는 줄 끝을 LF로 둔다(checksum은 CRLF도 맞추지만, 파일 자체를 바꾸지 않도록).
+*.sql text eol=lf

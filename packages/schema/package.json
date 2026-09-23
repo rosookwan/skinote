@@ -1,0 +1,34 @@
+{
+  "name": "@skinote/schema",
+  "version": "0.1.0",
+  "private": true,
+  "description": "스키노트 두 데이터베이스(control · shop)의 참조 스키마(schema.sql), 마이그레이션 0001, 실행기, 장부 트리거 생성기, 마이그레이션 검사(lint), 스키마 확인 시험.",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./migrate": "./src/migrate.js",
+    "./connection": "./src/connection.js",
+    "./split": "./src/split.js",
+    "./structure": "./src/structure.js",
+    "./guards": "./src/guards.js",
+    "./sql": "./src/sql.js",
+    "./schema.sql": "./schema.sql",
+    "./migrations/*": "./migrations/*",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "skinote-migrate": "bin/migrate.js"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js",
+    "migrate": "node --disable-warning=ExperimentalWarning bin/migrate.js",
+    "split": "node tools/split.js",
+    "gen-triggers": "node --disable-warning=ExperimentalWarning tools/gen-triggers.js",
+    "lint": "node --disable-warning=ExperimentalWarning tools/lint.js",
+    "bench": "node --disable-warning=ExperimentalWarning tools/bench.js"
+  }
+}

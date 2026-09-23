@@ -1,0 +1,30 @@
+{
+  "name": "skinote",
+  "private": true,
+  "description": "스키노트 · 스키 렌탈샵 운영 시스템(포스 · 차량 · 관리)",
+  "workspaces": ["packages/*", "apps/*"],
+  "engines": { "node": ">=22.13.0" },
+  "scripts": {
+    "dev": "npm run dev -w @skinote/pos",
+    "build": "npm run build -w @skinote/pos",
+    "preview": "npm run preview -w @skinote/pos",
+    "test": "npm run test:core && npm run test:schema && npm run test:unit",
+    "test:core": "npm test -w @skinote/core",
+    "test:schema": "npm test -w @skinote/schema",
+    "test:unit": "npm test -w @skinote/contract -w @skinote/layout -w @skinote/ui -w @skinote/pos",
+    "test:rules": "npm run rules -w @skinote/pos",
+    "test:pwa": "node scripts/check-pwa.mjs",
+    "test:ui": "node scripts/check-screens.mjs",
+    "lint": "npm run lint:schema && npm run check:imports",
+    "lint:schema": "npm run lint -w @skinote/schema -- --code src tools bin && npm run split -w @skinote/schema -- --check && npm run gen-triggers -w @skinote/schema -- --check",
+    "check:imports": "node scripts/check-import-boundary.mts",
+    "check:dist": "node scripts/check-dist.mjs",
+    "typecheck": "npm run typecheck -w @skinote/contract -w @skinote/layout -w @skinote/ui -w @skinote/pos",
+    "rules": "npm run build && npm run test:rules",
+    "check": "npm test && npm run lint && npm run typecheck && npm run build && npm run check:dist && npm run test:pwa && npm run test:rules"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1",
+    "vitest": "^5.0.1"
+  }
+}

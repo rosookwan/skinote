@@ -1,0 +1,30 @@
+# 의존성 · 빌드
+node_modules/
+dist/
+*.tsbuildinfo
+
+# 찍은 화면 · 검사 결과(규칙 검사 · PWA 검사 · Playwright)
+work/
+test-results/
+playwright-report/
+blob-report/
+coverage/
+
+# 데이터베이스 파일(매장 · control · 백업) — 실제 손님 자료가 저장소에 들어가지 않게
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.db
+*.db-wal
+*.db-shm
+
+# 비밀 · 개인 설정
+.env
+.env.*
+.claude/settings.local.json
+
+# 운영체제 · 편집기
+.DS_Store
+*.log

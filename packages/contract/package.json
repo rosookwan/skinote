@@ -1,0 +1,16 @@
+{
+  "name": "@skinote/contract",
+  "version": "0.1.0",
+  "private": true,
+  "description": "스키노트 화면과 서버가 함께 쓰는 형식: 코드 키 어휘, 화면 설정 행과 기본 설정(ui-defaults.json), 읽기 모델, DomainClient, 명령 봉투.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./ui-defaults.json": "./ui-defaults.json"
+  },
+  "engines": { "node": ">=22.13.0" },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  }
+}

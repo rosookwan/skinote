@@ -1,0 +1,802 @@
+<title>스키노트 새 화면 시안</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800;900&family=Noto+Serif+KR:wght@700&display=swap">
+<style>
+  :root {
+    --bg: #F3F4F7;
+    --card: #FFFFFF;
+    --ink: #16181D;
+    --muted: #555C6B;
+    --line: #DCE0E7;
+    --accent: #5F33E1;
+    --accent-soft: #EFEAFF;
+    --font: "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+    --serif: "Noto Serif KR", "Apple Myungjo", "Batang", serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #111318;
+      --card: #1A1D24;
+      --ink: #E8EAEE;
+      --muted: #A6ACB8;
+      --line: #2E333D;
+      --accent: #A28CFF;
+      --accent-soft: #221C3D;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #111318;
+    --card: #1A1D24;
+    --ink: #E8EAEE;
+    --muted: #A6ACB8;
+    --line: #2E333D;
+    --accent: #A28CFF;
+    --accent-soft: #221C3D;
+  }
+  body { background: var(--bg); color: var(--ink); font-family: var(--font); font-size: 17px; line-height: 1.6; word-break: keep-all; }
+  .page { max-width: 1120px; margin: 0 auto; padding-inline: clamp(16px, 4vw, 40px); padding-block: 28px 64px; display: grid; gap: 28px; }
+  .page h1, .page h2, .page h3, .page p { margin: 0; }
+  .intro { display: grid; gap: 10px; max-width: 780px; }
+  .eyebrow { font-size: 15px; font-weight: 800; color: var(--muted); letter-spacing: 0.02em; }
+  .intro h1 { font-size: clamp(30px, 5vw, 42px); font-weight: 900; line-height: 1.2; letter-spacing: -0.02em; text-wrap: balance; }
+  .intro p { color: var(--muted); }
+  .intro b { color: var(--ink); }
+
+  .tabs { display: flex; flex-wrap: wrap; gap: 10px; }
+  .tab {
+    display: grid; gap: 2px; text-align: left; cursor: pointer;
+    min-height: 60px; padding: 10px 16px; border-radius: 12px;
+    border: 2px solid var(--line); background: var(--card); color: var(--ink);
+    font: inherit; font-size: 17px; font-weight: 800;
+  }
+  .tab span { font-size: 15px; font-weight: 600; color: var(--muted); }
+  .tab[aria-selected="true"] { border-color: var(--accent); background: var(--accent-soft); }
+  .tab:focus-visible, .real-toggle:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+  .real-toggle {
+    min-height: 48px; padding: 0 16px; border-radius: 10px; border: 2px solid var(--line);
+    background: var(--card); color: var(--ink); font: inherit; font-size: 16px; font-weight: 800; cursor: pointer;
+  }
+  .note { font-size: 15px; color: var(--muted); }
+
+  .dir { display: none; gap: 30px; }
+  .dir.on { display: grid; }
+  .dir-head { display: grid; gap: 6px; }
+  .dir-head h2 { font-size: 26px; font-weight: 900; letter-spacing: -0.01em; }
+  .dir-head p { color: var(--muted); max-width: 820px; }
+  .shot { display: grid; gap: 10px; }
+  .shot-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+  .shot-head h3 { font-size: 20px; font-weight: 900; }
+  .shot-head span { font-size: 15px; color: var(--muted); font-weight: 700; }
+  .shot > p { color: var(--muted); max-width: 820px; }
+  .stage { position: relative; width: 100%; overflow: hidden; border-radius: 12px; border: 1px solid var(--line); background: #fff; }
+  .real .stage { overflow-x: auto; }
+
+  .compare { display: grid; gap: 14px; }
+  .compare h2 { font-size: 26px; font-weight: 900; }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+  .compare table { width: 100%; min-width: 760px; border-collapse: collapse; font-size: 16px; line-height: 1.5; }
+  .compare th, .compare td { text-align: left; vertical-align: top; padding: 12px 14px; border-top: 1px solid var(--line); }
+  .compare thead th { border-top: none; font-size: 15px; color: var(--muted); }
+  .compare tbody th { font-weight: 800; white-space: nowrap; }
+  .pick { background: var(--card); border: 2px solid var(--accent); border-radius: 12px; padding: 18px 20px; display: grid; gap: 8px; }
+  .pick h3 { font-size: 20px; font-weight: 900; }
+  .pick ul { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+
+  /* ---------- mockup frames (fixed light look, 1024×600) ---------- */
+  .frame { width: 1024px; height: 600px; position: relative; overflow: hidden; transform-origin: 0 0; font-family: var(--font); font-size: 18px; line-height: 1.35; word-break: keep-all; }
+  .frame * { box-sizing: border-box; }
+  .frame h2, .frame h3, .frame p, .frame ul, .frame ol, .frame dl, .frame dd { margin: 0; padding: 0; }
+  .frame ul, .frame ol { list-style: none; }
+  .ic { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+  .brand { display: flex; align-items: baseline; gap: 10px; white-space: nowrap; }
+  .brand b { color: #5F33E1; font-size: 19px; font-weight: 900; letter-spacing: -0.01em; }
+  .brand span { font-size: 16px; font-weight: 700; }
+  .badge { position: absolute; top: -3px; right: -8px; font-style: normal; min-width: 26px; height: 26px; padding: 0 6px; border-radius: 13px; background: #B42318; color: #fff; font-size: 16px; font-weight: 800; line-height: 26px; text-align: center; }
+
+  /* A · 시간표 */
+  .fa { background: #EEF2F6; color: #0F1B2D; }
+  .fa .brand span { color: #4A5A6E; }
+  .a-top { height: 64px; background: #fff; border-bottom: 1px solid #D6DEE8; display: flex; align-items: center; gap: 14px; padding: 0 16px; }
+  .a-nav { display: flex; gap: 4px; background: #EEF2F6; padding: 4px; border-radius: 14px; margin-left: 6px; }
+  .a-nav span { height: 52px; display: flex; align-items: center; gap: 6px; padding: 0 14px; border-radius: 10px; font-size: 18px; font-weight: 800; white-space: nowrap; }
+  .a-nav .on { background: #0F1B2D; color: #fff; }
+  .a-right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .a-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 52px; padding: 0 16px; border-radius: 10px; border: 2px solid #B8C4D2; background: #fff; color: #0F1B2D; font-size: 17px; font-weight: 800; white-space: nowrap; }
+  .a-btn.blue { background: #1557B0; border-color: #1557B0; color: #fff; }
+  .a-btn.purple { background: #5F33E1; border-color: #5F33E1; color: #fff; min-height: 56px; }
+  .a-btn.wide { width: 100%; min-height: 56px; }
+  .a-btn.big { min-height: 56px; font-size: 19px; padding: 0 24px; }
+  .a-icon { width: 52px; height: 52px; position: relative; border: 2px solid #B8C4D2; border-radius: 10px; background: #fff; display: grid; place-items: center; }
+  .a-panel { background: #fff; border: 1px solid #D6DEE8; border-radius: 12px; padding: 10px 16px; min-width: 0; }
+  .a-ph { display: flex; justify-content: space-between; align-items: center; min-height: 40px; gap: 10px; }
+  .a-ph h3 { font-size: 21px; font-weight: 800; }
+  .a-ph > span { font-size: 16px; color: #4A5A6E; font-weight: 700; }
+  .a-pill { display: inline-flex; align-items: center; min-height: 32px; padding: 0 12px; border-radius: 16px; font-size: 16px; font-weight: 800; white-space: nowrap; }
+  .a-pill.amber { background: #FFF3CC; color: #6B4E00; border: 1px solid #F5B400; }
+  .a-pill.blue { background: #E6EFFB; color: #1557B0; }
+  .van { font-style: normal; display: inline-block; background: #EFEAFF; color: #4A25BC; border-radius: 8px; padding: 0 8px; font-size: 16px; font-weight: 800; margin-left: 6px; }
+  .a1 { display: grid; grid-template-columns: 1fr 336px; gap: 16px; padding: 16px; height: 536px; }
+  .a-rows { position: relative; }
+  .a-rows::before { content: ""; position: absolute; left: 87px; top: 8px; bottom: 8px; width: 2px; background: #D6DEE8; }
+  .a-rows li { position: relative; display: grid; grid-template-columns: 72px 30px 1fr auto; align-items: center; column-gap: 6px; min-height: 64px; border-top: 1px solid #E6EBF1; }
+  .a-rows .t { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  .a-rows .dot { width: 14px; height: 14px; border-radius: 50%; background: #fff; border: 3px solid #8FA1B6; justify-self: center; position: relative; z-index: 1; }
+  .a-rows p { font-size: 18px; font-weight: 800; }
+  .a-rows small { display: block; font-size: 16px; color: #4A5A6E; font-weight: 600; }
+  .a-rows li.done { min-height: 52px; opacity: 0.55; }
+  .a-rows .ok { color: #1E7A3C; font-weight: 800; font-size: 17px; }
+  .a-rows li.now { min-height: 30px; border-top: 0; display: block; }
+  .a-rows li.now::before { content: ""; position: absolute; left: 0; right: 0; top: 12px; height: 6px; border-radius: 3px; background: #F5B400; }
+  .a-rows li.now span { position: absolute; left: 0; top: 1px; background: #F5B400; color: #3A2A00; font-size: 16px; font-weight: 900; line-height: 28px; padding: 0 12px; border-radius: 14px; }
+  .a-glance { display: flex; flex-direction: column; gap: 10px; }
+  .a-glance dl div { display: flex; justify-content: space-between; align-items: baseline; min-height: 58px; border-top: 1px solid #E6EBF1; padding-top: 8px; }
+  .a-glance dt { font-size: 18px; color: #4A5A6E; font-weight: 700; }
+  .a-glance dd { font-size: 30px; font-weight: 900; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  .a-glance dd s { text-decoration: none; font-size: 18px; color: #4A5A6E; font-weight: 700; }
+  .a-glance dd.red { color: #B42318; font-size: 28px; }
+  .a-glance .a-btn.wide { margin-top: auto; }
+  .a2 { display: grid; grid-template-rows: 72px 104px 1fr 56px; gap: 12px; padding: 14px 16px; height: 536px; }
+  .a-team { display: flex; align-items: center; justify-content: space-between; }
+  .a-team .who { display: flex; align-items: center; gap: 14px; }
+  .a-team h2 { font-size: 28px; font-weight: 900; letter-spacing: -0.02em; }
+  .a-team .who > span { font-size: 18px; color: #4A5A6E; font-weight: 600; }
+  .a-track ol { position: relative; display: grid; grid-template-columns: repeat(5, 1fr); height: 100%; align-items: start; padding-top: 4px; }
+  .a-track ol::before { content: ""; position: absolute; top: 22px; left: 10%; width: 20%; height: 4px; background: #1E7A3C; }
+  .a-track ol::after { content: ""; position: absolute; top: 22px; left: 30%; width: 60%; border-top: 4px dashed #B8C4D2; }
+  .a-track li { position: relative; z-index: 1; display: grid; justify-items: center; text-align: center; gap: 2px; }
+  .a-track i { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; font-style: normal; background: #fff; border: 3px solid #B8C4D2; }
+  .a-track .done i { background: #1E7A3C; border-color: #1E7A3C; color: #fff; font-size: 20px; font-weight: 900; }
+  .a-track .now i { width: 44px; height: 44px; margin-top: -2px; border: 6px solid #F5B400; }
+  .a-track b { font-size: 18px; font-weight: 800; white-space: nowrap; }
+  .a-track small { font-size: 16px; color: #4A5A6E; font-weight: 600; white-space: nowrap; }
+  .a-track .now b { color: #0F1B2D; }
+  .a2-low { display: grid; grid-template-columns: 1fr 320px; gap: 12px; min-height: 0; }
+  .a-items table { width: 100%; border-collapse: collapse; font-size: 17px; }
+  .a-items th { text-align: left; font-size: 16px; color: #4A5A6E; font-weight: 800; height: 34px; border-bottom: 1px solid #D6DEE8; }
+  .a-items td { height: 44px; border-bottom: 1px solid #EEF2F6; font-weight: 600; }
+  .a-items td:first-child { font-weight: 800; }
+  .st-wait { color: #8A5A00; font-weight: 800; }
+  .st-ok { color: #1E7A3C; font-weight: 800; }
+  .a-money dl div { display: flex; justify-content: space-between; align-items: baseline; border-top: 1px solid #EEF2F6; padding: 8px 0; }
+  .a-money dt { font-size: 18px; color: #4A5A6E; font-weight: 700; }
+  .a-money dd { font-size: 22px; font-weight: 900; text-align: right; font-variant-numeric: tabular-nums; }
+  .a-money dd small { display: block; font-size: 16px; color: #4A5A6E; font-weight: 600; }
+  .a-money dd.red { color: #B42318; }
+  .a-actions { display: flex; align-items: center; gap: 10px; }
+  .a-actions .a-btn.big { margin-left: auto; }
+  .a-top .title { font-size: 22px; font-weight: 900; white-space: nowrap; }
+  .a-top .unit { display: inline-flex; align-items: center; min-height: 34px; padding: 0 12px; border-radius: 17px; background: #EFEAFF; color: #4A25BC; font-size: 16px; font-weight: 800; }
+  .a3 { display: grid; grid-template-columns: 372px 1fr; gap: 12px; padding: 12px 16px; height: 472px; }
+  .a-urgent { border: 2px solid #F5B400; background: #FFF8E1; border-radius: 10px; padding: 8px 12px; margin: 4px 0 8px; }
+  .a-urgent b { display: block; font-size: 18px; font-weight: 900; color: #6B4E00; }
+  .a-urgent p { font-size: 18px; font-weight: 800; }
+  .a-urgent small { font-size: 16px; color: #4A5A6E; font-weight: 700; }
+  .a-stops { display: grid; gap: 6px; }
+  .a-stops li { display: grid; grid-template-columns: 66px 1fr auto; align-items: center; gap: 8px; min-height: 72px; padding: 0 6px; border-radius: 10px; border-top: 1px solid #EEF2F6; }
+  .a-stops li.cur { background: #FFF8E1; border-top-color: transparent; }
+  .a-stops .t { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .a-stops p { font-size: 18px; font-weight: 800; }
+  .a-stops small { font-size: 16px; color: #4A5A6E; font-weight: 700; }
+  .ud { display: flex; gap: 6px; }
+  .ud i { width: 56px; height: 56px; border: 2px solid #B8C4D2; border-radius: 10px; background: #fff; display: grid; place-items: center; font-style: normal; font-size: 18px; font-weight: 800; }
+  .a-search { display: inline-flex; align-items: center; gap: 8px; min-height: 56px; width: 200px; padding: 0 12px; border: 2px solid #B8C4D2; border-radius: 10px; color: #4A5A6E; font-size: 17px; font-weight: 700; }
+  .a-teams li { display: flex; justify-content: space-between; align-items: center; gap: 10px; min-height: 70px; border-top: 1px solid #EEF2F6; }
+  .a-teams b { display: block; font-size: 20px; font-weight: 900; }
+  .a-teams small { font-size: 17px; color: #4A5A6E; font-weight: 600; }
+  .a-got { font-size: 16px; color: #4A5A6E; font-weight: 700; border-top: 1px solid #EEF2F6; padding-top: 8px; }
+  .a-foot { position: absolute; left: 0; right: 0; bottom: 0; height: 64px; background: #fff; border-top: 1px solid #D6DEE8; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; font-size: 18px; font-weight: 800; }
+
+  /* B · 한 번에 하나 */
+  .fb { background: #F2F4F7; color: #111827; }
+  .fb .brand span { color: #4B5563; }
+  .b-top { height: 60px; display: flex; align-items: center; gap: 14px; padding: 0 20px; }
+  .b-date { font-size: 18px; font-weight: 700; color: #4B5563; }
+  .b-right { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+  .b-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 56px; padding: 0 18px; border-radius: 16px; border: 2px solid #CBD2DC; background: #fff; color: #111827; font-size: 18px; font-weight: 800; white-space: nowrap; }
+  .b-btn.orange { background: #E8540F; border-color: #E8540F; color: #fff; }
+  .b-btn.purple { background: #5F33E1; border-color: #5F33E1; color: #fff; }
+  .b-btn.tall { min-height: 72px; font-size: 22px; }
+  .b-btn.huge { min-height: 76px; font-size: 23px; }
+  .b-icon { width: 52px; height: 52px; position: relative; border: 2px solid #CBD2DC; border-radius: 16px; background: #fff; display: grid; place-items: center; }
+  .b-pill { display: inline-flex; align-items: center; min-height: 36px; padding: 0 14px; border-radius: 18px; font-size: 17px; font-weight: 800; white-space: nowrap; align-self: flex-start; }
+  .b-top .b-pill { align-self: center; }
+  .b-pill.orange { background: #FFF1EA; color: #B8400A; }
+  .b-pill.purple { background: #EFEAFF; color: #4A25BC; }
+  .b1 { display: grid; grid-template-columns: 580px 1fr; gap: 16px; padding: 0 20px 16px; height: 456px; }
+  .b-card { background: #fff; border-radius: 20px; box-shadow: 0 8px 24px rgba(17, 24, 39, 0.08); }
+  .b-hero { padding: 22px 26px; display: flex; flex-direction: column; gap: 8px; }
+  .b-hero h2 { font-size: 54px; font-weight: 900; letter-spacing: -0.03em; line-height: 1.15; margin-top: 4px; }
+  .b-sub { font-size: 20px; color: #4B5563; font-weight: 600; }
+  .b-items { font-size: 28px; font-weight: 800; }
+  .b-money { font-size: 20px; font-weight: 700; }
+  .red { color: #B42318; }
+  .b-actions { margin-top: auto; display: grid; grid-template-columns: 30% 1fr; gap: 12px; }
+  .b-next { display: flex; flex-direction: column; gap: 10px; }
+  .b-nh { display: flex; justify-content: space-between; align-items: baseline; }
+  .b-nh h3 { font-size: 22px; font-weight: 900; }
+  .b-nh span { font-size: 16px; color: #4B5563; font-weight: 700; }
+  .b-next li { background: #fff; border-radius: 16px; box-shadow: 0 2px 10px rgba(17, 24, 39, 0.05); min-height: 78px; display: grid; grid-template-columns: 64px 62px 1fr; align-items: center; gap: 10px; padding: 0 14px; }
+  .b-next li b { font-size: 22px; font-weight: 900; font-variant-numeric: tabular-nums; }
+  .b-next li em { font-style: normal; border: 2px solid #CBD2DC; border-radius: 999px; font-size: 16px; font-weight: 800; text-align: center; line-height: 30px; }
+  .b-next li p { font-size: 20px; font-weight: 800; }
+  .b-next li small { font-size: 16px; color: #4B5563; font-weight: 600; }
+  .b-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 84px; background: #fff; border-top: 1px solid #E3E7ED; display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; padding: 12px 20px; }
+  .b-title { font-size: 26px; font-weight: 900; letter-spacing: -0.02em; white-space: nowrap; }
+  .b-subline { height: 40px; display: flex; justify-content: space-between; align-items: center; padding: 0 20px; font-size: 18px; }
+  .b-subline span { color: #4B5563; font-weight: 600; }
+  .b-subline b { font-weight: 800; }
+  .b2 { display: grid; grid-template-columns: 1fr 356px; gap: 16px; padding: 4px 20px 16px; height: 500px; }
+  .b2-left { display: flex; flex-direction: column; gap: 14px; min-height: 0; }
+  .b-check { padding: 8px 14px; }
+  .b-check li { display: grid; grid-template-columns: 44px 1fr auto; align-items: center; gap: 12px; min-height: 80px; border-top: 1px solid #EEF1F5; padding: 0 8px; }
+  .b-check li:first-child { border-top: 0; }
+  .b-check li > i { width: 38px; height: 38px; border-radius: 50%; border: 3px solid #CBD2DC; display: grid; place-items: center; font-style: normal; }
+  .b-check li.done > i { background: #1E7A3C; border-color: #1E7A3C; color: #fff; font-size: 20px; font-weight: 900; }
+  .b-check li.done { color: #6B7280; }
+  .b-check li.cur { background: #FFF6F1; border-radius: 14px; border-top-color: transparent; }
+  .b-check li.cur > i { border: 5px solid #E8540F; }
+  .b-check li.cur + li { border-top-color: transparent; }
+  .b-check b { display: block; font-size: 20px; font-weight: 800; }
+  .b-check small { font-size: 17px; color: #4B5563; font-weight: 600; }
+  .b-check li.done small { color: #6B7280; }
+  .b2-left .b-btn.huge { font-size: 25px; }
+  .b-promise { padding: 18px 20px; display: flex; flex-direction: column; gap: 8px; }
+  .b-promise h3 { font-size: 22px; font-weight: 900; }
+  .b-promise dl div { border-top: 1px solid #EEF1F5; padding: 8px 0; }
+  .b-promise dt { font-size: 16px; color: #4B5563; font-weight: 700; }
+  .b-promise dd { font-size: 19px; font-weight: 800; }
+  .b-promise .b-btn { width: 100%; }
+  .b-urgent { margin: 0 20px; height: 64px; background: #FFF4CC; border: 2px solid #F5B400; border-radius: 16px; display: flex; align-items: center; justify-content: space-between; padding: 0 4px 0 16px; }
+  .b-urgent div { display: flex; align-items: baseline; gap: 12px; }
+  .b-urgent b { font-size: 19px; font-weight: 900; color: #5A4100; white-space: nowrap; }
+  .b-urgent span { font-size: 18px; font-weight: 700; }
+  .b3 { display: grid; grid-template-columns: 92px 1fr 92px; gap: 14px; padding: 14px 20px; height: 392px; }
+  .b-arrow { display: grid; place-items: center; border: 2px solid #CBD2DC; background: #fff; border-radius: 18px; font-size: 19px; font-weight: 800; }
+  .b-one { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 14px 24px; text-align: center; }
+  .b-one > small { font-size: 17px; color: #4B5563; font-weight: 700; }
+  .b-one h2 { font-size: 48px; font-weight: 900; letter-spacing: -0.03em; line-height: 1.15; }
+  .b-one p { font-size: 20px; color: #4B5563; font-weight: 600; }
+  .b-one .b-items { font-size: 27px; color: #111827; font-weight: 800; margin-top: 2px; }
+  .b-3btn { display: grid; grid-template-columns: 1.6fr 1fr 0.8fr; gap: 12px; width: 100%; margin-top: 16px; }
+  .b-bar.driver { grid-template-columns: auto auto auto 1fr; }
+  .b-load { align-self: center; justify-self: end; font-size: 17px; font-weight: 800; text-align: right; }
+
+  /* C · 장부 */
+  .fc { background: #E9EEF5; color: #1B2A4A; }
+  .fc .brand span { color: #5B6B82; }
+  .c-top { height: 60px; display: flex; align-items: center; gap: 12px; padding: 0 16px; }
+  .c-right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .c-search { display: inline-flex; align-items: center; gap: 8px; width: 206px; min-height: 52px; padding: 0 12px; border: 2px solid #9FB1C9; border-radius: 10px; background: #fff; color: #5B6B82; font-size: 17px; font-weight: 700; }
+  .c-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 52px; padding: 0 16px; border: 2px solid #1B2A4A; border-radius: 10px; background: #fff; color: #1B2A4A; font-size: 17px; font-weight: 800; white-space: nowrap; }
+  .c-btn.navy { background: #1B2A4A; color: #fff; }
+  .c-btn.purple { background: #5F33E1; border-color: #5F33E1; color: #fff; }
+  .c-btn.tall { min-height: 60px; font-size: 19px; }
+  .c-icon { width: 52px; height: 52px; position: relative; border: 2px solid #1B2A4A; border-radius: 10px; background: #fff; display: grid; place-items: center; }
+  .c-unit { display: inline-flex; align-items: center; min-height: 34px; padding: 0 12px; border-radius: 17px; background: #EFEAFF; color: #4A25BC; font-size: 16px; font-weight: 800; }
+  .c-sheet { position: absolute; top: 70px; left: 12px; right: 12px; bottom: 10px; background: #fff; border-radius: 4px; box-shadow: 0 6px 18px rgba(27, 42, 74, 0.1); padding: 11px 18px; }
+  .c-head { display: flex; justify-content: space-between; align-items: flex-end; height: 52px; border-bottom: 2px solid #1B2A4A; }
+  .c-head h2 { font-family: var(--serif); font-size: 24px; font-weight: 700; margin-bottom: 10px; letter-spacing: -0.01em; }
+  .c-tabs { display: flex; gap: 4px; }
+  .c-tabs span { min-height: 52px; display: inline-flex; align-items: center; padding: 0 14px; border: 2px solid #C9D7E8; border-bottom: 0; border-radius: 10px 10px 0 0; background: #F4F7FB; color: #5B6B82; font-size: 17px; font-weight: 800; }
+  .c-tabs .on { background: #fff; color: #1B2A4A; border-color: #1B2A4A; position: relative; top: 2px; }
+  .c-ledger { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  .c-ledger th { height: 30px; font-size: 16px; color: #5B6B82; text-align: left; font-weight: 800; border-bottom: 1px solid #C9D7E8; padding: 0 8px; }
+  .c-ledger td { height: 52px; border-bottom: 1px solid #C9D7E8; font-size: 16px; font-weight: 600; padding: 0 8px; position: relative; }
+  .c-ledger td + td { border-left: 1px solid #E3EAF3; }
+  .c-ledger .t { font-size: 18px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .c-ledger td b { font-size: 17px; font-weight: 800; }
+  .c-ledger .sc { text-align: center; padding: 0; }
+  .c-ledger tr.now td { border-top: 3px solid #F5B400; }
+  .c-now { position: absolute; left: -10px; top: -15px; z-index: 2; background: #F5B400; color: #3A2A00; font-size: 16px; font-weight: 900; line-height: 26px; padding: 0 8px; border-radius: 12px; white-space: nowrap; }
+  .stamp { font-style: normal; display: inline-grid; place-items: center; width: 48px; height: 48px; border: 3px solid #C8102E; border-radius: 50%; color: #C8102E; font-weight: 900; font-size: 16px; transform: rotate(-9deg); opacity: 0.92; background: rgba(200, 16, 46, 0.04); }
+  .stamp.oval { width: auto; height: 40px; border-radius: 20px; padding: 0 12px; transform: rotate(-4deg); white-space: nowrap; }
+  .todo { display: inline-grid; place-items: center; width: 48px; height: 48px; border: 2px dashed rgba(27, 42, 74, 0.5); border-radius: 50%; color: #5B6B82; font-size: 16px; font-weight: 800; }
+  .money-red { color: #B42318; font-weight: 800; }
+  .c-foot { display: flex; align-items: center; gap: 14px; height: 52px; }
+  .c-foot b { font-size: 17px; font-weight: 800; }
+  .c-legend { font-size: 16px; color: #5B6B82; font-weight: 600; }
+  .c-pager { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 17px; font-weight: 800; }
+  .c-pager i { width: 52px; height: 52px; border: 2px solid #C9D7E8; border-radius: 10px; display: grid; place-items: center; font-style: normal; font-size: 20px; }
+  .c2 { position: absolute; top: 70px; left: 12px; right: 12px; bottom: 10px; display: grid; grid-template-columns: 1fr 250px; gap: 12px; }
+  .c-slip { background: #fff; border: 2px solid #1B2A4A; border-radius: 4px; padding: 10px 18px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .c-slip-head { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 2px solid #1B2A4A; padding-bottom: 4px; }
+  .c-slip-head h2 { font-family: var(--serif); font-size: 24px; font-weight: 700; letter-spacing: 0.08em; }
+  .c-slip-head span { font-size: 17px; color: #5B6B82; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .c-fields { display: grid; grid-template-columns: 1.2fr 1fr 0.8fr 1.3fr 0.6fr; border-bottom: 1px solid #C9D7E8; }
+  .c-fields div { padding: 2px 8px 6px; }
+  .c-fields div + div { border-left: 1px solid #E3EAF3; }
+  .c-fields dt { font-size: 16px; color: #5B6B82; font-weight: 700; }
+  .c-fields dd { font-size: 18px; font-weight: 800; white-space: nowrap; }
+  .c-items { width: 100%; border-collapse: collapse; }
+  .c-items th { height: 30px; font-size: 16px; color: #5B6B82; text-align: left; font-weight: 800; border-bottom: 1px solid #C9D7E8; padding: 0 8px; }
+  .c-items td { height: 52px; border-bottom: 1px solid #C9D7E8; font-size: 17px; font-weight: 700; padding: 0 8px; }
+  .c-items td + td { border-left: 1px solid #E3EAF3; }
+  .c-items .sc { text-align: center; padding: 0; width: 76px; }
+  .c-items .num { font-variant-numeric: tabular-nums; }
+  .c-promise { display: grid; gap: 2px; font-size: 17px; font-weight: 600; }
+  .c-promise b { display: inline-block; min-width: 76px; font-weight: 800; }
+  .c-money { display: flex; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid #C9D7E8; padding-top: 4px; }
+  .c-money p { font-size: 17px; font-weight: 700; }
+  .c-stamps { display: flex; gap: 8px; }
+  .c-side { display: flex; flex-direction: column; gap: 8px; background: #fff; border-radius: 4px; padding: 12px; }
+  .c-side .c-btn { width: 100%; }
+  .c3 { position: absolute; top: 70px; left: 12px; right: 12px; bottom: 74px; display: grid; grid-template-columns: 1fr 268px; gap: 12px; }
+  .c-list { position: static; padding: 0 18px 10px; border-radius: 4px; background: #fff; overflow: hidden; }
+  .c-note { background: #FFF3B8; margin: 0 -18px 8px; padding: 8px 18px; border-bottom: 1px solid #EAD98A; display: flex; justify-content: space-between; align-items: baseline; }
+  .c-note h2 { font-family: var(--serif); font-size: 22px; font-weight: 700; }
+  .c-note span { font-size: 17px; font-weight: 800; color: #5B6B82; font-variant-numeric: tabular-nums; }
+  .c-pin { border: 2px dashed #C8102E; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 2px 2px 2px 12px; min-height: 64px; font-size: 17px; font-weight: 700; }
+  .c-pin b { color: #C8102E; font-weight: 900; }
+  .c-sec { font-size: 18px; font-weight: 900; margin: 8px 0 0; display: flex; gap: 10px; align-items: baseline; min-height: 30px; }
+  .c-sec span { color: #5B6B82; font-size: 16px; font-weight: 800; }
+  .c-sec.next { color: #5B6B82; border-top: 1px solid #C9D7E8; padding-top: 6px; }
+  .c-rows li { display: grid; grid-template-columns: 56px 150px 1fr auto; align-items: center; gap: 12px; min-height: 60px; border-bottom: 1px solid #C9D7E8; }
+  .c-rows .box { width: 56px; height: 56px; border: 2px solid #1B2A4A; border-radius: 8px; display: grid; place-items: center; font-style: normal; font-size: 28px; font-weight: 900; color: #fff; }
+  .c-rows li.got .box { background: #1B2A4A; }
+  .c-rows b { font-size: 18px; font-weight: 800; white-space: nowrap; }
+  .c-rows span { font-size: 17px; font-weight: 600; color: #34425F; }
+  .c-rows li.got b, .c-rows li.got span { color: #5B6B82; }
+  .c-pad { background: #fff; border-radius: 4px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .c-pad h3 { font-size: 18px; font-weight: 900; }
+  .c-display { height: 52px; border: 2px solid #9FB1C9; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: 900; letter-spacing: 0.3em; color: #9FB1C9; }
+  .c-keys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .c-keys span { height: 56px; border: 2px solid #C9D7E8; border-radius: 10px; display: grid; place-items: center; font-size: 22px; font-weight: 800; }
+  .c-keys span.w { font-size: 17px; }
+  .c-keys span.go { background: #1B2A4A; border-color: #1B2A4A; color: #fff; font-size: 17px; }
+  .c-load { font-size: 16px; font-weight: 700; color: #34425F; border-top: 1px solid #C9D7E8; padding-top: 6px; }
+  .c-load b { display: block; font-size: 17px; color: #1B2A4A; }
+  .c-foot2 { position: absolute; left: 0; right: 0; bottom: 0; height: 64px; background: #fff; border-top: 1px solid #C9D7E8; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; font-size: 18px; font-weight: 800; }
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20.5 20.5 16 16"/></symbol>
+    <symbol id="i-truck" viewBox="0 0 24 24"><path d="M2 6h12v10H2z"/><path d="M14 9h4l3 3v4h-7"/><circle cx="6.5" cy="17.5" r="2"/><circle cx="17.5" cy="17.5" r="2"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 9a6 6 0 0 1 12 0c0 6 2.5 8 2.5 8h-17S6 15 6 9"/><path d="M10.3 20.5a1.9 1.9 0 0 0 3.4 0"/></symbol>
+    <symbol id="i-exit" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></symbol>
+    <symbol id="i-phone" viewBox="0 0 24 24"><path d="M21 16.5v3a2 2 0 0 1-2.2 2A19.8 19.8 0 0 1 2.5 5.2 2 2 0 0 1 4.5 3h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8.4 10.8a16 16 0 0 0 4.8 4.8l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-wallet" viewBox="0 0 24 24"><path d="M4 7h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7z"/><path d="M4 7l11-3v3"/><circle cx="16" cy="13.5" r="1.2"/></symbol>
+    <symbol id="i-keypad" viewBox="0 0 24 24"><rect x="4" y="3" width="4" height="4" rx="1"/><rect x="10" y="3" width="4" height="4" rx="1"/><rect x="16" y="3" width="4" height="4" rx="1"/><rect x="4" y="10" width="4" height="4" rx="1"/><rect x="10" y="10" width="4" height="4" rx="1"/><rect x="16" y="10" width="4" height="4" rx="1"/><rect x="10" y="17" width="4" height="4" rx="1"/></symbol>
+  </defs>
+</svg>
+
+<main class="page" id="top">
+  <header class="intro">
+    <p class="eyebrow">스키노트 · UI 다시 보기 · 샘플 · 2026년 9월 23일</p>
+    <h1>색이 아니라 일하는 방식부터 바꾼 세 가지 방향</h1>
+    <p>같은 세 화면(<b>오늘 할 일 · 접수 확인 · 차량 화면</b>)을 서로 다른 생각으로 다시 짰습니다. 샘플 자료는 모두 같습니다: 12월 26일 토요일 오후 3시 40분, 전화로 예약한 <b>박준호 팀</b>(스키 2 · 보드 1 · 헬멧 3 · 야간권 3매)이 장비를 받으러 오고, 밤에는 차량이 설천 주차장에서 반납을 받습니다.</p>
+    <p class="note">모두 코드로 그린 시안입니다(가장 작은 포스 크기 1024×600 그대로 · 글자 16px 이상 · 누르는 곳 52px 이상, 차량 56px). 같은 문구로 뽑은 그림 시안은 공개 저장소에 넣지 않았습니다(옛 저장소 ski-rent-ops의 design/higgsfield/pos-redesign-v1). 기준은 이 코드 시안입니다.</p>
+  </header>
+
+  <div class="tools">
+    <div class="tabs" role="tablist" aria-label="방향 고르기">
+      <button type="button" class="tab" role="tab" id="tab-A" aria-selected="true" aria-controls="dir-A">A 시간표<span>시간 줄이 곧 할 일</span></button>
+      <button type="button" class="tab" role="tab" id="tab-B" aria-selected="false" aria-controls="dir-B">B 한 번에 하나<span>다음 할 일 하나만 크게</span></button>
+      <button type="button" class="tab" role="tab" id="tab-C" aria-selected="false" aria-controls="dir-C">C 장부<span>종이 장부 · 접수증 그대로</span></button>
+    </div>
+    <button type="button" class="real-toggle" id="real-toggle" aria-pressed="false">실제 크기로 보기</button>
+  </div>
+
+  <!-- ================= A ================= -->
+  <section class="dir on" id="dir-A" role="tabpanel" aria-labelledby="tab-A">
+    <div class="dir-head">
+      <h2>A 시간표 — 가게 일은 시계가 정한다</h2>
+      <p>반납은 오전·오후·야간 타임에 몰리고, 배달·수거도 시각 약속입니다. 그래서 첫 화면을 '지금 몇 시에 무엇이 있나'로 만들었습니다. 왼쪽 메뉴 9개 대신 위쪽 네 칸(오늘 · 손님 찾기 · 차량 · 마감)만 둡니다.</p>
+    </div>
+
+    <article class="shot">
+      <div class="shot-head"><h3>오늘 할 일</h3><span>A1 · 오늘 시간표</span></div>
+      <div class="stage"><div class="frame fa" role="img" aria-label="A 시간표 방식의 오늘 할 일 화면">
+        <header class="a-top">
+          <div class="brand"><b>스키노트</b><span>우리 스키샵</span></div>
+          <nav class="a-nav"><span class="on">오늘</span><span><svg class="ic"><use href="#i-search"/></svg>손님 찾기</span><span><svg class="ic"><use href="#i-truck"/></svg>차량</span><span>마감</span></nav>
+          <div class="a-right"><span class="a-btn blue">새 접수</span><span class="a-icon"><svg class="ic"><use href="#i-bell"/></svg><i class="badge">2</i></span><span class="a-btn"><svg class="ic"><use href="#i-exit"/></svg>나가기</span></div>
+        </header>
+        <div class="a1">
+          <section class="a-panel">
+            <div class="a-ph"><h3>오늘 시간표</h3><span>12월 26일 (토) · 지금 15:40</span></div>
+            <ol class="a-rows">
+              <li class="done"><b class="t">12:00</b><i class="dot"></i><div><p>오전타임 반납 · 3팀</p></div><span class="ok">✓ 완료</span></li>
+              <li class="now"><span>지금 15:40</span></li>
+              <li><b class="t">16:00</b><i class="dot"></i><div><p>수령 · 박준호 팀</p><small>스키 2 · 보드 1 · 헬멧 3 · 전화 예약</small></div><span class="a-btn blue">접수 확인</span></li>
+              <li><b class="t">16:30</b><i class="dot"></i><div><p>오후타임 반납 · 6팀</p><small>매장 4팀 · 차량 2팀</small></div><span class="a-btn">반납 목록</span></li>
+              <li><b class="t">17:00</b><i class="dot"></i><div><p>배달 · 최하은 팀<em class="van">1호 차량</em></p><small>만선 광장 · 적재 전</small></div><span class="a-btn">적재</span></li>
+              <li><b class="t">20:30</b><i class="dot"></i><div><p>야간 수거 준비 · 12팀</p><small>1호 차량 · 수거 목록 인쇄</small></div><span class="a-btn">수거 목록</span></li>
+              <li><b class="t">22:00</b><i class="dot"></i><div><p>야간타임 반납 · 12팀<em class="van">차량</em></p><small>설천 주차장 외 3곳</small></div></li>
+            </ol>
+          </section>
+          <aside class="a-panel a-glance">
+            <div class="a-ph"><h3>오늘 한눈에</h3></div>
+            <dl>
+              <div><dt>수령</dt><dd>14 <s>/ 18팀</s></dd></div>
+              <div><dt>반납</dt><dd>9 <s>/ 21팀</s></dd></div>
+              <div><dt>차량</dt><dd>7 <s>/ 15건</s></dd></div>
+              <div><dt>미수</dt><dd class="red">485,000원</dd></div>
+            </dl>
+            <span class="a-pill amber">발권 필요 6매 · 17:00 전</span>
+            <span class="a-btn wide"><svg class="ic"><use href="#i-search"/></svg>손님 찾기 · 끝 4자리</span>
+          </aside>
+        </div>
+      </div></div>
+      <p>'지금 15:40' 노란 줄 아래가 앞으로 할 일입니다. 반납이 몰리는 16:30과 밤 야간 수거 준비를 놓치지 않게 합니다. 시간이 없는 일(미수 · 발권)은 오른쪽 '오늘 한눈에'에 모읍니다.</p>
+    </article>
+
+    <article class="shot">
+      <div class="shot-head"><h3>접수 확인</h3><span>A2 · 한 팀의 여정</span></div>
+      <div class="stage"><div class="frame fa" role="img" aria-label="A 시간표 방식의 접수 확인 화면">
+        <header class="a-top">
+          <div class="brand"><b>스키노트</b><span>우리 스키샵</span></div>
+          <nav class="a-nav"><span>오늘</span><span class="on"><svg class="ic"><use href="#i-search"/></svg>손님 찾기</span><span><svg class="ic"><use href="#i-truck"/></svg>차량</span><span>마감</span></nav>
+          <div class="a-right"><span class="a-btn blue">새 접수</span><span class="a-icon"><svg class="ic"><use href="#i-bell"/></svg><i class="badge">2</i></span><span class="a-btn"><svg class="ic"><use href="#i-exit"/></svg>나가기</span></div>
+        </header>
+        <div class="a2">
+          <section class="a-panel a-team">
+            <div class="who"><h2>박준호 팀</h2><span>010-0000-0022 · 3명</span><span class="a-pill blue">전화 예약</span></div>
+            <span class="a-btn"><svg class="ic"><use href="#i-phone"/></svg>전화</span>
+          </section>
+          <section class="a-panel a-track">
+            <ol>
+              <li class="done"><i>✓</i><b>예약</b><small>12/24</small></li>
+              <li class="now"><i></i><b>수령 16:00</b><span class="a-pill amber">지금</span></li>
+              <li><i></i><b>이용</b><small>오늘</small></li>
+              <li><i></i><b>반납 22:00</b><small>설천 주차장 · 차량</small></li>
+              <li><i></i><b>정산</b><small>마감 때</small></li>
+            </ol>
+          </section>
+          <div class="a2-low">
+            <section class="a-panel a-items">
+              <table>
+                <thead><tr><th>품목</th><th>수량</th><th>반납 약속</th><th>상태</th></tr></thead>
+                <tbody>
+                  <tr><td>스키</td><td>2</td><td>22:00 설천 주차장</td><td class="st-wait">지급 전</td></tr>
+                  <tr><td>보드</td><td>1</td><td>22:00 설천 주차장</td><td class="st-wait">지급 전</td></tr>
+                  <tr><td>헬멧</td><td>3</td><td>22:00 설천 주차장</td><td class="st-wait">지급 전</td></tr>
+                  <tr><td>야간권 성인</td><td>3매</td><td>반납 없음</td><td class="st-ok">발권 완료</td></tr>
+                </tbody>
+              </table>
+            </section>
+            <section class="a-panel a-money">
+              <dl>
+                <div><dt>청구</dt><dd>225,000원</dd></div>
+                <div><dt>수납</dt><dd>105,000원<small>리프트권 · 계좌이체 12/24</small></dd></div>
+                <div><dt>미수</dt><dd class="red">120,000원</dd></div>
+              </dl>
+            </section>
+          </div>
+          <div class="a-actions"><span class="a-btn">약속 바꾸기</span><span class="a-btn">문제 해결</span><span class="a-btn blue big">지급 6개 · 120,000원 수납</span></div>
+        </div>
+      </div></div>
+      <p>한 팀이 어디까지 왔는지 기차 노선처럼 봅니다. 품목마다 반납 약속이 따로 보여서 '리프트권만 먼저', '숙소 반납' 같은 경우도 한 표에서 확인합니다.</p>
+    </article>
+
+    <article class="shot">
+      <div class="shot-head"><h3>차량 화면</h3><span>A3 · 오늘 경로 · 기사 태블릿</span></div>
+      <div class="stage"><div class="frame fa" role="img" aria-label="A 시간표 방식의 차량 화면">
+        <header class="a-top">
+          <div class="brand"><b>스키노트</b><span>우리 스키샵</span></div>
+          <span class="unit">1호 차량</span><span class="title">야간 수거</span>
+          <div class="a-right"><span class="a-icon"><svg class="ic"><use href="#i-bell"/></svg><i class="badge">1</i></span><span class="a-btn"><svg class="ic"><use href="#i-exit"/></svg>나가기</span></div>
+        </header>
+        <div class="a3">
+          <section class="a-panel">
+            <div class="a-ph"><h3>오늘 경로</h3><span>▲▼ 순서 바꾸기</span></div>
+            <div class="a-urgent"><b>빨리 확인 · 21:50</b><p>꽃마을 들국화 · 오승민 팀</p><small>조기 반납 · 매장 요청</small></div>
+            <ol class="a-stops">
+              <li class="cur"><b class="t">21:30</b><div><p>설천 주차장</p><span class="a-pill amber">지금 · 4 / 8팀</span></div><span class="ud"><i>▲</i><i>▼</i></span></li>
+              <li><b class="t">22:10</b><div><p>만선 티롤 앞</p><small>2팀</small></div><span class="ud"><i>▲</i><i>▼</i></span></li>
+              <li><b class="t">22:30</b><div><p>솔마을 한솔동</p><small>1팀</small></div><span class="ud"><i>▲</i><i>▼</i></span></li>
+            </ol>
+          </section>
+          <section class="a-panel">
+            <div class="a-ph"><h3>설천 주차장 · 남은 4팀</h3><span class="a-search"><svg class="ic"><use href="#i-keypad"/></svg>끝 4자리</span></div>
+            <ul class="a-teams">
+              <li><div><b>박준호 팀 · 0022</b><small>스키 2 · 보드 1 · 헬멧 3</small></div><span class="a-btn purple">모두 받음</span></li>
+              <li><div><b>서지훈 팀 · 0031</b><small>스키 3</small></div><span class="a-btn purple">모두 받음</span></li>
+              <li><div><b>조은비 팀 · 0033</b><small>보드 1 · 헬멧 1</small></div><span class="a-btn purple">모두 받음</span></li>
+              <li><div><b>백승현 팀 · 0035</b><small>스키 4 · 헬멧 4</small></div><span class="a-btn purple">모두 받음</span></li>
+            </ul>
+            <p class="a-got">받은 팀 4 · 김민수 · 이도윤 · 임하늘 · 한동수</p>
+          </section>
+        </div>
+        <footer class="a-foot"><span>차에 있는 것 · 스키 14 · 보드 3 · 의류 2 · 헬멧 6</span><span class="a-btn">전체 목록</span></footer>
+      </div></div>
+      <p>왼쪽은 도는 순서, 오른쪽은 지금 서 있는 곳의 팀입니다. 기사님이 ▲▼로 순서를 바꾸고, 매장에서 누른 '빨리 확인'은 맨 위 노란 칸에 고정됩니다.</p>
+    </article>
+  </section>
+
+  <!-- ================= B ================= -->
+  <section class="dir" id="dir-B" role="tabpanel" aria-labelledby="tab-B">
+    <div class="dir-head">
+      <h2>B 한 번에 하나 — 다음 할 일만 크게</h2>
+      <p>어느 메뉴로 갈지 고민하지 않게, 시스템이 급한 순서로 다음 할 일을 골라 줍니다. 화면마다 주황 버튼은 하나뿐이고, 위에서부터 하면 됩니다. 처음 온 직원이나 화면이 어려운 분에게 맞춘 방향입니다.</p>
+    </div>
+
+    <article class="shot">
+      <div class="shot-head"><h3>오늘 할 일</h3><span>B1 · 지금 할 일 + 다음 차례</span></div>
+      <div class="stage"><div class="frame fb" role="img" aria-label="B 한 번에 하나 방식의 오늘 할 일 화면">
+        <header class="b-top">
+          <div class="brand"><b>스키노트</b><span>우리 스키샵</span></div>
+          <span class="b-date">12월 26일 (토) 15:40</span>
+          <div class="b-right"><span class="b-icon"><svg class="ic"><use href="#i-bell"/></svg><i class="badge">2</i></span><span class="b-btn"><svg class="ic"><use href="#i-exit"/></svg>나가기</span></div>
+        </header>
+        <div class="b1">
+          <section class="b-card b-hero">
+            <span class="b-pill orange">지금 할 일 · 16:00 수령</span>
+            <h2>박준호 팀</h2>
+            <p class="b-sub">전화 예약 · 3명 · 010-0000-0022</p>
+            <p class="b-items">스키 2 · 보드 1 · 헬멧 3 · 야간권 3매</p>
+            <p class="b-money">리프트권 105,000원 받음 · <span class="red">장비 120,000원 미수</span></p>
+            <div class="b-actions"><span class="b-btn tall">나중에</span><span class="b-btn orange tall">접수 확인 ›</span></div>
+          </section>
+          <section class="b-next">
+            <div class="b-nh"><h3>다음 차례</h3><span>남은 일 12개</span></div>
+            <ol>
+              <li><b>16:30</b><em>반납</em><div><p>김영희 팀</p><small>매장</small></div></li>
+              <li><b>16:30</b><em>반납</em><div><p>이수진 팀</p><small>만선 광장 · 차량</small></div></li>
+              <li><b>17:00</b><em>발권</em><div><p>정하늘 팀</p><small>오후권 4매</small></div></li>
+              <li><b>17:00</b><em>배달</em><div><p>최하은 팀</p><small>만선 광장</small></div></li>
+            </ol>
+          </section>
+        </div>
+        <footer class="b-bar"><span class="b-btn"><svg class="ic"><use href="#i-plus"/></svg>새 손님</span><span class="b-btn"><svg class="ic"><use href="#i-search"/></svg>고객 찾기</span><span class="b-btn"><svg class="ic"><use href="#i-truck"/></svg>차량 운행</span><span class="b-btn"><svg class="ic"><use href="#i-wallet"/></svg>마감</span></footer>
+      </div></div>
+      <p>지금 가장 급한 일 하나를 크게 보여 주고, 끝나면 다음 차례가 올라옵니다. 손님이 불쑥 오면 아래 '고객 찾기'로 끝 4자리만 누르면 됩니다.</p>
+    </article>
+
+    <article class="shot">
+      <div class="shot-head"><h3>접수 확인</h3><span>B2 · 남은 일 목록</span></div>
+      <div class="stage"><div class="frame fb" role="img" aria-label="B 한 번에 하나 방식의 접수 확인 화면">
+        <header class="b-top">
+          <div class="brand"><b>스키노트</b><span>우리 스키샵</span></div>
+          <span class="b-btn">‹ 뒤로</span><span class="b-title">박준호 팀</span>
+          <div class="b-right"><span class="b-icon"><svg class="ic"><use href="#i-bell"/></svg><i class="badge">2</i></span><span class="b-btn"><svg class="ic"><use href="#i-exit"/></svg>나가기</span></div>
+        </header>
+        <div class="b-subline"><span>010-0000-0022 · 3명 · 전화 예약</span><b>할 일 4개 중 1개 끝</b></div>
+        <div class="b2">
+          <div class="b2-left">
+            <ol class="b-card b-check">
+              <li class="done"><i>✓</i><div><b>예약 · 리프트권 105,000원 받음</b><small>12월 24일 · 계좌이체</small></div></li>
+              <li class="cur"><i></i><div><b>장비 지급</b><small>스키 2 · 보드 1 · 헬멧 3 · 야간권 3매</small></div><span class="b-pill orange">지금</span></li>
+              <li><i></i><div><b>장비 값 받기</b><small>120,000원</small></div></li>
+              <li><i></i><div><b>반납</b><small>오늘 22:00 · 설천 주차장 · 차량이 받음</small></div></li>
+            </ol>
+            <span class="b-btn orange huge">장비 지급 6개</span>
+          </div>
+          <aside class="b-card b-promise">
+            <h3>이 팀의 약속</h3>
+            <dl>
+              <div><dt>받기</dt><dd>오늘 16:00 · 매장</dd></div>
+              <div><dt>돌려주기</dt><dd>오늘 22:00 · 설천 주차장 · 1호 차량</dd></div>
+              <div><dt>돈</dt><dd>리프트권 먼저 받음 · 장비는 지금</dd></div>
+            </dl>
+            <span class="b-btn">약속 바꾸기</span><span class="b-btn">문제 해결</span><span class="b-btn"><svg class="ic"><use href="#i-phone"/></svg>전화</span>
+          </aside>
+        </div>
+      </div></div>
+      <p>팀 화면을 '남은 일 목록'으로 바꿨습니다. 끝난 일은 초록 체크, 지금 할 일은 주황, 큰 버튼은 늘 다음 한 가지입니다. 오른쪽은 수령 · 반납 · 돈 세 가지 약속입니다.</p>
+    </article>
+
+    <article class="shot">
+      <div class="shot-head"><h3>차량 화면</h3><span>B3 · 한 팀씩 · 기사 태블릿</span></div>
+      <div class="stage"><div class="frame fb" role="img" aria-label="B 한 번에 하나 방식의 차량 화면">
+        <header class="b-top">
+          <div class="brand"><b>스키노트</b><span>우리 스키샵</span></div>
+          <span class="b-pill purple">1호 차량</span><span class="b-title" style="font-size:24px">설천 주차장 · 야간 반납</span>
+          <div class="b-right"><span class="b-pill purple">4 / 8팀 받음</span><span class="b-icon"><svg class="ic"><use href="#i-bell"/></svg><i class="badge">1</i></span><span class="b-btn"><svg class="ic"><use href="#i-exit"/></svg>나가기</span></div>
+        </header>
+        <div class="b-urgent"><div><b>빨리 확인 · 21:50</b><span>꽃마을 들국화 · 오승민 팀 조기 반납</span></div><span class="b-btn">지금 가기</span></div>
+        <div class="b3">
+          <span class="b-arrow">‹ 이전</span>
+          <section class="b-card b-one">
+            <small>다음 팀</small>
+            <h2>박준호 팀</h2>
+            <p>끝번호 0022 · 010-0000-0022</p>
+            <p class="b-items">스키 2 · 보드 1 · 헬멧 3</p>
+            <div class="b-3btn"><span class="b-btn purple huge">모두 받음</span><span class="b-btn huge">일부만 받음</span><span class="b-btn huge">안 옴</span></div>
+          </section>
+          <span class="b-arrow">다음 ›</span>
+        </div>
+        <footer class="b-bar driver"><span class="b-btn"><svg class="ic"><use href="#i-keypad"/></svg>끝 4자리로 찾기</span><span class="b-btn">전체 목록</span><span class="b-btn"><svg class="ic"><use href="#i-phone"/></svg>전화</span><span class="b-load">차에 있는 것<br>스키 14 · 보드 3 · 의류 2 · 헬멧 6</span></footer>
+      </div></div>
+      <p>한 팀씩 넘기며 받습니다. 장갑 낀 손으로도 누르기 쉬운 76px 버튼이고, 매장에서 온 '빨리 확인'은 위 노란 띠로 뜹니다. 휴대폰에서도 같은 모양으로 쓰기 좋습니다.</p>
+    </article>
+  </section>
+
+  <!-- ================= C ================= -->
+  <section class="dir" id="dir-C" role="tabpanel" aria-labelledby="tab-C">
+    <div class="dir-head">
+      <h2>C 장부 — 쓰던 종이를 그대로 화면에</h2>
+      <p>수기로 쓰던 대여 장부와 접수증, 차량 포스트잇을 그대로 옮겼습니다. 빈 동그라미를 누르면 확인 창 뒤에 빨간 도장이 찍혀 처리됩니다. 새로 배울 게 가장 적은 방향입니다.</p>
+    </div>
+
+    <article class="shot">
+      <div class="shot-head"><h3>오늘 할 일</h3><span>C1 · 오늘 대여 장부</span></div>
+      <div class="stage"><div class="frame fc" role="img" aria-label="C 장부 방식의 오늘 할 일 화면">
+        <header class="c-top">
+          <div class="brand"><b>스키노트</b><span>우리 스키샵</span></div>
+          <div class="c-right"><span class="c-search"><svg class="ic"><use href="#i-keypad"/></svg>끝 4자리</span><span class="c-btn navy">새 접수</span><span class="c-icon"><svg class="ic"><use href="#i-bell"/></svg><i class="badge">2</i></span><span class="c-btn"><svg class="ic"><use href="#i-exit"/></svg>나가기</span></div>
+        </header>
+        <section class="c-sheet">
+          <div class="c-head"><h2>12월 26일 (토) 대여 장부</h2><nav class="c-tabs"><span class="on">전체 18</span><span>수령</span><span>반납</span><span>미수 3</span><span>차량 12</span></nav></div>
+          <table class="c-ledger">
+            <colgroup><col style="width:66px"><col style="width:142px"><col style="width:196px"><col style="width:214px"><col style="width:124px"><col style="width:68px"><col style="width:68px"><col style="width:68px"></colgroup>
+            <thead><tr><th>시각</th><th>팀</th><th>품목</th><th>반납 약속</th><th>돈</th><th>지급</th><th>반납</th><th>수납</th></tr></thead>
+            <tbody>
+              <tr><td class="t">09:00</td><td><b>김민재 · 0021</b></td><td>스키 2 · 의류 1</td><td>16:30 만선 광장 · 차량</td><td>완료</td><td class="sc"><span class="stamp">지급</span></td><td class="sc"><span class="todo"></span></td><td class="sc"><span class="stamp">수납</span></td></tr>
+              <tr><td class="t">09:10</td><td><b>김민수 · 0025</b></td><td>스키 4 · 헬멧 2</td><td>22:00 설천 주차장 · 차량</td><td>완료</td><td class="sc"><span class="stamp">지급</span></td><td class="sc"><span class="todo"></span></td><td class="sc"><span class="stamp">수납</span></td></tr>
+              <tr><td class="t">09:20</td><td><b>김영희 · 0027</b></td><td>스키 2 · 의류 2 · 헬멧 1</td><td>16:30 매장</td><td class="money-red">미수 65,000</td><td class="sc"><span class="stamp">지급</span></td><td class="sc"><span class="todo"></span></td><td class="sc"><span class="todo"></span></td></tr>
+              <tr><td class="t">10:05</td><td><b>이수진 · 0023</b></td><td>보드 2 · 의류 2</td><td>16:30 만선 광장 · 차량</td><td>완료</td><td class="sc"><span class="stamp">지급</span></td><td class="sc"><span class="todo"></span></td><td class="sc"><span class="stamp">수납</span></td></tr>
+              <tr><td class="t">10:40</td><td><b>최은정 · 0024</b></td><td>스키 1 · 의류 1</td><td>12:00 매장</td><td>완료</td><td class="sc"><span class="stamp">지급</span></td><td class="sc"><span class="stamp">반납</span></td><td class="sc"><span class="stamp">수납</span></td></tr>
+              <tr><td class="t">13:30</td><td><b>윤서준 · 0028</b></td><td>스키 2 · 의류 2</td><td>내일 09:00 솔마을 한솔동</td><td class="money-red">미수 120,000</td><td class="sc"><span class="stamp">지급</span></td><td class="sc"><span class="todo"></span></td><td class="sc"><span class="todo"></span></td></tr>
+              <tr class="now"><td class="t"><span class="c-now">지금 15:40</span>16:00</td><td><b>박준호 · 0022</b></td><td>스키 2 · 보드 1 · 헬멧 3</td><td>22:00 설천 주차장 · 차량</td><td class="money-red">미수 120,000</td><td class="sc"><span class="todo"></span></td><td class="sc"><span class="todo"></span></td><td class="sc"><span class="todo"></span></td></tr>
+            </tbody>
+          </table>
+          <footer class="c-foot"><b>합계 · 18팀 · 지급 14 · 반납 9 · 미수 485,000원</b><span class="c-legend">○ 누르면 처리 · 도장 = 처리 완료</span><span class="c-pager"><i>‹</i>1 / 3쪽<i>›</i></span></footer>
+        </section>
+      </div></div>
+      <p>하루가 한 장의 장부입니다. 한 줄이 한 팀이고, 오른쪽 세 칸(지급 · 반납 · 수납)의 빈 동그라미를 누르면 그 일이 처리됩니다. 줄을 찾는 것 말고는 누를 게 두 번뿐입니다.</p>
+    </article>
+
+    <article class="shot">
+      <div class="shot-head"><h3>접수 확인</h3><span>C2 · 대여 접수증</span></div>
+      <div class="stage"><div class="frame fc" role="img" aria-label="C 장부 방식의 접수 확인 화면">
+        <header class="c-top">
+          <div class="brand"><b>스키노트</b><span>우리 스키샵</span></div>
+          <div class="c-right"><span class="c-search"><svg class="ic"><use href="#i-keypad"/></svg>끝 4자리</span><span class="c-btn navy">새 접수</span><span class="c-icon"><svg class="ic"><use href="#i-bell"/></svg><i class="badge">2</i></span><span class="c-btn"><svg class="ic"><use href="#i-exit"/></svg>나가기</span></div>
+        </header>
+        <div class="c2">
+          <section class="c-slip">
+            <div class="c-slip-head"><h2>대여 접수증</h2><span>No. 261226-017</span></div>
+            <dl class="c-fields">
+              <div><dt>날짜</dt><dd>12월 26일 (토)</dd></div>
+              <div><dt>구분</dt><dd>전화 예약</dd></div>
+              <div><dt>대표자</dt><dd>박준호</dd></div>
+              <div><dt>연락처</dt><dd>010-0000-0022</dd></div>
+              <div><dt>인원</dt><dd>3명</dd></div>
+            </dl>
+            <table class="c-items">
+              <thead><tr><th>품목</th><th>수량</th><th>금액</th><th class="sc">지급</th><th class="sc">반납</th></tr></thead>
+              <tbody>
+                <tr><td>스키</td><td class="num">2</td><td class="num">80,000원</td><td class="sc"><span class="todo"></span></td><td class="sc"><span class="todo"></span></td></tr>
+                <tr><td>보드</td><td class="num">1</td><td class="num">25,000원</td><td class="sc"><span class="todo"></span></td><td class="sc"><span class="todo"></span></td></tr>
+                <tr><td>헬멧</td><td class="num">3</td><td class="num">15,000원</td><td class="sc"><span class="todo"></span></td><td class="sc"><span class="todo"></span></td></tr>
+                <tr><td>야간권 성인</td><td class="num">3매</td><td class="num">105,000원</td><td class="sc"><span class="todo"></span></td><td class="sc">—</td></tr>
+              </tbody>
+            </table>
+            <div class="c-promise"><p><b>받기</b>12월 26일 16:00 · 매장</p><p><b>돌려주기</b>12월 26일 22:00 · 설천 주차장 · 1호 차량</p></div>
+            <div class="c-money"><p>청구 225,000원 · 수납 105,000원 (계좌이체 12/24) · <span class="money-red">미수 120,000원</span></p><div class="c-stamps"><span class="todo">지급</span><span class="todo">반납</span><span class="stamp">일부</span></div></div>
+          </section>
+          <aside class="c-side">
+            <span class="c-btn navy tall">지급 도장 · 6개</span>
+            <span class="c-btn">수납 · 120,000원</span>
+            <span class="c-btn">약속 바꾸기</span>
+            <span class="c-btn">문제 해결</span>
+            <span class="c-btn">인쇄</span>
+            <span class="c-btn"><svg class="ic"><use href="#i-phone"/></svg>전화</span>
+          </aside>
+        </div>
+      </div></div>
+      <p>손으로 쓰던 접수증 모양입니다. 품목마다 지급 · 반납 동그라미가 있어 '일부만 지급', '리프트권만 먼저 반납'을 줄 단위로 찍습니다. 같은 모양으로 인쇄해 손님께 드릴 수도 있습니다.</p>
+    </article>
+
+    <article class="shot">
+      <div class="shot-head"><h3>차량 화면</h3><span>C3 · 야간 수거 목록 · 기사 태블릿</span></div>
+      <div class="stage"><div class="frame fc" role="img" aria-label="C 장부 방식의 차량 화면">
+        <header class="c-top">
+          <div class="brand"><b>스키노트</b><span>우리 스키샵</span></div>
+          <span class="c-unit">1호 차량</span>
+          <div class="c-right"><span class="c-icon"><svg class="ic"><use href="#i-bell"/></svg><i class="badge">1</i></span><span class="c-btn"><svg class="ic"><use href="#i-exit"/></svg>나가기</span></div>
+        </header>
+        <div class="c3">
+          <section class="c-list">
+            <div class="c-note"><h2>오늘 야간 수거 목록</h2><span>21:40</span></div>
+            <div class="c-pin"><span><b>빨리 확인 · 21:50</b> 꽃마을 들국화 · 오승민 · 0039 · 조기 반납</span><span class="c-btn"><svg class="ic"><use href="#i-phone"/></svg>전화</span></div>
+            <h3 class="c-sec">설천 주차장 · 22:00 <span>4 / 8</span></h3>
+            <ul class="c-rows">
+              <li class="got"><i class="box">✓</i><b>김민수 · 0025</b><span>스키 4 · 헬멧 2</span><em class="stamp oval">받음 21:42</em></li>
+              <li><i class="box"></i><b>박준호 · 0022</b><span>스키 2 · 보드 1 · 헬멧 3</span><span class="c-btn"><svg class="ic"><use href="#i-phone"/></svg>전화</span></li>
+              <li><i class="box"></i><b>서지훈 · 0031</b><span>스키 3</span><span class="c-btn"><svg class="ic"><use href="#i-phone"/></svg>전화</span></li>
+              <li class="got"><i class="box">✓</i><b>이도윤 · 0029</b><span>보드 2</span><em class="stamp oval">받음 21:45</em></li>
+            </ul>
+            <h3 class="c-sec next">만선 티롤 앞 · 22:10 <span>0 / 2 · 다음 쪽</span></h3>
+          </section>
+          <aside class="c-pad">
+            <h3>끝 4자리로 찾기</h3>
+            <div class="c-display">_ _ _ _</div>
+            <div class="c-keys"><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span><span>8</span><span>9</span><span class="w">지우기</span><span>0</span><span class="go">찾기</span></div>
+            <p class="c-load"><b>차에 있는 것</b>스키 14 · 보드 3 · 의류 2 · 헬멧 6</p>
+          </aside>
+        </div>
+        <footer class="c-foot2"><span>받음 4 · 남음 7 · 1 / 3쪽</span><span class="c-btn purple tall">매장 입고 14개</span></footer>
+      </div></div>
+      <p>기사님이 쓰던 포스트잇을 그대로 옮긴 목록입니다. 칸을 누르면 받은 시각이 도장으로 찍히고, 손님이 다가오면 오른쪽 숫자판에 끝 4자리를 누릅니다. 사용자님이 정한 '차량은 촘촘한 줄 목록'도 지킵니다.</p>
+    </article>
+  </section>
+
+  <section class="compare" aria-labelledby="compare-title">
+    <h2 id="compare-title">세 방향 비교</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th scope="col"></th><th scope="col">A 시간표</th><th scope="col">B 한 번에 하나</th><th scope="col">C 장부</th><th scope="col">지금 화면</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">한 줄 생각</th><td>시간 줄이 곧 할 일</td><td>시스템이 다음 할 일을 골라 줌</td><td>종이 장부 · 접수증 그대로</td><td>단계별 메뉴 9개</td></tr>
+          <tr><th scope="row">메뉴</th><td>위쪽 4칸</td><td>아래 4칸</td><td>장부 탭 5개</td><td>왼쪽 9개</td></tr>
+          <tr><th scope="row">카운터 반납 확인까지</th><td>시간표 16:30 → 반납 목록 → 팀 → 확인<br>4번</td><td>고객 찾기 → 끝 4자리 → 큰 버튼 → 확인<br>숫자 4번 + 3번</td><td>장부에서 줄 찾기 → 반납 동그라미 → 확인<br>2번 + 찾기</td><td>4 반납·회수 → 카드 찾기 → 모두 받음 → 확인<br>3번 + 찾기</td></tr>
+          <tr><th scope="row">좋은 점</th><td>반납이 몰리는 시각과 야간 준비를 놓치지 않음</td><td>처음 온 직원도 바로 씀 · 누를 곳이 하나</td><td>배울 게 거의 없음 · 하루가 한 표에</td><td>—</td></tr>
+          <tr><th scope="row">걱정되는 점</th><td>시간 없는 일(미수 · 발권)이 묻힐 수 있음 → 오른쪽 한눈에</td><td>전체 흐름이 덜 보임 · 순서가 다르면 '나중에'</td><td>표 글자가 많음 · 한 쪽 7줄이라 쪽 넘김</td><td>메뉴가 많고 같은 팀이 여러 메뉴에 나옴</td></tr>
+          <tr><th scope="row">잘 맞는 사람</th><td>하루를 계획하는 사장님</td><td>아르바이트 · 처음 온 직원</td><td>수기 장부에 익숙한 분</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="pick">
+      <h3>제 생각</h3>
+      <ul>
+        <li><b>바탕은 C 장부</b>가 부모님께 가장 빨리 익숙해질 것 같습니다. 쓰던 종이와 같은 모양이기 때문입니다.</li>
+        <li>여기에 <b>A의 '지금' 노란 줄</b>(장부 안에 이미 넣었습니다)과 <b>B의 체크리스트 접수 확인</b>을 섞는 안을 추천합니다. 한 팀을 볼 때는 B2처럼 '남은 일'이 가장 헷갈리지 않습니다.</li>
+        <li>차량은 <b>C3 수거 목록 + A3의 ▲▼ 순서 바꾸기</b>가 야간 수거에 가장 맞습니다.</li>
+        <li>고르시면 그 방향으로 나머지 화면을 시안 → 검수 → 확인 → 구현 순서로 이어 가겠습니다.</li>
+      </ul>
+    </div>
+  </section>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  var tabs = Array.prototype.slice.call(document.querySelectorAll(".tab"));
+  var realBtn = document.getElementById("real-toggle");
+
+  function fit() {
+    var real = document.body.classList.contains("real");
+    document.querySelectorAll(".dir.on .stage").forEach(function (stage) {
+      var frame = stage.firstElementChild;
+      var width = stage.clientWidth;
+      if (!width) return;
+      var scale = real ? 1 : Math.min(1, width / 1024);
+      frame.style.transform = "scale(" + scale + ")";
+      stage.style.height = Math.round(600 * scale) + "px";
+    });
+  }
+
+  function select(id, focus) {
+    tabs.forEach(function (tab) {
+      var on = tab.id === "tab-" + id;
+      tab.setAttribute("aria-selected", on ? "true" : "false");
+      tab.tabIndex = on ? 0 : -1;
+      if (on && focus) tab.focus();
+    });
+    document.querySelectorAll(".dir").forEach(function (dir) {
+      dir.classList.toggle("on", dir.id === "dir-" + id);
+    });
+    fit();
+  }
+
+  tabs.forEach(function (tab, index) {
+    tab.addEventListener("click", function () { select(tab.id.slice(4)); });
+    tab.addEventListener("keydown", function (event) {
+      if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+      var next = tabs[(index + (event.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length];
+      select(next.id.slice(4), true);
+    });
+  });
+
+  realBtn.addEventListener("click", function () {
+    var on = !document.body.classList.contains("real");
+    document.body.classList.toggle("real", on);
+    realBtn.setAttribute("aria-pressed", on ? "true" : "false");
+    realBtn.textContent = on ? "화면 폭에 맞추기" : "실제 크기로 보기";
+    fit();
+  });
+
+  var start = (location.hash || "").replace("#", "").toUpperCase();
+  select(["A", "B", "C"].indexOf(start) >= 0 ? start : "A");
+  if (window.ResizeObserver) new ResizeObserver(fit).observe(document.querySelector(".page"));
+  else window.addEventListener("resize", fit);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fit);
+})();
+</script>
