@@ -23,9 +23,9 @@ test('regenerating the ledger triggers reproduces schema.sql exactly', () => {
   }
 });
 
-test('the generator covers 49 shop ledgers, 2 control ledgers and 13 no-delete business tables', () => {
-  assert.equal(LEDGERS.length, 49);
-  assert.equal(new Set(LEDGERS).size, 49);
+test('the generator covers 50 shop ledgers, 2 control ledgers and 13 no-delete business tables', () => {
+  assert.equal(LEDGERS.length, 50);
+  assert.equal(new Set(LEDGERS).size, 50);
   assert.equal(CONTROL_LEDGERS.length, 2);
   assert.equal(NO_DELETE.length, 13);
   const names = new Set(triggerNames(schema));
@@ -34,7 +34,7 @@ test('the generator covers 49 shop ledgers, 2 control ledgers and 13 no-delete b
     assert.ok(names.has(`${t}_no_delete`), `${t}_no_delete`);
   }
   for (const t of NO_DELETE) assert.ok(names.has(`${t}_no_delete`), `${t}_no_delete`);
-  assert.equal(names.size, 152, 'control 4 + shop 148');
+  assert.equal(names.size, 155, 'control 4 + shop 151');
 });
 
 test('a stale column list in schema.sql is caught by the regeneration', () => {

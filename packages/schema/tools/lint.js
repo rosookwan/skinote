@@ -6,7 +6,8 @@
 // 마이그레이션마다 문장을 나눠 허용 목록으로 확인한 뒤, 메모리 DB에 차례로 적용하며 적용 뒤 상태(열 목록, 장부 표)로
 // 트리거 모양과 외래 키 대상을 확인한다.
 // - 허용: CREATE TABLE · INDEX · VIEW, ADD COLUMN(빈 값 허용 또는 상수 기본값), sys_* · json_schemas INSERT,
-//   sys_event_types.engine_key UPDATE, 채우기 UPDATE(장부 표는 0001 수정 금지 열 밖만), DROP INDEX · VIEW,
+//   sys_event_types.engine_key UPDATE, sys_event_types · sys_movement_routes의 offline_allowed = 1 UPDATE(0 → 1만: 새
+//   sys_offline_commands 행과 함께 오프라인 허용을 넓힐 때), 채우기 UPDATE(장부 표는 0001 수정 금지 열 밖만), DROP INDEX · VIEW,
 //   정해진 모양의 트리거 네 가지(src/guards.js가 만드는 글과 토큰이 같아야 함).
 // - 금지: DROP TABLE · DROP COLUMN · RENAME, ADD COLUMN의 CHECK · REFERENCES · 기본값 없는 NOT NULL, CREATE TABLE … AS,
 //   표 안 UNIQUE, CHECK IN 목록(불리언 · 부호 밖), sys_* 행 key 바꾸기 · 지우기(DELETE 전부), DROP TRIGGER,
@@ -90,6 +91,40 @@ function setColumns(t, start) {
   }
   return cols;
 }
+
+/**
+ * UPDATE … SET의 맨 바깥 `열 = 값` 중 그 열의 값 토큰들(다음 쉼표나 FROM · WHERE 전까지).
+ * @param {Token[]} t @param {number} start SET 다음 위치 @param {string} column 소문자 열 이름
+ * @returns {Token[][]}
+ */
+function setValues(t, start, column) {
+  /** @type {Token[][]} */
+  const out = [];
+  let depth = 0;
+  for (let k = start; k < t.length; k += 1) {
+    const x = t[k];
+    if (x.type === 'punct' && x.value === '(') { depth += 1; continue; }
+    if (x.type === 'punct' && x.value === ')') { depth -= 1; continue; }
+    if (depth > 0) continue;
+    if (x.type === 'word' && ['FROM', 'WHERE', 'RETURNING', 'ORDER', 'LIMIT'].includes(x.upper)) break;
+    if (isName(x) && x.value.toLowerCase() === column && t[k + 1]?.value === '=') {
+      /** @type {Token[]} */
+      const value = [];
+      for (k += 2; k < t.length; k += 1) {
+        const y = t[k];
+        if (y.type === 'punct' && y.value === '(') depth += 1;
+        if (y.type === 'punct' && y.value === ')') depth -= 1;
+        if (depth === 0 && ((y.type === 'punct' && y.value === ',') || (y.type === 'word' && ['FROM', 'WHERE', 'RETURNING'].includes(y.upper)))) { k -= 1; break; }
+        value.push(y);
+      }
+      out.push(value);
+    }
+  }
+  return out;
+}
+
+/** sys 행에서 뒤 마이그레이션이 바꿀 수 있는 열: engine_key(묶음을 native로), offline_allowed(0 → 1만). */
+const SYS_UPDATABLE = Object.freeze({ sys_event_types: ['engine_key', 'offline_allowed'], sys_movement_routes: ['offline_allowed'] });
 
 /**
  * INSERT의 맨 바깥 ON CONFLICT 절: 없으면 null, 있으면 DO UPDATE(SET 열 목록) 또는 DO NOTHING.
@@ -258,8 +293,14 @@ export function lintMigrations(kind, migrations) {
             const set = t.findIndex((x, k) => k > i && x.type === 'word' && x.upper === 'SET');
             const cols = set > 0 ? setColumns(t, set + 1) : [];
             if (table.startsWith('sys_')) {
-              if (!(table === 'sys_event_types' && cols.length > 0 && cols.every(c => c === 'engine_key'))) {
-                report(s.line, 'SYS_UPDATE', `${table}(${cols.join(', ')}): sys_* 행은 sys_event_types.engine_key만 바꿀 수 있습니다`);
+              const updatable = /** @type {Record<string, string[]>} */ (SYS_UPDATABLE)[table] ?? [];
+              if (!(cols.length > 0 && cols.every(c => updatable.includes(c)))) {
+                report(s.line, 'SYS_UPDATE', `${table}(${cols.join(', ')}): sys_* 행은 sys_event_types.engine_key와 offline_allowed = 1(sys_event_types · sys_movement_routes)만 바꿀 수 있습니다`);
+              } else if (cols.includes('offline_allowed')) {
+                const values = setValues(t, set + 1, 'offline_allowed');
+                if (!values.every(v => v.length === 1 && v[0].type === 'number' && Number(v[0].value) === 1)) {
+                  report(s.line, 'SYS_UPDATE', `${table}.offline_allowed: 오프라인 허용은 0 → 1로 넓히기만 합니다(SET offline_allowed = 1)`);
+                }
               }
             } else {
               const locked = guardedBefore.get(table);

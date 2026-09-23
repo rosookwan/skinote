@@ -1,0 +1,186 @@
+{
+  "project": "skinote · 스키노트 POS",
+  "library": "docs/design/screens-v2/higgsfield",
+  "createdAt": "2026-09-24",
+  "purpose": "둘째 화면 묶음(부분 반납 · 약속 바꾸기 · 새 접수 · 접수 확정 · 한 번에 수납 · 하루 마감 · 기사 업무 판 · 매장 설정). 같은 설명서(spec.json)로 만든 코드 시안과 비교해 채택한다.",
+  "generation": {
+    "model": "gpt_image_2_5",
+    "variant": "flare",
+    "quality": "high",
+    "resolution": "2k",
+    "aspect_ratio": "27:16",
+    "output": "2592×1536",
+    "creditsPerImage": 3,
+    "credits": 27,
+    "balanceBefore": 1020.25,
+    "regenerations": 0,
+    "prompt": "spec.json의 common + screen.prompt 그대로(V7만 공통 문단의 포스 머리줄 설명을 뺌). 참조는 구현한 앱의 실제 화면을 올린 것(references)."
+  },
+  "references": {
+    "ledger": "a804257a-7a3c-4551-a4df-a30340d283b0 (work/screens/final/02-ledger-1024x600.png)",
+    "slip": "fac769bb-e791-47e1-8ea9-5034f8773dd7 (04-slip-o22-1024x600.png)",
+    "confirm": "64d6ae46-86b4-4db6-bf8a-29d912d6b98a (06-ledger-stamp-confirm-1024x600.png)",
+    "driver": "9aed7afb-6a95-49bb-be8d-8602dc51923b (09-driver-row-selected-1024x600.png)"
+  },
+  "note": "원본 PNG는 힉스필드 URL에만 둔다. 이 폴더에는 가로 1296px 미리보기 JPG만. 샘플 데이터 오탈자는 다시 뽑지 않고 기록만 한다.",
+  "final": [
+    {
+      "code": "V1",
+      "title": "반납 확인 창 · 부분 반납",
+      "preview": "v1-partial-return.jpg",
+      "job_id": "860bbf7a-b448-47ef-bd7c-df169930454c",
+      "url": "https://d8j0ntlcm91z4.cloudfront.net/user_3J2y32mXmk1jhAd5qmEsy69365Q/hf_20260923_161139_860bbf7a-b448-47ef-bd7c-df169930454c.png",
+      "references": [
+        "fac769bb-e791-47e1-8ea9-5034f8773dd7",
+        "64d6ae46-86b4-4db6-bf8a-29d912d6b98a"
+      ],
+      "wave": "1차(기준)",
+      "verdict": "통과",
+      "review": "통과. 뒤 접수증의 대표자 칸이 빠지고 돈 줄이 두 줄로 그려짐(흐린 배경이라 기록만).",
+      "regenerations": 0,
+      "adopted": false,
+      "graftedInto": "v1-partial-return.html — 품목 이름 22px, 품목 칸 사이 24 · 칸 안 왼쪽 여백 12, 번호 버튼 폭 64(가로 여유만. 세로는 1024×529 창 한도 505 · 줄 6개 창 500이라 그대로)"
+    },
+    {
+      "code": "V7",
+      "title": "기사 업무 판 · 한 팀",
+      "preview": "v7-driver-task.jpg",
+      "job_id": "2a600225-a557-4cf6-941b-ce82dc8a14a2",
+      "url": "https://d8j0ntlcm91z4.cloudfront.net/user_3J2y32mXmk1jhAd5qmEsy69365Q/hf_20260923_161139_2a600225-a557-4cf6-941b-ce82dc8a14a2.png",
+      "references": [
+        "9aed7afb-6a95-49bb-be8d-8602dc51923b"
+      ],
+      "wave": "1차(기준)",
+      "verdict": "통과",
+      "review": "통과. 문구 · 배치 요청대로. 기사 셸이라 공통 문단의 포스 머리줄 설명을 빼고 보냄.",
+      "regenerations": 0,
+      "adopted": false,
+      "graftedInto": "v7-driver-task-sheet.html — 오른쪽 판을 선 그림 + 글의 큰 버튼 넷(현장 수납 · 리프트권 추가 · 못 전함 · 전화, 164 / 1024×520은 124)이 채움, 왼쪽은 품목 줄 88(작은 틀 62) · 도장 56 · 이름 30px · 돈 줄을 종이 바닥에. 크기는 연결 띠가 뜬 높이로 정해 끊겨도 그대로"
+    },
+    {
+      "code": "V9",
+      "title": "약속 바꾸기 · 일부 품목",
+      "preview": "v9-change-promise.jpg",
+      "job_id": "0d1681c5-847e-49d0-9e69-b43c27d5e0d2",
+      "url": "https://d8j0ntlcm91z4.cloudfront.net/user_3J2y32mXmk1jhAd5qmEsy69365Q/hf_20260923_161956_0d1681c5-847e-49d0-9e69-b43c27d5e0d2.png",
+      "references": [
+        "fac769bb-e791-47e1-8ea9-5034f8773dd7",
+        "64d6ae46-86b4-4db6-bf8a-29d912d6b98a"
+      ],
+      "wave": "2차",
+      "verdict": "통과",
+      "review": "통과. '네솔동'이 '내솔동'으로 그려짐(샘플 이름 오탈자, 기록만).",
+      "regenerations": 0,
+      "adopted": false,
+      "graftedInto": null,
+      "adoptionNote": "옮긴 것 없음. 창이 1024×529 한도 505 중 503을 써서 여유가 없고, 그림의 '받는 사람' 줄 · 솔마을 장소 줄은 검토에서 없앤 모양"
+    },
+    {
+      "code": "V4",
+      "title": "접수 확정 창 · 칸별 수납",
+      "preview": "v4-confirm-payment.jpg",
+      "job_id": "e8205fc8-ce7e-4a67-8a3b-c4a0733ff691",
+      "url": "https://d8j0ntlcm91z4.cloudfront.net/user_3J2y32mXmk1jhAd5qmEsy69365Q/hf_20260923_161957_e8205fc8-ce7e-4a67-8a3b-c4a0733ff691.png",
+      "references": [
+        "64d6ae46-86b4-4db6-bf8a-29d912d6b98a",
+        "fac769bb-e791-47e1-8ea9-5034f8773dd7"
+      ],
+      "wave": "2차",
+      "verdict": "통과",
+      "review": "통과. 흐린 뒤 화면의 새 접수 내용이 요청과 조금 다름(기록만).",
+      "regenerations": 0,
+      "adopted": false,
+      "graftedInto": null,
+      "adoptionNote": "옮긴 것 없음. 그림의 창 폭(약 624)이 confirmWindow 860과 다르고, 할인 고르기를 수단 줄 끝에 떼어 둔 코드 시안의 틈이 칸마다 수단과 할인을 가른다"
+    },
+    {
+      "code": "V2",
+      "title": "새 접수 ① 품목 고르기",
+      "preview": "v2-new-order-items.jpg",
+      "job_id": "762027d1-c35c-4107-931a-5c980dc51a48",
+      "url": "https://d8j0ntlcm91z4.cloudfront.net/user_3J2y32mXmk1jhAd5qmEsy69365Q/hf_20260923_161957_762027d1-c35c-4107-931a-5c980dc51a48.png",
+      "references": [
+        "fac769bb-e791-47e1-8ea9-5034f8773dd7"
+      ],
+      "wave": "2차",
+      "verdict": "통과",
+      "review": "통과. 문구 · 배치 요청대로.",
+      "regenerations": 0,
+      "adopted": false,
+      "graftedInto": "v2-new-order-items.html — 고른 수 표시를 지름 32 · 흰 20px 숫자로 키움, 지금 연 종류는 4px 남색 테두리 + 아래 6px 선 + 아래 갈매기 그림(남색 바탕은 '고름'이라 쓰지 않음)"
+    },
+    {
+      "code": "V3",
+      "title": "새 접수 ② 약속 정하기",
+      "preview": "v3-new-order-promise.jpg",
+      "job_id": "9f0397f2-e6f7-4475-bdc3-ae270a8c36ce",
+      "url": "https://d8j0ntlcm91z4.cloudfront.net/user_3J2y32mXmk1jhAd5qmEsy69365Q/hf_20260923_161956_9f0397f2-e6f7-4475-bdc3-ae270a8c36ce.png",
+      "references": [
+        "fac769bb-e791-47e1-8ea9-5034f8773dd7"
+      ],
+      "wave": "2차",
+      "verdict": "통과",
+      "review": "통과. 문구 · 배치 요청대로.",
+      "regenerations": 0,
+      "adopted": false,
+      "graftedInto": null,
+      "adoptionNote": "옮긴 것 없음. 그림의 리프트권 권종 줄(권종은 V2에서만 고름) · '받는 방법' · '다음 · 확인'은 검토에서 바꾼 것이고, 모양의 차이는 작다"
+    },
+    {
+      "code": "V5",
+      "title": "한 번에 수납 · 여러 팀",
+      "preview": "v5-pay-many-teams.jpg",
+      "job_id": "4ffce580-4fc7-486d-8ae0-275e416622b8",
+      "url": "https://d8j0ntlcm91z4.cloudfront.net/user_3J2y32mXmk1jhAd5qmEsy69365Q/hf_20260923_161957_4ffce580-4fc7-486d-8ae0-275e416622b8.png",
+      "references": [
+        "fac769bb-e791-47e1-8ea9-5034f8773dd7",
+        "a804257a-7a3c-4551-a4df-a30340d283b0"
+      ],
+      "wave": "2차",
+      "verdict": "통과",
+      "review": "통과. 문구 · 배치 요청대로.",
+      "regenerations": 0,
+      "adopted": false,
+      "graftedInto": null,
+      "adoptionNote": "옮긴 것 없음. 줄 높이 52는 장부(02)의 미수 탭과 같은 줄이고 아래 빈 띠가 44로 작다. 그림의 '미수' 열 · '전부 ›' · 안내 글은 검토에서 없앤 것"
+    },
+    {
+      "code": "V6",
+      "title": "하루 마감",
+      "preview": "v6-day-close.jpg",
+      "job_id": "68d4d7e7-6c03-4108-8b6f-af23efbb1930",
+      "url": "https://d8j0ntlcm91z4.cloudfront.net/user_3J2y32mXmk1jhAd5qmEsy69365Q/hf_20260923_161956_68d4d7e7-6c03-4108-8b6f-af23efbb1930.png",
+      "references": [
+        "a804257a-7a3c-4551-a4df-a30340d283b0"
+      ],
+      "wave": "2차",
+      "verdict": "통과",
+      "review": "통과. 늦음 줄만 빨강, 기준 시각 띠 요청대로.",
+      "regenerations": 0,
+      "adopted": false,
+      "graftedInto": "v6-day-close.html — 두 칸의 줄이 남는 높이를 나눠 써(52~88: 1024×600 73·68, 569 65·62, 529 55·54) 종이 아래 빈 띠를 없앰. 계좌이체 0원 줄은 되살리지 않음(명세 3-7: 받은 돈이 없는 수단은 줄이 없다)"
+    },
+    {
+      "code": "V8",
+      "title": "매장 설정 · 리프트권과 하루 기준",
+      "preview": "v8-shop-rules.jpg",
+      "job_id": "f8740d7e-2e29-4135-8ede-ed3f9ae79c7b",
+      "url": "https://d8j0ntlcm91z4.cloudfront.net/user_3J2y32mXmk1jhAd5qmEsy69365Q/hf_20260923_161956_f8740d7e-2e29-4135-8ede-ed3f9ae79c7b.png",
+      "references": [
+        "a804257a-7a3c-4551-a4df-a30340d283b0"
+      ],
+      "wave": "2차",
+      "verdict": "통과",
+      "review": "통과. '당일 취소 환불'이 한 줄이 아니라 두 줄 카드로 그려짐(기록만).",
+      "regenerations": 0,
+      "adopted": false,
+      "graftedInto": "v8-shop-rules.html — 고르기 버튼이 카드 폭을 나눠 채움(값 버튼 '1매 5,000원 ›'만 제 폭). '당일 취소 환불'은 명세대로 한 줄 카드"
+    }
+  ],
+  "adoption": {
+    "decidedAt": "2026-09-24",
+    "rule": "아홉 장 모두 코드 시안(vN-*.html)을 채택한다(검토 73곳 반영 · 도메인 말이 맞음 · measure.mjs로 잼). 힉스필드 그림은 첫 설명서(검토 전)로 뽑아 문구 · 구조가 옛것이라 채택하지 않고, 화면 무게 배분이 더 나은 모양만 코드 시안에 옮겼다. 문구 · 도메인 동작은 바꾸지 않았다. 다시 뽑지 않음(크레딧 추가 0)",
+    "doc": "docs/design/screens-v2/adoption.md",
+    "measure": "node docs/design/screens-v2/measure.mjs → 9개 화면 · 통과 9 · 어긋남 0 · 파일 없음 0"
+  }
+}

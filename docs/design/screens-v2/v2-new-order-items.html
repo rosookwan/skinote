@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>새 접수 ① 품목 고르기 · 둘째 판 시안 V2</title>
+<link rel="stylesheet" href="base.css">
+<style>
+  /* V2 새 접수 ① 품목 고르기(spec.md 3-4). 틀은 2-1 가(접수증형): 왼쪽 접수증 종이 704 · 오른쪽 판 280. */
+
+  /* 종이 안: 머리 60 아래로 대표자 줄 · 종류 격자 · 고르는 줄 둘(사이 8). */
+  .v2-body { display: flex; flex-direction: column; gap: var(--sn-space-s); padding-top: var(--sn-space-s); }
+
+  /* 단계 탭의 동그라미 숫자: 글꼴의 ①은 작게 그려지므로 글자만 키운다(글은 그대로 '① 품목'). */
+  .v2-step-no { font-size: calc(var(--sn-font-big) + var(--sn-space-xs)); font-weight: 700; line-height: 1; vertical-align: -0.08em; }
+
+  /* 대표자 줄(52): 대표자 · 연락처는 누르면 글자판 · 숫자판이 올라오는 칸 상자, 인원은 −/+ */
+  .v2-rep { display: flex; align-items: center; gap: var(--sn-space-s); height: var(--sn-target); }
+  .v2-field {
+    justify-content: flex-start; gap: var(--sn-space-s); padding: 0 var(--sn-space-m);
+    border-color: var(--sn-rule); text-align: left;
+  }
+  .v2-field > small { font-size: var(--sn-font-min); font-weight: 700; color: var(--sn-ink-muted); }
+  .v2-field > b { font-size: var(--sn-font-big); font-weight: 900; }
+  .v2-field.is-name { flex: 1 1 0; min-width: 0; }
+  .v2-field.is-phone { flex: none; }
+  .v2-field.is-phone .sn-icon { color: var(--sn-ink-muted); }
+  .v2-people { display: flex; align-items: center; gap: var(--sn-space-s); flex: none; padding-left: var(--sn-space-s); }
+  .v2-people > small { font-size: var(--sn-font-min); font-weight: 700; color: var(--sn-ink-muted); }
+  .v2-people .sn-qty-value { min-width: calc(var(--sn-target) * 1.25); }
+
+  /* 종류 버튼: 3열 격자, 칸 높이 56. 첫 줄 이름 20px, 둘째 줄 값 16px, 고른 수는 오른쪽 끝 둥근 표시. */
+  .v2-kinds { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sn-space-s); }
+  .v2-kind {
+    justify-content: space-between; gap: var(--sn-space-s);
+    min-height: calc(var(--sn-target) + var(--sn-space-xs)); padding: 0 var(--sn-space-m); text-align: left;
+  }
+  .v2-kind-text { display: flex; flex-direction: column; justify-content: center; min-width: 0; line-height: 1.1; }
+  .v2-kind-text > b { font-size: var(--sn-font-big); font-weight: 900; }
+  .v2-kind-text > small { font-size: var(--sn-font-min); font-weight: 700; color: var(--sn-ink-muted); }
+  /* 고른 수(채택 adoption.md: 힉스필드 그림처럼 크게): 지름 32 남색 동그라미에 20px 흰 숫자. */
+  .v2-count {
+    display: inline-grid; place-items: center; flex: none;
+    min-width: calc(var(--sn-font-title) + var(--sn-space-s)); height: calc(var(--sn-font-title) + var(--sn-space-s));
+    padding: 0 var(--sn-space-xs); border-radius: var(--sn-font-title);
+    background: var(--sn-ink); color: var(--sn-paper); font-size: var(--sn-font-big); font-weight: 900; line-height: 1;
+  }
+  /* 지금 연 종류: '고름'(남색 바탕)과 다른 모양. 아래 고르는 띠와 같은 옅은 바탕 + 4px 테두리 + 아래 6px 남색 띠 +
+     아래 갈매기 그림(icons.tsx 'down')으로 '이 종류의 줄이 아래에 열려 있음'을 보인다. 힉스필드 그림은 남색 바탕이었지만
+     남색 바탕은 '고름'의 모양이라 쓰지 않는다(명세 3-4). 고른 것은 수 표시(남색 동그라미) 하나로만 보인다. */
+  .v2-kind[aria-expanded='true'] {
+    background: var(--sn-paper-shade);
+    box-shadow: inset 0 0 0 var(--sn-line-strong) var(--sn-ink), inset 0 calc(var(--sn-space-xs) * -1) 0 var(--sn-ink);
+  }
+  .v2-kind-end { display: flex; align-items: center; gap: var(--sn-space-xs); flex: none; }
+  .v2-kind-end > .sn-icon { width: 1.5em; height: 1.5em; stroke-width: 3; }
+
+  /* 고르는 줄 둘: 연 종류(의류)의 규격과 그 규격의 수량. 옅은 바탕 띠로 묶어 '위에서 연 종류의 줄'임을 보인다. */
+  .v2-open {
+    display: flex; flex-direction: column; gap: var(--sn-space-s);
+    padding: 0 var(--sn-space-s);
+    border-radius: var(--sn-radius-m); background: var(--sn-paper-shade);
+  }
+  .v2-pick { display: flex; align-items: center; gap: var(--sn-space-s); height: var(--sn-target); }
+  .v2-pick-label { flex: none; width: 7em; font-size: var(--sn-font-body); font-weight: 900; white-space: nowrap; }
+  .v2-size { min-width: calc(var(--sn-target) * 1.5); }
+  .v2-pick .sn-qty-value { min-width: calc(var(--sn-target) * 1.5); }
+  .v2-pick .mk-note { padding-left: var(--sn-space-s); white-space: nowrap; }
+
+  /* 오른쪽 판: 제목 40 · 고른 것 4줄 208 · 합계 · 주 버튼 56 */
+  .v2-picked { display: flex; flex-direction: column; flex: none; }
+  .v2-picked-row {
+    display: flex; flex-direction: column; justify-content: center; width: 100%; height: var(--sn-target);
+    padding: 0 var(--sn-space-s); border: 0; background: transparent; text-align: left; line-height: 1.15;
+    box-shadow: inset 0 calc(var(--sn-line) * -1) 0 var(--sn-rule-soft);
+  }
+  .v2-picked-top { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sn-space-s); width: 100%; }
+  .v2-picked-top > b { font-size: var(--sn-font-base); font-weight: 800; white-space: nowrap; }
+  .v2-picked-top > span { font-size: var(--sn-font-base); font-weight: 900; white-space: nowrap; }
+  .v2-picked-row > small { font-size: var(--sn-font-min); font-weight: 600; color: var(--sn-ink-soft); white-space: nowrap; }
+  /* 합계 네 줄: 이름은 왼쪽, 금액은 위 고른 것 줄과 같은 오른쪽 금액 칸(눈이 금액 한 줄을 따라 내려가게). */
+  .v2-sum { line-height: 1.25; }
+  .v2-sum-line { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sn-space-s); padding: 0 var(--sn-space-s); white-space: nowrap; }
+  .v2-sum-line > span:last-child { font-weight: 900; }
+  .v2-sum > .is-total { line-height: 1.2; }
+  /* 합계는 장비 + 리프트권이다. 보증금은 합계에 넣지 않고 따로 받는 돈이라 합계 아래 따로 둔다(더해 보고 헷갈리지 않게). */
+  .v2-sum > .is-deposit { color: var(--sn-ink-muted); font-weight: 800; }
+  .v2-go { width: 100%; margin-top: auto; padding: 0 var(--sn-space-m); }
+</style>
+</head>
+<body>
+<div class="sn-root" data-device="pos" data-accent="orange">
+  <div class="sn-screen">
+    <header class="sn-header">
+      <div class="sn-header-left">
+        <button type="button" class="sn-header-home" aria-label="장부"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 4.5A1.5 1.5 0 0 1 5.5 3H19v15H5.5A1.5 1.5 0 0 0 4 19.5z"/><path d="M4 19.5A1.5 1.5 0 0 0 5.5 21H19v-3"/><path d="M8 7h7M8 10.5h7"/></svg><span>장부</span></button>
+        <span class="sn-fit sn-header-shop">우리 스키샵</span>
+      </div>
+      <div class="sn-header-right">
+        <button type="button" class="sn-button sn-header-find" aria-label="끝 4자리"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="3" width="4" height="4" rx="1"/><rect x="10" y="3" width="4" height="4" rx="1"/><rect x="16" y="3" width="4" height="4" rx="1"/><rect x="4" y="10" width="4" height="4" rx="1"/><rect x="10" y="10" width="4" height="4" rx="1"/><rect x="16" y="10" width="4" height="4" rx="1"/><rect x="10" y="17" width="4" height="4" rx="1"/></svg><span>끝 4자리</span></button>
+        <button type="button" class="sn-button">수거 목록</button>
+        <button type="button" class="sn-button">리프트권</button>
+        <button type="button" class="sn-button">확인 필요</button>
+        <button type="button" class="sn-icon-button" aria-label="알림 2건"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 9a6 6 0 0 1 12 0c0 6 2.5 8 2.5 8h-17S6 15 6 9"/><path d="M10.3 20.5a1.9 1.9 0 0 0 3.4 0"/></svg><span class="sn-badge">2</span></button>
+        <button type="button" class="sn-button">관리</button>
+        <button type="button" class="sn-button" aria-label="나가기"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg><span>나가기</span></button>
+      </div>
+    </header>
+
+    <div class="sn-desk pos-slip-desk">
+      <article class="sn-slip" aria-label="새 접수 · 품목">
+        <header class="sn-slip-head">
+          <h1 class="sn-slip-title">새 접수</h1>
+          <div class="sn-tabs mk-head-tabs" role="tablist" aria-label="새 접수 단계">
+            <button type="button" class="sn-tab" role="tab" aria-selected="true"><span class="v2-step-no">①</span> 품목</button>
+            <button type="button" class="sn-tab" role="tab" aria-selected="false"><span class="v2-step-no">②</span> 약속</button>
+            <button type="button" class="sn-tab" role="tab" aria-selected="false"><span class="v2-step-no">③</span> 확정</button>
+          </div>
+        </header>
+
+        <div class="v2-body">
+          <div class="v2-rep">
+            <button type="button" class="sn-button v2-field is-name" aria-label="대표자 이민호 · 누르면 이름 넣기"><small>대표자</small><b>이민호</b></button>
+            <button type="button" class="sn-button v2-field is-phone" aria-label="연락처 010-0000-0042 · 누르면 숫자판"><small>연락처</small><b>010-0000-0042</b><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="3" width="4" height="4" rx="1"/><rect x="10" y="3" width="4" height="4" rx="1"/><rect x="16" y="3" width="4" height="4" rx="1"/><rect x="4" y="10" width="4" height="4" rx="1"/><rect x="10" y="10" width="4" height="4" rx="1"/><rect x="16" y="10" width="4" height="4" rx="1"/><rect x="10" y="17" width="4" height="4" rx="1"/></svg></button>
+            <div class="v2-people" role="group" aria-label="인원">
+              <small>인원</small>
+              <button type="button" class="sn-qty-button" aria-label="하나 빼기">−</button>
+              <span class="sn-qty-value">4명</span>
+              <button type="button" class="sn-qty-button" aria-label="하나 더하기">+</button>
+            </div>
+          </div>
+
+          <div class="v2-kinds" role="group" aria-label="품목 종류">
+            <button type="button" class="sn-button v2-kind" aria-expanded="false"><span class="v2-kind-text"><b>스키</b><small>1일 40,000원</small></span><span class="v2-count" aria-label="고른 수 4">4</span></button>
+            <button type="button" class="sn-button v2-kind" aria-expanded="false"><span class="v2-kind-text"><b>보드</b><small>1일 25,000원</small></span></button>
+            <button type="button" class="sn-button v2-kind" aria-expanded="false"><span class="v2-kind-text"><b>부츠</b><small>1일 10,000원</small></span></button>
+            <button type="button" class="sn-button v2-kind" aria-expanded="true"><span class="v2-kind-text"><b>의류</b><small>1일 20,000원</small></span><span class="v2-kind-end"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6"/></svg><span class="v2-count" aria-label="고른 수 3">3</span></span></button>
+            <button type="button" class="sn-button v2-kind" aria-expanded="false"><span class="v2-kind-text"><b>헬멧</b><small>1일 5,000원</small></span><span class="v2-count" aria-label="고른 수 1">1</span></button>
+            <button type="button" class="sn-button v2-kind" aria-expanded="false"><span class="v2-kind-text"><b>고글</b><small>1일 5,000원</small></span></button>
+            <button type="button" class="sn-button v2-kind" aria-expanded="false" aria-label="리프트권 · 야간권 4매 · 누르면 권종과 매수 고르기"><span class="v2-kind-text"><b>리프트권</b><small>야간권 35,000원</small></span><span class="v2-count" aria-label="고른 수 4">4</span></button>
+          </div>
+
+          <div class="v2-open" role="group" aria-label="의류 고르기">
+            <div class="v2-pick">
+              <span class="v2-pick-label">의류 사이즈</span>
+              <div class="mk-choices">
+                <button type="button" class="sn-button mk-choice v2-size" aria-pressed="false">90</button>
+                <button type="button" class="sn-button mk-choice v2-size" aria-pressed="false">95 · 2벌</button>
+                <button type="button" class="sn-button mk-choice v2-size" aria-pressed="true">100 · 1벌</button>
+                <button type="button" class="sn-button mk-choice v2-size" aria-pressed="false">105</button>
+                <button type="button" class="sn-button mk-choice v2-size" aria-pressed="false">110</button>
+              </div>
+            </div>
+            <div class="v2-pick">
+              <span class="v2-pick-label">사이즈 100</span>
+              <button type="button" class="sn-qty-button" aria-label="하나 빼기">−</button>
+              <span class="sn-qty-value">1벌</span>
+              <button type="button" class="sn-qty-button" aria-label="하나 더하기">+</button>
+              <span class="mk-note">의류 모두 3벌</span>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <aside class="pos-side" aria-label="고른 것">
+        <div class="mk-panel-title"><span>고른 것</span></div>
+        <ol class="v2-picked">
+          <li><button type="button" class="v2-picked-row"><span class="v2-picked-top"><b>스키 4대</b><span>160,000원</span></span><small>부츠 · 폴 포함</small></button></li>
+          <li><button type="button" class="v2-picked-row"><span class="v2-picked-top"><b>의류 3벌</b><span>60,000원</span></span><small>95 2벌 · 100 1벌</small></button></li>
+          <li><button type="button" class="v2-picked-row"><span class="v2-picked-top"><b>헬멧 1개</b><span>5,000원</span></span><small>사이즈 중</small></button></li>
+          <li><button type="button" class="v2-picked-row"><span class="v2-picked-top"><b>야간권 성인 4매</b><span>140,000원</span></span><small>보증금 · 이 매장은 1매 5,000원</small></button></li>
+        </ol>
+        <div class="mk-sum mk-rule v2-sum">
+          <span class="v2-sum-line"><span>장비</span><span>225,000원</span></span>
+          <span class="v2-sum-line"><span>리프트권</span><span>140,000원</span></span>
+          <span class="v2-sum-line is-total"><span>합계</span><span>365,000원</span></span>
+          <span class="v2-sum-line is-deposit"><span>보증금 · 따로 받음</span><span>20,000원</span></span>
+        </div>
+        <button type="button" class="sn-primary v2-go" data-primary="true">다음 · 약속 정하기</button>
+      </aside>
+    </div>
+
+    <footer class="sn-footer">
+      <div class="sn-footer-metrics">
+        <div class="pos-footer-back">
+          <button type="button" class="sn-button"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m15 6-6 6 6 6"/></svg><span>장부</span></button>
+          <span class="sn-fit">새 접수 · 이민호 팀 · 4명</span>
+        </div>
+      </div>
+    </footer>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>하루 마감 · 둘째 판 시안 V6</title>
+<link rel="stylesheet" href="base.css">
+<script>
+  // 상태 변형(마감 차례: 차량 현금 세기 → 돈통 세기 → 마감하기). 주황 주 버튼은 늘 '지금 할 일' 하나이고, 그 줄에 옅은 주황.
+  //   #before  아무것도 세기 전: 주 버튼 '차량 현금 세기 · 35,000원', 차량 줄이 지금 할 일
+  //   #drawer  차량 현금을 센 뒤: 주 버튼 '돈통 세기', 돈통 줄이 지금 할 일(예상에 차량 현금이 들어감)
+  //   그린 상태 둘 다 센 뒤(차이 0원): 주 버튼 '마감하기'
+  (function () {
+    var PRIMARY = { before: '차량 현금 세기 · 35,000원', drawer: '돈통 세기', ready: '마감하기' };
+    function apply() {
+      var state = location.hash === '#before' ? 'before' : location.hash === '#drawer' ? 'drawer' : 'ready';
+      document.documentElement.setAttribute('data-state', state);
+      var primary = document.querySelector('[data-primary="true"]');
+      if (primary) primary.textContent = PRIMARY[state];
+    }
+    document.addEventListener('DOMContentLoaded', apply);
+    window.addEventListener('hashchange', apply);
+  })();
+</script>
+<style>
+  /* V6 하루 마감(spec.md 3-7). 틀은 2-1 나(장부형): 종이 한 장, 제목 60(기준 표시가 제목줄 오른쪽) · 본문 408.
+     본문 = 위 여백 8 + 두 칸(왼쪽 600 · 사이 16 · 오른쪽 348) + 아래 여백 16. 가장 작을 때(줄 52) 두 칸은 300이라
+     설치한 앱 높이(1024×569 본문 377, 1024×529 본문 337)에도 들어간다.
+     채택(adoption.md): 힉스필드 그림처럼 종이 아래가 비지 않게, 줄이 남는 높이를 나눠 쓴다(52 이상 88 이하).
+     줄 높이 = (화면 높이 − 머리 · 바닥 · 제목 · 위아래 여백 − 표 머리 · 사이) ÷ 줄 수. 1024×600 → 왼쪽 73 · 오른쪽 68,
+     1024×569 → 65 · 62, 1024×529 → 55 · 54. 받은 돈이 없는 수단(계좌이체 0원)은 여전히 줄이 없다(명세 3-7). */
+
+  /* 상태 변형: 한 문서에 세 상태의 글을 두고 html[data-state]로 하나만 보인다. */
+  html:not([data-state='before']) .is-before,
+  html:not([data-state='drawer']) .is-drawer,
+  html:not([data-state='ready']) .is-ready,
+  html[data-state='before'] .not-before { display: none; }
+
+  /* 제목줄 오른쪽: 하루 기준 표시(지금 줄과 같은 금색 · 늦음이 아니므로 빨강이 아님). 제목과 같은 줄에 두어 본문 48px를 아낀다. */
+  .v6-cutoff {
+    display: flex; align-items: center; gap: var(--sn-space-s); flex: none;
+    height: var(--sn-thead-h); margin-bottom: var(--sn-space-s); padding: 0 var(--sn-space-m) 0 var(--sn-space-s);
+    border-radius: var(--sn-radius-s); background: var(--sn-now-wash); box-shadow: inset var(--sn-line-stamp) 0 0 var(--sn-now);
+  }
+  .v6-cutoff .sn-now-label { margin-left: var(--sn-space-xs); }
+  .v6-cutoff-text { font-size: var(--sn-font-body); font-weight: 800; color: var(--sn-now-ink); white-space: nowrap; }
+
+  .v6-body {
+    display: flex; gap: var(--sn-space-l); flex: 1 1 0; min-height: 0; padding: var(--sn-space-s) 0 var(--sn-space-l);
+    /* 두 칸이 쓸 수 있는 높이(1024×600 → 384). */
+    --v6-room: calc(100dvh - var(--sn-header-h) - var(--sn-footer-h) - var(--sn-title-h) - var(--sn-space-s) - var(--sn-space-l));
+  }
+
+  /* 왼쪽: 받은 돈 표(머리 40 + 줄 × 2) · 사이 12 · 셀 돈 표(머리 40 + 줄 × 2). 받은 돈이 없는 수단은 줄이 없다. */
+  .v6-left {
+    display: flex; flex-direction: column; gap: var(--sn-space-m); flex: none; width: 600px;
+    --v6-row: clamp(var(--sn-row-h), round(down, (var(--v6-room) - var(--sn-thead-h) * 2 - var(--sn-space-m)) / 4, 1px), var(--sn-row2-h));
+  }
+  .v6-table { width: 100%; }
+  .v6-table .sn-row > td { height: var(--v6-row); font-size: var(--sn-font-body); font-weight: 700; }
+  .v6-table .sn-cell-action { height: var(--v6-row); }
+  .v6-name { font-size: var(--sn-font-body); font-weight: 900; white-space: nowrap; }
+  .v6-count { font-weight: 800; white-space: nowrap; }
+  .v6-amount { font-size: var(--sn-font-big); font-weight: 900; white-space: nowrap; }
+  .v6-table .sn-cell-stack > b,
+  .v6-table .sn-cell-stack > span { white-space: nowrap; }
+  .v6-sub { font-size: var(--sn-font-min); font-weight: 700; color: var(--sn-ink-muted); white-space: nowrap; }
+  .v6-line { font-size: var(--sn-font-body); font-weight: 700; white-space: nowrap; }
+  .v6-line > b { font-weight: 900; }
+  .v6-wait { font-size: var(--sn-font-min); font-weight: 700; color: var(--sn-ink-muted); white-space: nowrap; }
+  .v6-table th.v6-th-amount { padding-right: var(--sn-space-s); }
+  /* 동작 칸: 칸 전체가 버튼(앱의 수거 목록 '전화' 칸과 같음), 왼쪽 세로 선, 상자 없음. */
+  .v6-table td.is-action .sn-cell-action { color: var(--sn-ink); }
+  .v6-table td.is-stamp .sn-stamp.is-done.is-dated { width: calc(var(--sn-stamp) * 1.4); }
+  /* 지금 할 일 줄: 남은 일 목록의 '지금' 줄과 같은 옅은 주황. */
+  html[data-state='before'] .v6-table .sn-row.v6-row-van > td,
+  html[data-state='drawer'] .v6-table .sn-row.v6-row-drawer > td { background: var(--sn-orange-wash); }
+
+  /* 오른쪽: 27일로 넘길 일(머리 40 + 두 줄 줄 × 5). 줄을 누르면 그 목록 · 접수증. 5종을 넘으면 쪽을 넘긴다(한 쪽 5줄은 그대로). */
+  .v6-right {
+    display: flex; flex-direction: column; flex: 1 1 0; min-width: 0;
+    --v6-hand-row: clamp(var(--sn-target), round(down, (var(--v6-room) - var(--sn-thead-h)) / 5, 1px), var(--sn-row2-h));
+  }
+  .v6-right .mk-panel-title { flex: none; height: var(--sn-thead-h); padding: 0 var(--sn-space-s); }
+  .v6-hand {
+    width: 100%; min-height: var(--sn-target); height: var(--v6-hand-row); border: 0; background: transparent; color: var(--sn-ink); text-align: left;
+  }
+  .v6-hand .mk-list-main > b { font-size: var(--sn-font-body); font-weight: 900; }
+  .v6-hand .sn-icon { color: var(--sn-ink-muted); }
+  /* 늦은 것 한 줄: 왼쪽 3px 늦음 막대(장부의 늦은 줄과 같은 모양). */
+  .v6-hand.is-late { box-shadow: inset var(--sn-line-stamp) 0 0 var(--sn-late), inset 0 calc(var(--sn-line) * -1) 0 var(--sn-rule-soft); }
+</style>
+</head>
+<body>
+<div class="sn-root" data-device="pos" data-accent="orange">
+  <div class="sn-screen">
+    <header class="sn-header">
+      <div class="sn-header-left">
+        <button type="button" class="sn-header-home" aria-label="장부"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 4.5A1.5 1.5 0 0 1 5.5 3H19v15H5.5A1.5 1.5 0 0 0 4 19.5z"/><path d="M4 19.5A1.5 1.5 0 0 0 5.5 21H19v-3"/><path d="M8 7h7M8 10.5h7"/></svg><span>장부</span></button>
+        <span class="sn-fit sn-header-shop">우리 스키샵</span>
+      </div>
+      <div class="sn-header-right">
+        <button type="button" class="sn-button sn-header-find" aria-label="끝 4자리"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="3" width="4" height="4" rx="1"/><rect x="10" y="3" width="4" height="4" rx="1"/><rect x="16" y="3" width="4" height="4" rx="1"/><rect x="4" y="10" width="4" height="4" rx="1"/><rect x="10" y="10" width="4" height="4" rx="1"/><rect x="16" y="10" width="4" height="4" rx="1"/><rect x="10" y="17" width="4" height="4" rx="1"/></svg><span>끝 4자리</span></button>
+        <button type="button" class="sn-button">수거 목록</button>
+        <button type="button" class="sn-button">리프트권</button>
+        <button type="button" class="sn-button">확인 필요</button>
+        <button type="button" class="sn-icon-button" aria-label="알림 2건"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 9a6 6 0 0 1 12 0c0 6 2.5 8 2.5 8h-17S6 15 6 9"/><path d="M10.3 20.5a1.9 1.9 0 0 0 3.4 0"/></svg><span class="sn-badge">2</span></button>
+        <button type="button" class="sn-button">관리</button>
+        <button type="button" class="sn-button" aria-label="나가기"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg><span>나가기</span></button>
+      </div>
+    </header>
+
+    <div class="sn-desk">
+      <section class="sn-sheet">
+        <div class="sn-titlebar">
+          <h1 class="sn-title"><span class="sn-fit">12월 26일 (토) 마감</span></h1>
+          <div class="v6-cutoff" role="status">
+            <span class="sn-now-label">지금 27일 00:40</span>
+            <span class="v6-cutoff-text">새벽 6시 전이라 26일 장부 · 00:15 정하늘 · 0041 반납 포함</span>
+          </div>
+        </div>
+
+        <div class="v6-body">
+          <div class="v6-left">
+            <table class="sn-ledger-table v6-table">
+              <colgroup><col style="width: 196px"><col style="width: 72px"><col></colgroup>
+              <thead>
+                <tr><th scope="col">받은 돈</th><th scope="col" class="align-end">건수</th><th scope="col" class="align-end v6-th-amount">금액</th></tr>
+              </thead>
+              <tbody>
+                <tr class="sn-row">
+                  <td><span class="v6-name">카드</span></td>
+                  <td class="align-end"><span class="v6-count">11건</span></td>
+                  <td class="align-end"><span class="v6-amount">1,525,000원</span></td>
+                </tr>
+                <tr class="sn-row">
+                  <td><span class="sn-cell-stack"><span class="v6-name">현금</span><span class="v6-sub">1호 차량 35,000원 포함</span></span></td>
+                  <td class="align-end"><span class="v6-count">6건</span></td>
+                  <td class="align-end"><span class="v6-amount">440,000원</span></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <table class="sn-ledger-table v6-table">
+              <colgroup><col style="width: 196px"><col><col style="width: 112px"></colgroup>
+              <thead>
+                <tr><th scope="col">셀 돈</th><th scope="col" colspan="2">예상 · 센 금액</th></tr>
+              </thead>
+              <tbody>
+                <tr class="sn-row v6-row-van">
+                  <td><span class="sn-cell-stack"><span class="v6-name">1호 차량 현금</span><span class="v6-sub">23:48 입고 · 보냄 대기 0</span></span></td>
+                  <td>
+                    <span class="sn-cell-stack is-before"><span class="v6-line">예상 35,000원</span><b class="tone-purple">아직 안 셈</b></span>
+                    <span class="sn-cell-stack not-before"><span class="v6-line">예상 35,000원</span><span class="v6-line">센 금액 35,000원 · <b class="tone-green">차이 0원</b></span></span>
+                  </td>
+                  <td class="is-action is-before"><button type="button" class="sn-cell-action">내일 세기</button></td>
+                  <td class="is-stamp align-center not-before"><span class="sn-stamp-cell is-done" role="img" aria-label="넘김 확인 00:32"><span class="sn-stamp is-done is-dated"><span class="sn-stamp-text">확인</span><span class="sn-stamp-time">00:32</span></span></span></td>
+                </tr>
+                <tr class="sn-row v6-row-drawer">
+                  <td><span class="sn-cell-stack"><span class="v6-name">카운터 돈통</span><span class="v6-sub">시재 100,000원 포함</span></span></td>
+                  <td colspan="2" class="is-before"><span class="v6-wait">차량 현금을 센 뒤에 셉니다</span></td>
+                  <td class="not-before">
+                    <span class="sn-cell-stack is-drawer"><span class="v6-line">예상 545,000원 · 보증금 5,000원 포함</span><span class="v6-line">센 금액 — · 차이 —</span></span>
+                    <span class="sn-cell-stack is-ready"><span class="v6-line">예상 545,000원 · 보증금 5,000원 포함</span><span class="v6-line">센 금액 545,000원 · <b class="tone-green">차이 0원</b></span></span>
+                  </td>
+                  <td class="is-action not-before"><button type="button" class="sn-cell-action is-ready">다시 세기</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="v6-right">
+            <div class="mk-panel-title">27일로 넘길 일 · 5</div>
+            <div class="mk-list">
+              <button type="button" class="mk-list-row v6-hand">
+                <span class="mk-list-main"><b>미수 · 1팀 · 120,000원</b><small>윤서준 · 0028 · 27일 09:00 반납 때</small></span>
+                <svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 6 6 6-6 6"/></svg>
+              </button>
+              <button type="button" class="mk-list-row v6-hand">
+                <span class="mk-list-main"><b>27일 반납 장비 · 8개 · 2팀</b><small>윤서준 · 0028 / 이정호 · 0032</small></span>
+                <svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 6 6 6-6 6"/></svg>
+              </button>
+              <button type="button" class="mk-list-row v6-hand is-late">
+                <span class="mk-list-main"><b>안 돌아온 리프트권 · 1매 · <span class="tone-late">늦음</span></b><small>최하은 · 0026 · 22:10 약속</small></span>
+                <svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 6 6 6-6 6"/></svg>
+              </button>
+              <button type="button" class="mk-list-row v6-hand">
+                <span class="mk-list-main"><b>보증금 보관 중 · 리프트권 1매 · 5,000원</b><small>최하은 · 0026 · 돈통에 있음</small></span>
+                <svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 6 6 6-6 6"/></svg>
+              </button>
+              <button type="button" class="mk-list-row v6-hand">
+                <span class="mk-list-main"><b>확인 필요 · 1건</b><small>김민수 · 0025 · 헬멧 1개 입고 안 됨</small></span>
+                <svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 6 6 6-6 6"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <footer class="sn-footer">
+      <div class="sn-footer-metrics">
+        <div class="pos-footer-back">
+          <button type="button" class="sn-button" aria-label="장부로 돌아가기"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m15 6-6 6 6 6"/></svg><span>장부</span></button>
+          <span class="sn-fit is-ready">받은 돈 1,965,000원 · 돈통 차이 0원</span>
+          <span class="sn-fit is-drawer">받은 돈 1,965,000원 · 돈통을 세면 마감할 수 있습니다</span>
+          <span class="sn-fit is-before">받은 돈 1,965,000원 · 차량 현금부터 셉니다</span>
+        </div>
+      </div>
+      <button type="button" class="sn-primary" data-primary="true">마감하기</button>
+    </footer>
+  </div>
+</div>
+</body>
+</html>

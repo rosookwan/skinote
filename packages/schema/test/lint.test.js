@@ -32,7 +32,7 @@ const codes = problems => [...new Set(problems.map(p => p.code))].sort();
 test('the shipped control and shop migrations pass the lint', () => {
   const { problems, ledgers } = lintAll();
   assert.deepEqual(problems, []);
-  assert.equal(ledgers.size, 52, '49 shop ledgers + events + 2 control ledgers');
+  assert.equal(ledgers.size, 53, '50 shop ledgers + events + 2 control ledgers');
 });
 
 test('the package code itself passes the code lint (no raw connections, no REPLACE on ledgers)', () => {
@@ -55,6 +55,9 @@ const FORBIDDEN = [
   ['INSERT OR IGNORE on a ledger', "INSERT OR IGNORE INTO payments (shop_id, id) VALUES ('S1', 'x');", 'INSERT_OR_IGNORE'],
   ['INSERT into a business table', "INSERT INTO orders (shop_id, id) VALUES ('S1', 'x');", 'INSERT_TARGET'],
   ['changing a sys key', "UPDATE sys_features SET key = 'cars' WHERE key = 'vehicles';", 'SYS_UPDATE'],
+  ['taking an offline permission back (1 -> 0)', "UPDATE sys_event_types SET offline_allowed = 0 WHERE key = 'stock.load';", 'SYS_UPDATE'],
+  ['an offline flag set to anything but 1', "UPDATE sys_movement_routes SET offline_allowed = driver_allowed WHERE movement_kind_key = 'receive';", 'SYS_UPDATE'],
+  ['another column of a movement route', "UPDATE sys_movement_routes SET driver_allowed = 1 WHERE movement_kind_key = 'load';", 'SYS_UPDATE'],
   ['deleting a sys row', "DELETE FROM sys_features WHERE key = 'sms';", 'DELETE'],
   ['DROP TRIGGER', 'DROP TRIGGER payments_no_update;', 'DROP_TRIGGER'],
   ['editing a guarded ledger column', 'UPDATE payments SET amount = 0;', 'LEDGER_UPDATE'],
@@ -125,6 +128,10 @@ function allowedMigration() {
     '-- sys 어휘 더하기, 묶음을 native로 옮기기, 뷰',
     "INSERT INTO sys_place_uses (key, label, added_in) VALUES ('ski_room', '스키 보관실', 2);",
     "UPDATE sys_event_types SET engine_key = 'native' WHERE key = 'order.extend';",
+    '-- 오프라인 허용 넓히기(sync 8-2): 새 sys_offline_commands 행과 두 표시(0 → 1만)',
+    "INSERT INTO sys_offline_commands (event_type_key, device_kind_key, limit_key, added_in) VALUES ('stock.receive', 'driver_tablet', NULL, 2);",
+    "UPDATE sys_event_types SET offline_allowed = 1 WHERE key = 'stock.receive';",
+    "UPDATE sys_movement_routes SET offline_allowed = 1 WHERE movement_kind_key = 'receive' AND from_kind_key = 'vehicle' AND to_kind_key = 'shop';",
     'CREATE VIEW open_order_ids AS SELECT shop_id, id FROM orders WHERE is_open = 1;',
     'DROP VIEW open_order_ids;',
   ].join('\n');

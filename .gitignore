@@ -20,6 +20,14 @@ coverage/
 *.db-wal
 *.db-shm
 
+# 가져오기 · 내보내기 · 암호화한 백업 파일(운영 자료는 저장소 밖 폴더에서만, deployment.md 8절)
+/data/
+/exports/
+*.csv
+*.xlsx
+*.age
+*.enc
+
 # 비밀 · 개인 설정
 .env
 .env.*

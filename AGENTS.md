@@ -12,6 +12,7 @@
 | 돈 · 품목 · 가격 | [catalog-and-pricing.md](docs/architecture/catalog-and-pricing.md), data-model 4-12 · 4-13 |
 | 동기화 · 오프라인 · 명령 | [sync-and-concurrency.md](docs/architecture/sync-and-concurrency.md) |
 | 일정 · 옮기기 | [migration-plan.md](docs/architecture/migration-plan.md), [docs/roadmap.md](docs/roadmap.md) |
+| 배치 · 서버 · 라이선스 · 백업 · 개인정보 | [deployment.md](docs/architecture/deployment.md)(ADR-19 클라우드 중심) |
 
 ## 화면 규칙(반드시, 검사기가 확인)
 
@@ -60,7 +61,7 @@
 - **SQL은 저장소 패키지(`packages/store`, 아직 없음)에만 쓴다.** `packages/domain`은 SQL 없는 순수 함수다. 예외는 `packages/schema`(스키마 · 마이그레이션 · 그 도구)뿐이다. 화면 · 부품 · 계약 패키지에는 SQL이 없다.
 - 데이터베이스 연결은 `packages/schema`의 `openDatabase()`로 열거나 `verifyConnection()`으로 확인한다(`foreign_keys`, `recursive_triggers`, WAL, `synchronous = FULL`). `DatabaseSync`를 직접 열지 않는다.
 - **마이그레이션은 앞으로만, 더하기만 한다**(data-model 7-2). `packages/schema/migrations/NNNN_<control|shop>[_이름].sql`에 새 파일을 더하고, 이미 있는 파일은 고치지 않는다(checksum이 막는다).
-  - 허용: CREATE TABLE · INDEX · VIEW, 빈 값 허용이나 상수 기본값의 `ADD COLUMN`, `sys_*` · `json_schemas` INSERT, 채우기 UPDATE, 정해진 모양의 트리거 네 가지(생성기 `src/guards.js`가 만든 것과 같아야 함).
+  - 허용: CREATE TABLE · INDEX · VIEW, 빈 값 허용이나 상수 기본값의 `ADD COLUMN`, `sys_*` · `json_schemas` INSERT, 채우기 UPDATE, 정해진 모양의 트리거 네 가지(생성기 `src/guards.js`가 만든 것과 같아야 함), `sys_event_types.engine_key` UPDATE, `sys_event_types` · `sys_movement_routes`의 `offline_allowed` 0 → 1 UPDATE(1 → 0은 금지).
   - 금지: DROP TABLE · DROP COLUMN · RENAME, `ADD COLUMN`의 `CHECK` · `REFERENCES` · 기본값 없는 `NOT NULL`, 표 안 `UNIQUE`(이름 있는 인덱스로), `CHECK (x IN (…))` 목록(어휘 표 FK로), `sys_*` key 바꾸기 · 지우기(`INSERT … ON CONFLICT DO UPDATE`로 바꾸는 것 · `DO NOTHING` 포함), 0001이 보호하는 장부 열의 UPDATE(조건이 붙은 '한 번만' · '가리기만' 열 포함), DELETE, DROP TRIGGER, 트랜잭션 · PRAGMA 문장.
   - 이미 있는 장부 표에 `ADD COLUMN`을 하면 같은 마이그레이션에 그 열의 '한 번만' 트리거(`<표>_<열>_once`, 자유 글이면 `_redact_only`)를 둔다.
   - 새 매장 표는 `shop_id`로 시작하는 키와 복합 FK, 새 장부 표는 추가 전용 트리거를 같은 마이그레이션에 둔다.
@@ -78,7 +79,8 @@
 
 - 공개 체험판(https://rosookwan.github.io/skinote/)은 화면 견본이고 `FixtureClient`의 예시 자료로만 돈다.
 - **관리자 콘솔, 계정 정보(비밀번호 · 토큰 · 키), 실제 손님 자료를 체험판과 저장소에 넣지 않는다.** 예시 전화번호는 `010-0000-xxxx`만 쓴다. `.env`와 `*.sqlite` 파일은 올리지 않는다. `npm run check:dist`가 빌드에서 관리자 경로 · 비밀 키 모양 · 진짜 전화번호를 찾는다.
-- 관리자 콘솔은 시즌 뒤의 따로 된 앱(`apps/admin`)이고 운영 서버의 숨은 주소에서만 연다.
+- 관리자 콘솔은 시즌 뒤의 따로 된 앱(`apps/admin`)이다. 숨긴 주소로 지키지 않고 **매장 앱과 다른 주소 + 접근 제한**(IP 허용 목록 · VPN · mTLS 중 하나, 하드웨어 키 2단계 인증)으로 지킨다. 매장 앱 주소에는 `/admin` 경로가 없다([deployment.md](docs/architecture/deployment.md) 3절).
+- **운영 자료(손님 이름 · 전화, 장부 파일, 백업, 운영 화면 캡처)를 GitHub · AI 도구 · 해외 서비스에 넣지 않는다.** 문제를 재현할 때는 예시 자료나 손님 정보를 지운 사본만 쓴다.
 
 ## 검사 돌리기
 

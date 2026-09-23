@@ -9,6 +9,8 @@
 
 그래서 화면은 글자 16px 이상, 누르는 곳 52px 이상(기사 기기 56px), 말줄임표와 스크롤 없이 쪽 넘김으로 만들고, 가게에서 쓰는 쉬운 우리말(장부, 접수증, 지급, 반납, 수납, 미수, 도장, 수거 목록, 빨리 확인, 끝 4자리)만 씁니다. 자세한 규칙은 [AGENTS.md](AGENTS.md)에 있습니다.
 
+장부 원본은 우리가 운영하는 **중앙 서버(한국 안의 클라우드)**에 있고, 가게에는 서버 PC가 없습니다. 인터넷이나 서버가 끊겨도 카운터와 기사 기기는 자기 안의 사본으로 지급 · 반납 · 수납 · 새 현장 접수를 계속하고, 연결되면 보냅니다([배치와 운영](docs/architecture/deployment.md)).
+
 ## 체험판
 
 **[체험판 열기](https://rosookwan.github.io/skinote/)** — `main`에 올라오면 GitHub Actions(`.github/workflows/pages.yml`)가 빌드해 올립니다.
@@ -64,6 +66,7 @@ CI(`.github/workflows/ci.yml`)는 모든 push와 pull request에서 같은 검�
 ## 문서
 
 - [기반 설계와 결정 기록(ADR)](docs/architecture/README.md)
+- [배치와 운영](docs/architecture/deployment.md): 중앙 서버, 라이선스 · 기기, 백업 · 되살리기, 업데이트, 감시, 원격 지원, 보안 · 개인정보
 - [자료 구조](docs/architecture/data-model.md) · [품목과 가격](docs/architecture/catalog-and-pricing.md) · [동기화와 동시 수정](docs/architecture/sync-and-concurrency.md)
 - [화면 구조](docs/architecture/ui-architecture.md): 설정으로 그리는 화면, 기기 등급, 크기 규칙, 부품, C 화면
 - [옮기는 계획](docs/architecture/migration-plan.md)과 [일정 · 지금 상태](docs/roadmap.md)

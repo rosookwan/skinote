@@ -37,10 +37,10 @@ test('the 0001 migrations split into exactly their CREATE statements and seed IN
     return tally;
   };
   const control = counts('control');
-  assert.deepEqual({ ...control, INSERT: 0 }, { TABLE: 28, INDEX: 19, TRIGGER: 4, INSERT: 0, other: 0 });
+  assert.deepEqual({ ...control, INSERT: 0 }, { TABLE: 30, INDEX: 21, TRIGGER: 4, INSERT: 0, other: 0 });
   assert.ok(control.INSERT >= 1, 'control seeds sys_features');
   const shop = counts('shop');
-  assert.deepEqual({ ...shop, INSERT: 0 }, { TABLE: 260, INDEX: 207, TRIGGER: 148, INSERT: 0, other: 0 });
+  assert.deepEqual({ ...shop, INSERT: 0 }, { TABLE: 269, INDEX: 225, TRIGGER: 151, INSERT: 0, other: 0 });
   assert.ok(shop.INSERT > 50);
 });
 

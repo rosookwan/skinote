@@ -8,7 +8,7 @@ export const REDACT = Object.freeze(['reason', 'memo', 'note', 'difference_reaso
 /** 이름이 달라도 개인정보가 드는 자유 글 칸. */
 export const EXTRA_REDACT = Object.freeze({ intake_submission_people: ['name'], intake_answers: ['value_text'] });
 
-/** 0001의 매장 장부 표 49개(추가만). 순서가 schema.sql의 트리거 순서다. */
+/** 0001의 매장 장부 표 50개(추가만). 순서가 schema.sql의 트리거 순서다. */
 export const LEDGERS = Object.freeze([
   'shop_settings', 'config_changes', 'template_applications', 'ui_default_applications', 'device_sign_ins',
   'discount_applications', 'line_price_components',
@@ -17,7 +17,7 @@ export const LEDGERS = Object.freeze([
   'stock_movements', 'stock_movement_lines', 'stock_movement_reversals', 'asset_reclassifications', 'asset_condition_changes',
   'exchange_recoveries', 'vendor_refund_attempts', 'task_visits', 'task_reassignments',
   'payment_groups', 'payment_intent_allocations', 'payments', 'tax_documents', 'payment_reallocations', 'payment_allocations',
-  'charge_adjustments', 'adjustment_assets', 'cash_entries', 'cash_transfers', 'cash_transfer_confirmations',
+  'deposit_entries', 'charge_adjustments', 'adjustment_assets', 'cash_entries', 'cash_transfers', 'cash_transfer_confirmations',
   'closings', 'closing_reopenings', 'closing_totals', 'closing_drawer_counts', 'closing_handover_items',
   'counterparty_trades', 'counterparty_trade_lines', 'counterparty_settlements', 'counterparty_settlement_allocations',
   'print_template_versions', 'message_template_versions', 'archive_manifests', 'archive_verifications',
@@ -139,7 +139,7 @@ export function controlTriggers(columnsOf) {
 }
 
 /**
- * shop 0001의 생성 트리거: 장부 49개, 작업 기록(보관 확인 뒤에만 지움), 품목 줄 고정, 업무 행 삭제 금지.
+ * shop 0001의 생성 트리거: 장부 50개, 작업 기록(보관 확인 뒤에만 지움), 품목 줄 고정, 업무 행 삭제 금지.
  * @param {ColumnsOf} columnsOf
  */
 export function shopTriggers(columnsOf) {

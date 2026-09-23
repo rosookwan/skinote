@@ -7,9 +7,12 @@
 -- @database control
 -- =====================================================================================
 -- PART 1 · CONTROL DATABASE (control.sqlite)
--- One per deployment. On a shop PC it sits next to the shop file; in SaaS it is the
--- central platform database. Security state (lockouts, revocations) is updated in place;
--- every change made through the admin console also writes platform_audit_log.
+-- One per deployment: the central platform database on our server (ADR-19). A hybrid shop's
+-- edge PC (after season 1, deployment.md 1-3) never writes control: it keeps a read-only copy of its
+-- own slice (staff password and PIN verifiers, the signed licence, device public keys) so it can
+-- authenticate while the internet is down, and the centre stays the only writer of this file.
+-- Security state (lockouts, revocations) is updated in place; every change made through the
+-- admin console also writes platform_audit_log.
 -- =====================================================================================
 
 CREATE TABLE schema_migrations (                  -- forward-only migration ledger of THIS file
@@ -28,7 +31,7 @@ CREATE TABLE db_instance (                        -- identity of this physical f
   instance_id              TEXT    NOT NULL,      -- ULID minted when the file is created
   epoch_id                 TEXT    NOT NULL,      -- new ULID at creation and after every restore
   epoch_no                 INTEGER NOT NULL DEFAULT 1,
-  deployment_key           TEXT    NOT NULL,      -- shop_pc | saas | demo (code-owned)
+  deployment_key           TEXT    NOT NULL,      -- cloud | edge (hybrid shop PC, later) | staging | drill | demo (code-owned)
   created_at               TEXT    NOT NULL,
   restored_at              TEXT,
   restored_from_backup_id  TEXT
@@ -66,9 +69,14 @@ CREATE TABLE tenants (                            -- shop directory: where each 
   business_id    TEXT    REFERENCES businesses(id),
   code           TEXT    NOT NULL,                -- short ASCII code used in URLs and support
   name           TEXT    NOT NULL,
-  data_location  TEXT    NOT NULL,                -- 'sqlite:shop-<id>.sqlite' | 'pg:<schema>'
+  data_location  TEXT    NOT NULL,                -- where the writer of the shop is: 'sqlite://<host>/shop-<id>.sqlite' (a
+                                                  -- server of ours) | 'edge://<device id>' (hybrid shop PC, later) |
+                                                  -- 'pg://<cluster>/<schema>'; season 1 writes 'sqlite:shop-<id>.sqlite' (this server)
   status_key     TEXT    NOT NULL DEFAULT 'active',   -- active | suspended | closed (code-owned)
   is_test        INTEGER NOT NULL DEFAULT 0 CHECK (is_test IN (0,1)),   -- demo shop: nothing reaches customers
+  closing_requested_at TEXT,                      -- the shop ended its contract: limited mode, then export and destruction
+                                                  -- (deployment.md 6-7)
+  data_destroyed_at    TEXT,                      -- live file, replicas, snapshots, segments and the shop's data key destroyed
   created_at     TEXT    NOT NULL,
   updated_at     TEXT    NOT NULL,
   version        INTEGER NOT NULL DEFAULT 1
@@ -76,13 +84,17 @@ CREATE TABLE tenants (                            -- shop directory: where each 
 CREATE UNIQUE INDEX tenants_code ON tenants (code);
 
 CREATE TABLE accounts (                           -- a person who can sign in (docs/45)
-  id                    TEXT    NOT NULL PRIMARY KEY,   -- global ULID minted once; a shop PC's control file copies it, never re-mints
+  id                    TEXT    NOT NULL PRIMARY KEY,   -- global ULID minted once by the central control; a copy elsewhere (a
+                                                  -- hybrid shop PC's read-only slice, a PostgreSQL move) keeps it, never re-mints
   login_realm           TEXT    NOT NULL DEFAULT 'platform',   -- tenant code ('shop1') for shop staff, 'platform' for admins;
                                                   -- logins such as 'counter1' may repeat across shops, so the realm is part of the key
   login_id              TEXT,                     -- lower-cased; NULL for imported legacy actors that cannot sign in
   display_name          TEXT    NOT NULL,         -- shown as '삭제된 계정' once deleted_at is set
   password_hash         TEXT,                     -- PHC string (scrypt / argon2id); never leaves the server
-  pin_hash              TEXT,                     -- short PIN for quick staff switch on a registered shop device
+  pin_hash              TEXT,                     -- short PIN for quick staff switch on a registered shop device: a slow hash
+                                                  -- of HMAC(pepper, PIN) where the pepper is a server secret outside every
+                                                  -- database and backup (a leaked control copy alone cannot be brute-forced);
+                                                  -- never sent to devices (they keep their own verifiers, sync doc 7)
   must_change_password  INTEGER NOT NULL DEFAULT 1 CHECK (must_change_password IN (0,1)),
   failed_count          INTEGER NOT NULL DEFAULT 0 CHECK (failed_count >= 0),
   locked_until          TEXT,                     -- 5 failures -> 10 minutes (setting)
@@ -116,19 +128,21 @@ CREATE TABLE platform_admins (                    -- hidden admin console access
 CREATE TABLE sessions (                           -- bearer sessions; the token itself is never stored
   id              TEXT    NOT NULL PRIMARY KEY,
   token_hash      TEXT    NOT NULL,               -- sha256 of the bearer token
-  kind_key        TEXT    NOT NULL,               -- staff | admin | agent | legacy_token (code-owned)
-  account_id      TEXT    REFERENCES accounts(id),-- NULL only for legacy_token sessions until cutover
+  kind_key        TEXT    NOT NULL,               -- staff | admin | agent (code-owned); old access-file tokens are NOT imported:
+                                                  -- every device enrols again at the cutover (migration-plan 5-1)
+  account_id      TEXT    REFERENCES accounts(id),
   tenant_id       TEXT    REFERENCES tenants(id), -- chosen shop; NULL for the admin console
   device_id       TEXT,                           -- devices.id in the shop file (no cross-file FK)
   staff_member_id TEXT,                           -- staff_members.id in the shop file, set after shop choice or PIN switch
-  legacy_actor_json TEXT,                         -- imported {id, role, vehicleId, permissions} of the old access file
+  legacy_actor_json TEXT,                         -- stays NULL: old access-file tokens are not imported (the actor mapping lives in
+                                                  -- staff_members.legacy_actor_key)
   created_at      TEXT    NOT NULL,
   last_used_at    TEXT    NOT NULL,
-  idle_timeout_s  INTEGER NOT NULL CHECK (idle_timeout_s > 0),   -- driver devices: long (14 days); counter: shift length
+  idle_timeout_s  INTEGER NOT NULL CHECK (idle_timeout_s > 0),   -- driver devices: long (14 days) behind an app lock; counter: shift
   expires_at      TEXT    NOT NULL,
   revoked_at      TEXT,
   revoke_reason   TEXT,
-  ip_hash         TEXT,
+  ip_hash         TEXT,                           -- keyed HMAC of the address (key rotated, deployment.md 10-4), not a bare sha256
   user_agent      TEXT
 ) STRICT;
 CREATE UNIQUE INDEX sessions_token ON sessions (token_hash);
@@ -141,10 +155,10 @@ CREATE TABLE login_attempts (
   account_id  TEXT    REFERENCES accounts(id),
   tenant_id   TEXT,
   device_id   TEXT,
-  method_key  TEXT    NOT NULL,                   -- password | pin | token (code-owned)
+  method_key  TEXT    NOT NULL,                   -- password | pin | enrollment (a device entering an enrolment code) (code-owned)
   succeeded   INTEGER NOT NULL CHECK (succeeded IN (0,1)),
-  reason_key  TEXT,                               -- bad_password | locked | suspended | ok
-  ip_hash     TEXT,
+  reason_key  TEXT,                               -- bad_password | locked | suspended | not_enrolled_device | ok
+  ip_hash     TEXT,                               -- keyed HMAC; lockouts and back-off are per (account, device or address)
   at          TEXT    NOT NULL
 ) STRICT;
 CREATE INDEX login_attempts_login ON login_attempts (login_id, at);
@@ -165,10 +179,18 @@ CREATE TABLE plan_features (                      -- a feature is available when
   PRIMARY KEY (plan_key, feature_key)
 ) STRICT;
 
-CREATE TABLE licence_signing_keys (               -- PUBLIC keys only; the private key never enters any database
+CREATE TABLE licence_signing_keys (               -- PUBLIC keys only; no private key enters any database
   key_id       TEXT NOT NULL PRIMARY KEY,
   algorithm    TEXT NOT NULL,                     -- 'Ed25519'
   public_key   TEXT NOT NULL,                     -- base64
+  purpose_key  TEXT NOT NULL DEFAULT 'licence',   -- licence: the offline root key (developer's hardware key / safe) that signs
+                                                  -- shop licences and the certificates of device-token keys; the app ships
+                                                  -- only root public keys | device_token: an online key of the server that signs
+                                                  -- short device tokens, rotated often, certified by a root key (code-owned)
+  certified_by TEXT REFERENCES licence_signing_keys(key_id),   -- device_token keys: the root key that signed the certificate
+  certificate  TEXT,                              -- root signature over (key_id, public_key, purpose_key, not_after, test_only)
+  not_after    TEXT,                              -- a device refuses tokens signed by a device_token key after this
+  test_only    INTEGER NOT NULL DEFAULT 0 CHECK (test_only IN (0,1)),   -- staging key: its tokens are valid only for is_test shops
   created_at   TEXT NOT NULL,
   retired_at   TEXT
 ) STRICT;
@@ -183,9 +205,20 @@ CREATE TABLE licences (                           -- one live licence per shop (
   device_limit           INTEGER,                 -- NULL = plan default
   account_limit          INTEGER,
   feature_overrides_json TEXT    NOT NULL DEFAULT '{}',   -- {"lessons": true}
+  offline_grace_days     INTEGER NOT NULL DEFAULT 14 CHECK (offline_grace_days BETWEEN 1 AND 60),
+                                                  -- a device keeps full use on its cached signed device token this long after
+                                                  -- its last contact with the server (refresh_by); after that only new orders
+                                                  -- stop on that device, money and returns never do (deployment.md 5)
+  expiry_grace_days      INTEGER NOT NULL DEFAULT 14 CHECK (expiry_grace_days BETWEEN 0 AND 60),
+                                                  -- full use after expires_on; then limited mode (no new orders, no settings,
+                                                  -- no new devices); money, returns, closing and data export always work
   status_key             TEXT    NOT NULL DEFAULT 'active', -- active | suspended | deleted
-  token                  TEXT    NOT NULL,        -- vendor-signed claims (Ed25519); the shop server verifies it with the
-                                                  -- public key built into the app, so editing this row does not unlock anything
+  token                  TEXT    NOT NULL,        -- vendor-signed claims (Ed25519, offline root key). The central server checks them
+                                                  -- at every session start and signs short device tokens with an online
+                                                  -- device_token key certified by the root; a device checks the certificate chain
+                                                  -- with the root public key built into the app, so editing a row unlocks nothing.
+                                                  -- The device check is guidance for the screen, not enforcement: records that
+                                                  -- already happened offline are always accepted (deployment.md 5-5)
   signing_key_id         TEXT    NOT NULL REFERENCES licence_signing_keys(key_id),
   suspended_reason       TEXT,
   issued_at              TEXT    NOT NULL,
@@ -199,8 +232,8 @@ CREATE UNIQUE INDEX licences_no ON licences (licence_no);
 CREATE UNIQUE INDEX licences_one_live ON licences (tenant_id) WHERE status_key <> 'deleted';
 
 CREATE TABLE resort_templates (                   -- central resort starter data (docs/45 A05)
-  id                   TEXT    NOT NULL PRIMARY KEY,   -- vendor-fixed ULID shipped with the template package, so a shop PC's
-                                                       -- copy and the central database agree (template_applications.template_id)
+  id                   TEXT    NOT NULL PRIMARY KEY,   -- vendor-fixed ULID shipped with the template package, so every shop file,
+                                                       -- a staging copy and the central database agree (template_applications.template_id)
   key                  TEXT    NOT NULL,          -- muju_deogyusan, jisan_forest ...
   name                 TEXT    NOT NULL,          -- '무주덕유산리조트'
   region               TEXT,
@@ -235,8 +268,8 @@ CREATE TABLE template_usage (                     -- '적용 매장 수'; the sh
 
 CREATE TABLE platform_audit_log (                 -- 사용 내역 of the platform: logins, accounts, licences, templates,
                                                   -- backups, restores, exports. Hash-chained for tamper evidence.
-  chain_id     TEXT    NOT NULL,                  -- db_instance.instance_id of the file that wrote it: chains of several
-                                                  -- shop PCs merge into a central database without renumbering
+  chain_id     TEXT    NOT NULL,                  -- db_instance.instance_id of the file that wrote it: chains of several files
+                                                  -- (a restored copy, a later PostgreSQL move) merge without renumbering
   seq          INTEGER NOT NULL CHECK (seq >= 1), -- gapless order inside the chain (PostgreSQL: appends serialised per chain)
   id           TEXT    NOT NULL,
   at           TEXT    NOT NULL,
@@ -245,8 +278,9 @@ CREATE TABLE platform_audit_log (                 -- 사용 내역 of the platfo
   actor_label  TEXT    NOT NULL,
   device_id    TEXT,
   session_id   TEXT,
-  ip_hash      TEXT,
-  category_key TEXT    NOT NULL,                  -- login | account | licence | template | settings | export | backup | restore | error
+  ip_hash      TEXT,                              -- keyed HMAC, not a bare sha256
+  category_key TEXT    NOT NULL,                  -- login | account | licence | template | settings | export | backup | restore |
+                                                  -- support (supplier data view, remote screen, break-glass file access) | error
   action_key   TEXT    NOT NULL,                  -- 'licence.extend', 'account.suspend', 'backup.verified' ...
   target_type  TEXT,
   target_id    TEXT,
@@ -264,7 +298,7 @@ CREATE INDEX platform_audit_log_tenant ON platform_audit_log (tenant_id, at);
 CREATE INDEX platform_audit_log_account ON platform_audit_log (account_id, at);
 CREATE INDEX platform_audit_log_category ON platform_audit_log (category_key, at);
 
-CREATE TABLE usage_daily (                        -- admin dashboard counters, pushed by each shop server
+CREATE TABLE usage_daily (                        -- admin dashboard counters, written once a day per shop by the central worker
   tenant_id   TEXT    NOT NULL REFERENCES tenants(id),
   date        TEXT    NOT NULL,
   metric_key  TEXT    NOT NULL,                   -- commands | orders | logins | errors | sync_bytes | devices_active | db_bytes
@@ -276,14 +310,21 @@ CREATE TABLE backups (                            -- catalogue of every backup f
   id            TEXT    NOT NULL PRIMARY KEY,
   tenant_id     TEXT    REFERENCES tenants(id),   -- NULL = the control file itself
   database_key  TEXT    NOT NULL,                 -- control | shop
-  kind_key      TEXT    NOT NULL,                 -- hourly | nightly | pre_migration | pre_import | manual | season_archive
-  file_name     TEXT    NOT NULL,
+  kind_key      TEXT    NOT NULL,                 -- daily | weekly_scrubbed | season_scrubbed (no customer PII) | pre_migration |
+                                                  -- post_migration | pre_import | manual | owner_export | owner_export_scrubbed
+                                                  -- (code-owned, deployment.md 6). A VACUUM INTO snapshot is its own restore
+                                                  -- point: WAL frames of the live file cannot be replayed on it (the replication
+                                                  -- tool restores from its own generations); journal segments continue it
+  file_name     TEXT    NOT NULL,                 -- object key in the backup store of the other location (or the owner's file name)
   bytes         INTEGER NOT NULL CHECK (bytes >= 0),
   sha256        TEXT    NOT NULL,
   epoch_id      TEXT    NOT NULL,
   max_rev       INTEGER,                          -- shop files: highest rev inside the copy
   last_hash     TEXT,                             -- shop files: journal hash at max_rev (chain continuity on restore)
   encrypted     INTEGER NOT NULL DEFAULT 1 CHECK (encrypted IN (0,1)),
+  key_id        TEXT,                             -- the shop's data key (public-key encryption, e.g. an age recipient); the
+                                                  -- server holds public keys only, and destroying a shop's key makes every
+                                                  -- copy of that shop unreadable (deployment.md 6-7, 10-1)
   status_key    TEXT    NOT NULL,                 -- written | verified | offsite | failed | expired
   created_at    TEXT    NOT NULL,
   verified_at   TEXT,
@@ -293,9 +334,18 @@ CREATE TABLE backups (                            -- catalogue of every backup f
 ) STRICT;
 CREATE INDEX backups_tenant ON backups (tenant_id, created_at);
 
-CREATE TABLE restore_drills (                     -- weekly automated restore test: restore, integrity_check, verifier, counts
+CREATE TABLE restore_drills (                     -- restore test on a fresh VM in the isolated drill box (deployment.md 6-3):
+                                                  -- the replication tool's own generation + WAL to a point in time, or a VACUUM
+                                                  -- INTO snapshot + journal segments, or segments only; then integrity_check,
+                                                  -- verifier, chain and row digests; finished_at - started_at is the measured RTO
   id           TEXT    NOT NULL PRIMARY KEY,
-  backup_id    TEXT    NOT NULL REFERENCES backups(id),
+  tenant_id    TEXT    REFERENCES tenants(id),    -- NULL = the control file or the whole server
+  backup_id    TEXT    REFERENCES backups(id),    -- the snapshot a snapshot drill started from; NULL for a replica or segment drill
+  source_key   TEXT    NOT NULL DEFAULT 'replica',   -- replica (PITR from the tool's generation) | snapshot | journal (code-owned)
+  provider_key TEXT    NOT NULL DEFAULT 'primary',   -- primary | second (the other company's store, region-loss drill)
+  replica_generation TEXT,                        -- the replication tool's generation id the drill restored
+  target_at    TEXT,                              -- point in time restored to
+  target_rev   INTEGER,                           -- rev R reached; checks compare the chain hash and ledger digests at R
   started_at   TEXT    NOT NULL,
   finished_at  TEXT,
   outcome_key  TEXT    NOT NULL,                  -- passed | failed
@@ -317,9 +367,9 @@ CREATE TABLE tenant_epochs (                      -- every epoch of every shop; 
 CREATE UNIQUE INDEX tenant_epochs_id ON tenant_epochs (epoch_id);
 
 -- Routing before the shop is known (SMS / card / payment callbacks, intake links, online booking).
--- Shop files are per tenant and shop PCs sit behind NAT, so the platform keeps the directory and
--- a relay inbox that each shop server pulls from; under PostgreSQL row security these rows are
--- read before skinote.shop_id is set.
+-- Shop files are per tenant, so the platform keeps the directory and a relay inbox; the writer of
+-- the shop (the central server, or a hybrid shop's edge PC behind NAT) pulls from it; under
+-- PostgreSQL row security these rows are read before skinote.shop_id is set.
 CREATE TABLE public_links (                       -- capability tokens handed to customers (intake form, online booking)
   token_hash   TEXT    NOT NULL PRIMARY KEY,      -- sha256 of the token in the URL fragment
   tenant_id    TEXT    NOT NULL REFERENCES tenants(id),
@@ -341,18 +391,51 @@ CREATE TABLE external_refs (                      -- provider ids that come back
   PRIMARY KEY (provider_key, external_id)
 ) STRICT;
 
-CREATE TABLE inbound_events (                     -- relay inbox: callbacks received centrally, pulled by the shop server
+CREATE TABLE inbound_events (                     -- relay inbox: callbacks received centrally, pulled by the shop's writer
   id            TEXT    NOT NULL PRIMARY KEY,     -- ULID; also the request id of the system command the shop records
   tenant_id     TEXT,                             -- NULL until routed through public_links / external_refs
   provider_key  TEXT    NOT NULL,
   external_id   TEXT,
-  payload_json  TEXT    NOT NULL,
+  payload_json  TEXT    NOT NULL,                 -- only after the provider signature (HMAC) verified; money results are
+                                                  -- re-queried from the provider API before they are recorded (sync doc 9).
+                                                  -- May carry a phone number: emptied to '{}' 30 days after pulled
   received_at   TEXT    NOT NULL,
   routed_at     TEXT,
-  pulled_at     TEXT,                             -- the shop server acknowledged it (idempotent by id)
+  pulled_at     TEXT,                             -- the shop's writer acknowledged it (idempotent by id)
+  payload_purged_at TEXT,
   status_key    TEXT    NOT NULL DEFAULT 'received'   -- received | routed | pulled | unroutable
 ) STRICT;
 CREATE INDEX inbound_events_pending ON inbound_events (tenant_id, received_at) WHERE pulled_at IS NULL;
+
+CREATE TABLE enrollment_routes (                  -- device enrolment codes, routed before the shop is known (deployment.md 5-3): a new
+                                                  -- device enters the code at the one app address and the centre finds the shop here
+  code_hash    TEXT    NOT NULL PRIMARY KEY,      -- sha256 of the code; global, so two shops never hold the same live code
+  tenant_id    TEXT    NOT NULL REFERENCES tenants(id),
+  code_id      TEXT    NOT NULL,                  -- device_enrollment_codes.id in the shop file (no cross-file FK)
+  origin_key   TEXT    NOT NULL DEFAULT 'shop',   -- shop | supplier: a code the supplier made joins only after the owner approves
+  expires_at   TEXT    NOT NULL,                  -- 15 minutes
+  claimed_at   TEXT,                              -- a device entered it; the device joins only after approval on the admin screen
+  used_at      TEXT,
+  created_at   TEXT    NOT NULL
+) STRICT;
+CREATE INDEX enrollment_routes_tenant ON enrollment_routes (tenant_id, created_at);
+
+CREATE TABLE support_access_grants (              -- the shop's time-limited permission for the supplier (deployment.md 9, 10-2):
+                                                  -- unmasked data view or one remote-screen session; every use is written to
+                                                  -- platform_audit_log (category support) and shown in the shop's notice slot
+  id                  TEXT    NOT NULL PRIMARY KEY,
+  tenant_id           TEXT    NOT NULL REFERENCES tenants(id),
+  kind_key            TEXT    NOT NULL,           -- data_unmasked | remote_screen (code-owned)
+  granted_by          TEXT    NOT NULL REFERENCES accounts(id),   -- the owner or manager who pressed 공급자 도움 허락 in 관리
+  reason              TEXT    NOT NULL,
+  confirm_words_hash  TEXT,                       -- remote_screen: the one-time two words the supplier has to say first
+  starts_at           TEXT    NOT NULL,
+  expires_at          TEXT    NOT NULL,           -- e.g. 2 hours
+  revoked_at          TEXT,
+  created_at          TEXT    NOT NULL,
+  CHECK (expires_at > starts_at)
+) STRICT;
+CREATE INDEX support_access_grants_live ON support_access_grants (tenant_id, expires_at) WHERE revoked_at IS NULL;
 
 -- control.sqlite has its own recovery journal (accounts, PINs, sessions, enrolments change here),
 -- exported in segments exactly like the shop journal (sync doc 10). Secrets travel only inside the
@@ -374,7 +457,8 @@ CREATE TABLE control_journal_exports (
   to_seq      INTEGER NOT NULL,
   file_name   TEXT    NOT NULL,
   sha256      TEXT    NOT NULL,
-  target_key  TEXT    NOT NULL,                   -- lan_peer | usb | offsite
+  target_key  TEXT    NOT NULL,                   -- second_store (another company's store in Korea, every minute) |
+                                                  -- edge_peer (a hybrid shop, later)
   status_key  TEXT    NOT NULL,                   -- written | verified | offsite | failed
   created_at  TEXT    NOT NULL,
   CHECK (to_seq >= from_seq)

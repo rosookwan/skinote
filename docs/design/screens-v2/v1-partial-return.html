@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>반납 확인 창 · 부분 반납 · 둘째 판 시안 V1</title>
+<link rel="stylesheet" href="base.css">
+<style>
+  /* V1 반납 확인 창 · 부분 반납(spec.md 3-1). 창 860 × 440: 제목 56 + 본문 312 + 바닥 72(1024×529의 한도 505 안, 줄 6개까지 한 쪽).
+     본문 = 위 12 + ① 알림 24 + ② 품목 칸 112(52 + 8 + 52) + ③ 남는 것 40 + ④ 보증금 28 + ⑤ 돌려드리는 방법 52 + 사이 8 × 4 + 아래 12.
+     어느 상태에서도 줄이 생기거나 사라지지 않는다(누르는 사이에 줄이 움직이지 않게).
+     '모두 반납 / 일부만' 고르기는 없다: 품목 칸이 늘 보이고 처음에는 이 팀이 가진 번호가 모두 골라져 있다(모두 반납 = 그대로 누름).
+     스키 · 보드 · 헬멧 · 리프트권은 하나씩 세는 품목(tracking unit)이라 번호를 누른다(ui 3-1). 수량으로 세는 품목(고글)만 −/+ 칸.
+     채택(adoption.md): 힉스필드 그림처럼 품목 이름을 22px로 키우고 칸 사이 · 칸 안 옆 여백을 넓혔다(가로로만: 세로 높이는
+     줄 6개 · 창 500까지 한 쪽이라는 한도(1024×529 창 505) 때문에 그대로). */
+  .v1-note { display: flex; align-items: center; height: calc(var(--sn-font-min) * 1.5); }
+  .v1-lines { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sn-space-s) calc(var(--sn-space-l) + var(--sn-space-s)); }
+  .v1-line { display: flex; align-items: center; gap: var(--sn-space-m); min-width: 0; height: var(--sn-target); padding-left: var(--sn-space-m); border-radius: var(--sn-radius-s); background: var(--sn-paper-shade); }
+  .v1-line-name { display: flex; flex-direction: column; justify-content: center; flex: 1 1 0; min-width: 0; line-height: 1.1; }
+  .v1-line-name > b { font-size: calc(var(--sn-font-big) + var(--sn-space-xs) / 2); font-weight: 900; white-space: nowrap; }
+  .v1-line-name > small { font-size: var(--sn-font-min); font-weight: 700; color: var(--sn-ink-muted); white-space: nowrap; }
+  /* 하나도 안 가져온 줄: 이름을 옅은 먹으로(가져온 줄과 갈라 보이게). */
+  .v1-line.is-none .v1-line-name > b { color: var(--sn-ink-muted); }
+  .v1-pieces { display: flex; align-items: center; gap: var(--sn-space-s); flex: none; }
+  .v1-piece { min-width: calc(var(--sn-target) + var(--sn-space-m)); padding: 0 var(--sn-space-s); }
+  .v1-left { display: flex; align-items: center; height: calc(var(--sn-target) - var(--sn-space-m)); }
+  .v1-deposit { display: flex; align-items: center; height: calc(var(--sn-font-min) * 1.75); }
+  .v1-deposit > b { font-weight: 900; }
+  .v1-refund { display: flex; align-items: center; gap: var(--sn-space-m); height: var(--sn-target); }
+  .v1-refund .mk-form-label { flex: none; }
+  .v1-refund .mk-choice { min-width: var(--sn-method-min); }
+
+  /* 상태: 주소 #all이면 처음 연 상태(모두 골라짐, 스크립트가 data-state를 넣는다). */
+  .sn-root:not([data-state='all']) [data-show='all'],
+  .sn-root[data-state='all'] [data-show='partial'] { display: none; }
+
+  /* 뒤 화면(박준호 팀 대여 접수증, 21:30): 구현한 접수증과 같은 열 폭. */
+  .v1-slip-table { width: 100%; }
+</style>
+</head>
+<body>
+<div class="sn-root" data-device="pos" data-accent="orange">
+  <div class="sn-screen">
+    <header class="sn-header">
+      <div class="sn-header-left">
+        <button type="button" class="sn-header-home" aria-label="장부"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 4.5A1.5 1.5 0 0 1 5.5 3H19v15H5.5A1.5 1.5 0 0 0 4 19.5z"/><path d="M4 19.5A1.5 1.5 0 0 0 5.5 21H19v-3"/><path d="M8 7h7M8 10.5h7"/></svg><span>장부</span></button>
+        <span class="sn-fit sn-header-shop">우리 스키샵</span>
+      </div>
+      <div class="sn-header-right">
+        <button type="button" class="sn-button sn-header-find" aria-label="끝 4자리"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="3" width="4" height="4" rx="1"/><rect x="10" y="3" width="4" height="4" rx="1"/><rect x="16" y="3" width="4" height="4" rx="1"/><rect x="4" y="10" width="4" height="4" rx="1"/><rect x="10" y="10" width="4" height="4" rx="1"/><rect x="16" y="10" width="4" height="4" rx="1"/><rect x="10" y="17" width="4" height="4" rx="1"/></svg><span>끝 4자리</span></button>
+        <button type="button" class="sn-button">수거 목록</button>
+        <button type="button" class="sn-button">리프트권</button>
+        <button type="button" class="sn-button">확인 필요</button>
+        <button type="button" class="sn-icon-button" aria-label="알림 2건"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 9a6 6 0 0 1 12 0c0 6 2.5 8 2.5 8h-17S6 15 6 9"/><path d="M10.3 20.5a1.9 1.9 0 0 0 3.4 0"/></svg><span class="sn-badge">2</span></button>
+        <button type="button" class="sn-button">관리</button>
+        <button type="button" class="sn-button" aria-label="나가기"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg><span>나가기</span></button>
+      </div>
+    </header>
+
+    <div class="sn-desk pos-slip-desk">
+      <article class="sn-slip">
+        <header class="sn-slip-head">
+          <h1 class="sn-slip-title">대여 접수증</h1>
+          <span class="sn-slip-no">접수 번호 261226-017</span>
+        </header>
+        <dl class="sn-slip-fields">
+          <div class="sn-slip-field"><dt>날짜</dt><dd>12월 26일 (토)</dd></div>
+          <div class="sn-slip-field"><dt>구분</dt><dd>전화 예약</dd></div>
+          <div class="sn-slip-field"><dt>대표자</dt><dd>박준호</dd></div>
+          <div class="sn-slip-field"><dt>연락처</dt><dd>010-0000-0022</dd></div>
+          <div class="sn-slip-field"><dt>인원</dt><dd>3명</dd></div>
+        </dl>
+        <div class="sn-slip-items">
+          <table class="sn-ledger-table v1-slip-table">
+            <colgroup><col style="width: 376px"><col style="width: 56px"><col style="width: 104px"><col style="width: 64px"><col style="width: 64px"></colgroup>
+            <thead>
+              <tr>
+                <th scope="col"><span class="sn-fit">품목</span></th>
+                <th scope="col" class="align-end"><span class="sn-fit">수량</span></th>
+                <th scope="col" class="align-end"><span class="sn-fit">금액</span></th>
+                <th scope="col" class="align-center"><span class="sn-fit">지급</span></th>
+                <th scope="col" class="align-center"><span class="sn-fit">반납</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="sn-row">
+                <td class="sn-cell is-items"><span class="sn-fit">스키</span></td>
+                <td class="sn-cell is-text align-end"><span class="sn-fit">2</span></td>
+                <td class="sn-cell is-money align-end"><span class="sn-cell-money"><span class="sn-fit">80,000원</span></span></td>
+                <td class="sn-cell is-stamp align-center"><button type="button" class="sn-stamp-cell is-done" aria-label="지급 끝 16:05"><span class="sn-stamp is-done is-dated"><span class="sn-stamp-text">지급</span><span class="sn-stamp-time">16:05</span></span></button></td>
+                <td class="sn-cell is-stamp align-center"><button type="button" class="sn-stamp-cell is-delegated" aria-label="반납 차량이 함"><span class="sn-stamp is-delegated"><span class="sn-stamp-text">차량</span><span class="sn-stamp-time">22:00</span></span></button></td>
+              </tr>
+              <tr class="sn-row">
+                <td class="sn-cell is-items"><span class="sn-fit">보드</span></td>
+                <td class="sn-cell is-text align-end"><span class="sn-fit">1</span></td>
+                <td class="sn-cell is-money align-end"><span class="sn-cell-money"><span class="sn-fit">25,000원</span></span></td>
+                <td class="sn-cell is-stamp align-center"><button type="button" class="sn-stamp-cell is-done" aria-label="지급 끝 16:05"><span class="sn-stamp is-done is-dated"><span class="sn-stamp-text">지급</span><span class="sn-stamp-time">16:05</span></span></button></td>
+                <td class="sn-cell is-stamp align-center"><button type="button" class="sn-stamp-cell is-delegated" aria-label="반납 차량이 함"><span class="sn-stamp is-delegated"><span class="sn-stamp-text">차량</span><span class="sn-stamp-time">22:00</span></span></button></td>
+              </tr>
+              <tr class="sn-row">
+                <td class="sn-cell is-items"><span class="sn-fit">헬멧</span></td>
+                <td class="sn-cell is-text align-end"><span class="sn-fit">3</span></td>
+                <td class="sn-cell is-money align-end"><span class="sn-cell-money"><span class="sn-fit">15,000원</span></span></td>
+                <td class="sn-cell is-stamp align-center"><button type="button" class="sn-stamp-cell is-done" aria-label="지급 끝 16:05"><span class="sn-stamp is-done is-dated"><span class="sn-stamp-text">지급</span><span class="sn-stamp-time">16:05</span></span></button></td>
+                <td class="sn-cell is-stamp align-center"><button type="button" class="sn-stamp-cell is-delegated" aria-label="반납 차량이 함"><span class="sn-stamp is-delegated"><span class="sn-stamp-text">차량</span><span class="sn-stamp-time">22:00</span></span></button></td>
+              </tr>
+              <tr class="sn-row">
+                <td class="sn-cell is-items"><span class="sn-fit">야간권 성인</span></td>
+                <td class="sn-cell is-text align-end"><span class="sn-fit">3매</span></td>
+                <td class="sn-cell is-money align-end"><span class="sn-cell-money"><span class="sn-fit">105,000원</span></span></td>
+                <td class="sn-cell is-stamp align-center"><button type="button" class="sn-stamp-cell is-done" aria-label="지급 끝 16:05"><span class="sn-stamp is-done is-dated"><span class="sn-stamp-text">지급</span><span class="sn-stamp-time">16:05</span></span></button></td>
+                <td class="sn-cell is-stamp align-center"><button type="button" class="sn-stamp-cell is-delegated" aria-label="반납 차량이 함"><span class="sn-stamp is-delegated"><span class="sn-stamp-text">차량</span><span class="sn-stamp-time">22:00</span></span></button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="sn-slip-promise"><span class="sn-fit">받기 16:00 · 매장 · 돌려주기 약속 2가지 ›</span></div>
+        <div class="sn-slip-money">
+          <span class="sn-fit sn-slip-money-text">청구 225,000원 · 수납 105,000원 · 보증금 15,000원</span>
+          <span class="sn-slip-due">미수 120,000원</span>
+          <span class="sn-slip-stamps"><span class="sn-slip-stamp" role="img" aria-label="수납 일부"><span class="sn-stamp is-partial is-word">수납 일부</span></span></span>
+        </div>
+      </article>
+
+      <aside class="pos-side" aria-label="남은 일">
+        <section class="sn-checklist">
+          <ol class="sn-checklist-list">
+            <li class="sn-check is-done">
+              <span class="sn-check-mark"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span>
+              <span class="sn-fit">끝난 일 2</span>
+            </li>
+            <li class="sn-check is-later">
+              <span class="sn-check-mark"></span>
+              <span class="sn-check-lines"><span class="sn-fit">반납 · 오늘 22:00</span><span class="sn-fit sn-check-items">설천 주차장 · 솔마을 두솔동</span></span>
+            </li>
+            <li class="sn-check is-now" aria-current="step">
+              <span class="sn-check-mark"></span>
+              <span class="sn-check-lines"><span class="sn-fit">수납 · 120,000원</span></span>
+            </li>
+          </ol>
+          <button type="button" class="sn-primary" data-primary="true"><span class="sn-fit">수납 · 120,000원</span></button>
+        </section>
+        <div class="pos-side-actions">
+          <button type="button" class="sn-button"><span class="sn-fit">약속 바꾸기</span></button>
+          <button type="button" class="sn-button"><span class="sn-fit">인쇄</span></button>
+          <button type="button" class="sn-button">
+            <svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 16.5v3a2 2 0 0 1-2.2 2A19.8 19.8 0 0 1 2.5 5.2 2 2 0 0 1 4.5 3h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8.4 10.8a16 16 0 0 0 4.8 4.8l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/></svg>
+            <span class="sn-fit">전화</span>
+          </button>
+          <button type="button" class="sn-button">
+            <svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>
+            <span>더 보기</span>
+          </button>
+        </div>
+      </aside>
+    </div>
+
+    <footer class="sn-footer">
+      <div class="sn-footer-metrics">
+        <div class="pos-footer-back">
+          <button type="button" class="sn-button">
+            <svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg>
+            <span>장부</span>
+          </button>
+          <span class="sn-fit">박준호 팀 · 끝 4자리 0022</span>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <!-- 반납 확인 창 -->
+  <div class="sn-overlay">
+    <div class="sn-dialog mk-confirm" role="dialog" aria-modal="true" aria-label="반납 도장 · 박준호 팀">
+      <header class="sn-dialog-head">
+        <h2 class="sn-dialog-title"><span class="sn-fit">반납 도장 · 박준호 팀</span></h2>
+      </header>
+      <div class="sn-dialog-body">
+        <!-- ① 알림 -->
+        <p class="mk-note v1-note">처음에는 모두 골라져 있습니다. 안 가져온 번호만 눌러서 빼고 도장을 찍습니다.</p>
+        <!-- ② 품목 칸: 줄마다 이름 · 약속별 수 · 이 팀이 가진 번호(누르면 빠짐) -->
+        <div class="v1-lines">
+          <div class="v1-line" role="group" aria-label="스키 번호">
+            <span class="v1-line-name"><b>스키</b><small>설천 2대</small></span>
+            <span class="v1-pieces">
+              <button type="button" class="sn-button mk-choice v1-piece" aria-pressed="true">17번</button>
+              <button type="button" class="sn-button mk-choice v1-piece" aria-pressed="true">18번</button>
+            </span>
+          </div>
+          <div class="v1-line is-none" role="group" aria-label="보드 번호" data-none="partial">
+            <span class="v1-line-name"><b>보드</b><small>두솔동 1대</small></span>
+            <span class="v1-pieces">
+              <button type="button" class="sn-button mk-choice v1-piece" aria-pressed="false" data-left="true">5번</button>
+            </span>
+          </div>
+          <div class="v1-line" role="group" aria-label="헬멧 번호">
+            <span class="v1-line-name"><b>헬멧</b><small>설천 2 · 두솔동 1</small></span>
+            <span class="v1-pieces">
+              <button type="button" class="sn-button mk-choice v1-piece" aria-pressed="true">12번</button>
+              <button type="button" class="sn-button mk-choice v1-piece" aria-pressed="true">14번</button>
+              <button type="button" class="sn-button mk-choice v1-piece" aria-pressed="false" data-left="true">15번</button>
+            </span>
+          </div>
+          <div class="v1-line" role="group" aria-label="야간권 성인 번호">
+            <span class="v1-line-name"><b>야간권 성인</b><small>설천 2 · 두솔동 1</small></span>
+            <span class="v1-pieces">
+              <button type="button" class="sn-button mk-choice v1-piece" aria-pressed="true">31번</button>
+              <button type="button" class="sn-button mk-choice v1-piece" aria-pressed="true">32번</button>
+              <button type="button" class="sn-button mk-choice v1-piece" aria-pressed="false" data-left="true">33번</button>
+            </span>
+          </div>
+        </div>
+        <!-- ③ 남는 것(어느 약속이 남고 어느 약속이 끝나는지) -->
+        <p class="mk-line mk-rule v1-left" data-show="partial"><b>남는 것:</b>&nbsp;보드 1 · 헬멧 1 · 권 1매 → 22:00 솔마을 두솔동 · 설천 주차장 수거는 끝남</p>
+        <p class="mk-line mk-rule v1-left" data-show="all"><b>남는 것 없음</b>&nbsp;· 설천 주차장 · 솔마을 두솔동 수거가 모두 끝남</p>
+        <!-- ④ 보증금: 돌려드릴 금액과 아직 맡아 둔 금액 -->
+        <p class="mk-line v1-deposit" data-show="partial">권 2매 보증금&nbsp;<b>10,000원 돌려드림</b>&nbsp;· 이 매장은 1매 5,000원 · 남은 보증금 5,000원(권 1매)</p>
+        <p class="mk-line v1-deposit" data-show="all">권 3매 보증금&nbsp;<b>15,000원 돌려드림</b>&nbsp;· 이 매장은 1매 5,000원 · 남은 보증금 없음</p>
+        <!-- ⑤ 돌려드리는 방법: 보증금을 받은 수단(이 매장은 현금만)으로, 또는 미수에서 빼기 -->
+        <div class="v1-refund">
+          <span class="mk-form-label">돌려드리는 방법</span>
+          <div class="mk-choices" role="group" aria-label="보증금 돌려드리는 방법">
+            <button type="button" class="sn-button mk-choice" aria-pressed="true">현금</button>
+            <button type="button" class="sn-button mk-choice" aria-pressed="false" data-show="partial">미수에서 빼기 · 120,000원 → 110,000원</button>
+            <button type="button" class="sn-button mk-choice" aria-pressed="false" data-show="all">미수에서 빼기 · 120,000원 → 105,000원</button>
+          </div>
+        </div>
+      </div>
+      <footer class="sn-dialog-foot">
+        <button type="button" class="sn-button">
+          <svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg>
+          <span>닫기</span>
+        </button>
+        <div class="sn-dialog-primary">
+          <button type="button" class="sn-primary" data-primary="true" data-show="partial"><span class="sn-fit">반납 도장 찍기 · 스키 2 · 헬멧 2 · 권 2매 · 보증금 10,000원</span></button>
+          <button type="button" class="sn-primary" data-primary="true" data-show="all"><span class="sn-fit">반납 도장 찍기 · 6개 · 3매 · 보증금 15,000원</span></button>
+        </div>
+      </footer>
+    </div>
+  </div>
+</div>
+<script>
+  // 상태 변형: #all = 처음 연 상태(이 팀이 가진 번호가 모두 골라짐, spec.md 3-1 상태).
+  (function () {
+    if (location.hash !== '#all') return;
+    document.querySelector('.sn-root').setAttribute('data-state', 'all');
+    document.querySelectorAll('[data-left]').forEach(function (b) { b.setAttribute('aria-pressed', 'true'); });
+    document.querySelectorAll('[data-none]').forEach(function (el) { el.classList.remove('is-none'); });
+  })();
+</script>
+</body>
+</html>

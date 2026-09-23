@@ -1,0 +1,147 @@
+/* 둘째 판 화면 시안의 공통 모양(docs/design/screens-v2). 화면 파일(vN-*.html)이 이 파일 하나를 링크한다.
+   목표는 '구현한 앱과 똑같이 보이는 시안'이다. 그래서 색 · 부품 모양을 베끼지 않고 앱의 파일을 그대로 가져온다:
+     - packages/ui/src/styles/tokens.css      색 토큰(--sn-desk · --sn-paper · --sn-ink · --sn-seal · --sn-late …)
+     - packages/ui/src/styles/components.css  부품(sn-header · sn-titlebar · sn-tab · sn-row · sn-stamp · sn-dialog · sn-qty · sn-check · sn-slip …)
+     - apps/pos/src/app.css                   앱 화면 틀(pos-slip-desk · pos-side · pos-side-actions · pos-footer-back · pos-methods · pos-method …)
+   글꼴은 앱에 묶은 Pretendard를 상대 주소로 읽는다(아래 @font-face). 파일 주소로 열면 브라우저가 글꼴을 막을 수 있으니
+   measure.mjs처럼 저장소 뿌리를 내어 주는 작은 서버로 연다.
+   크기 변수(--sn-font-min · --sn-target …)는 앱에서는 DeviceProfile이 화면마다 넣는다. 시안에는 React가 없으므로
+   packages/ui/src/device-profile.ts의 profileCssVars() 값을 아래에 옮겨 적었다. measure.mjs가 화면마다 이 값이
+   DeviceProfile과 같은지 확인하므로, DeviceProfile이 바뀌면 여기를 고쳐야 검사가 통과한다.
+   화면 한 장에만 쓰는 모양은 그 화면 파일의 <style>에 둔다. 여기에는 두 화면 이상이 쓰는 것만 둔다(mk-).
+   숫자는 변수 줄(아래 두 블록)에만 있고, 모양 규칙은 변수와 em만 쓴다(components.css와 같은 버릇). */
+
+@import url('../../../packages/ui/src/styles/tokens.css');
+@import url('../../../packages/ui/src/styles/components.css');
+@import url('../../../apps/pos/src/app.css');
+
+/* 묶은 글꼴(Pretendard Variable, SIL OFL — packages/ui/fonts/LICENSE-Pretendard). 앱의 fonts.css와 같은 이름 · 같은 굵기 범위. */
+@font-face {
+  font-family: 'Skinote Pretendard';
+  src: url('../../../packages/ui/fonts/PretendardVariable.woff2') format('woff2-variations'),
+       url('../../../packages/ui/fonts/PretendardVariable.woff2') format('woff2');
+  font-weight: 45 920;
+  font-style: normal;
+  font-display: block;
+}
+
+/* ── 기기 등급의 크기 변수: profileCssVars(DEVICE_PROFILES[key]) 그대로(2026-09-24에 옮김) ───────────── */
+.sn-root[data-device='pos'],
+.sn-root[data-device='pos_narrow'] {
+  --sn-font-min: 16px; --sn-font-base: 16px; --sn-font-body: 17px; --sn-line-body: 1.45; --sn-font-title: 24px; --sn-font-big: 20px;
+  --sn-target: 52px; --sn-target-repeat: 64px; --sn-primary-h: 56px;
+  --sn-header-h: 60px; --sn-title-h: 60px; --sn-footer-h: 72px; --sn-strip-h: 32px; --sn-thead-h: 40px;
+  --sn-row-h: 52px; --sn-row2-h: 88px; --sn-group-h: 40px; --sn-now-h: 24px; --sn-pin-h: 64px;
+  --sn-inset: 30px; --sn-card-max: 672px; --sn-choice-h: 72px; --sn-desk-gap: 12px; --sn-paper-pad: 18px;
+  --sn-slip-title-h: 60px; --sn-slip-fields-h: 40px; --sn-slip-promise-h: 32px; --sn-slip-money-h: 40px; --sn-slip-side: 280px; --sn-slip-gap: 16px;
+  --sn-confirm-title-h: 56px; --sn-confirm-primary-h: 72px; --sn-confirm-pad: 24px; --sn-method-min: 110px;
+  --sn-key: 56px; --sn-keypad-display: 56px; --sn-keypad-title: 40px; --sn-keypad-load: 48px; --sn-keypad-side: 268px;
+  --sn-stamp: 48px; --sn-stamp-mini: 24px;
+  --sn-space-xs: 4px; --sn-space-s: 8px; --sn-space-m: 12px; --sn-space-l: 16px;
+  --sn-radius-s: 8px; --sn-radius-m: 10px; --sn-radius-paper: 4px;
+  --sn-line: 1px; --sn-line-strong: 2px; --sn-line-stamp: 3px;
+  --sn-accent: var(--sn-orange);
+}
+.sn-root[data-device='driver_tablet'],
+.sn-root[data-device='driver_phone'] {
+  --sn-font-min: 16px; --sn-font-base: 16px; --sn-font-body: 18px; --sn-line-body: 1.45; --sn-font-title: 22px; --sn-font-big: 22px;
+  --sn-target: 56px; --sn-target-repeat: 72px; --sn-primary-h: 72px;
+  --sn-header-h: 60px; --sn-title-h: 56px; --sn-footer-h: 80px; --sn-strip-h: 32px; --sn-thead-h: 0px;
+  --sn-row-h: 60px; --sn-row2-h: 88px; --sn-group-h: 40px; --sn-now-h: 24px; --sn-pin-h: 64px;
+  --sn-inset: 16px; --sn-card-max: 672px; --sn-choice-h: 72px; --sn-desk-gap: 8px; --sn-paper-pad: 8px;
+  --sn-slip-title-h: 60px; --sn-slip-fields-h: 40px; --sn-slip-promise-h: 32px; --sn-slip-money-h: 40px; --sn-slip-side: 280px; --sn-slip-gap: 16px;
+  --sn-confirm-title-h: 56px; --sn-confirm-primary-h: 80px; --sn-confirm-pad: 16px; --sn-method-min: 110px;
+  --sn-key: 56px; --sn-keypad-display: 56px; --sn-keypad-title: 40px; --sn-keypad-load: 48px; --sn-keypad-side: 268px;
+  --sn-stamp: 48px; --sn-stamp-mini: 24px;
+  --sn-space-xs: 4px; --sn-space-s: 8px; --sn-space-m: 12px; --sn-space-l: 16px;
+  --sn-radius-s: 8px; --sn-radius-m: 10px; --sn-radius-paper: 4px;
+  --sn-line: 1px; --sn-line-strong: 2px; --sn-line-stamp: 3px;
+  --sn-accent: var(--sn-purple);
+}
+/* 휴대폰은 이번 판에 없지만 값이 다른 것만 덮어 둔다(profileCssVars(driverPhone)). */
+.sn-root[data-device='driver_phone'] { --sn-font-title: 20px; --sn-font-big: 20px; --sn-primary-h: 64px; --sn-header-h: 56px; --sn-footer-h: 72px; --sn-row-h: 64px; }
+
+/* 확인 창 크기(ui 4-5, DeviceProfile의 confirm: 창 폭 = min(화면 폭 − 2 × 옆 여백, 최대 폭), 창 높이 ≤ 화면 높이 − 2 × 위아래 여백).
+   앱은 confirmWindow()의 값을 style로 넣는다(ConfirmDialog). measure.mjs가 같은 계산으로 창 폭 · 높이를 확인한다. */
+.sn-root[data-device^='pos'] { --mk-confirm-side: 32px; --mk-confirm-max: 860px; --mk-confirm-my: 24px; }
+.sn-root[data-device^='driver'] { --mk-confirm-side: 16px; --mk-confirm-max: 720px; --mk-confirm-my: 16px; }
+/* confirmWindow()처럼, 가장 작은 창(포스 504 · 기사 360)이 위아래 여백 안에 들어가지 않으면 좁은 여백(12 · 8)으로 줄인다.
+   552 = 504 + 2 × 24(1024×529에서 창 505), 392 = 360 + 2 × 16. */
+@media (max-height: 551.98px) { .sn-root[data-device^='pos'] { --mk-confirm-my: 12px; } }
+@media (max-height: 391.98px) { .sn-root[data-device^='driver'] { --mk-confirm-my: 8px; } }
+
+/* ── 시안 틀 ─────────────────────────────────────────────────────────────────────────── */
+/* 화면 하나 = 틀 크기(spec.json frame) 그대로. html · body는 app.css가 여백 0 · 높이 100% · 넘침 숨김으로 둔다.
+   페이지는 스크롤되지 않는다(내용이 넘치면 measure.mjs가 잡는다). 바탕 책상색은 .sn-root가 칠한다. */
+.sn-root { width: 100%; }
+
+/* 확인 창: <div class="sn-overlay"><div class="sn-dialog mk-confirm" role="dialog">… */
+.mk-confirm {
+  width: min(calc(100vw - var(--mk-confirm-side) * 2), var(--mk-confirm-max));
+  max-height: calc(100vh - var(--mk-confirm-my) * 2);
+}
+/* 창 바닥줄의 '닫기'(왼쪽 갈매기 그림 + 낱말)와 주 버튼. 주 버튼이 길면 남는 폭을 다 쓴다. */
+.mk-confirm .sn-dialog-foot .sn-primary { flex: 0 1 auto; min-width: 0; }
+
+/* 종이 머리(접수증 머리 · 제목줄) 안의 색인 탭: 탭은 머리의 아래 선에 붙는다. */
+.mk-head-tabs { align-self: flex-end; }
+
+/* ── 고르기 버튼(SlotChooser · PlaceChooser · 방식 고르기 · 설정) ─────────────────────── */
+/* <button class="sn-button mk-choice" aria-pressed="true|false">. 고른 것은 남색 바탕(앱의 pos-method와 같은 모양). */
+.mk-choices { display: flex; align-items: center; gap: var(--sn-space-s); min-width: 0; }
+.mk-choice { padding: 0 var(--sn-space-m); }
+.mk-choice[aria-pressed='true'] { background: var(--sn-ink); color: var(--sn-paper); }
+/* 두 줄 고르기 버튼: 구역을 고른 뒤 '솔마을 / 두솔동', '차량 배달 / 17:00 만선 광장'. */
+.mk-choice.is-two { flex-direction: column; gap: 0; line-height: 1.1; }
+.mk-choice.is-two > small { font-size: var(--sn-font-min); font-weight: 700; }
+/* 구역 버튼 뒤의 '›'(두 번 눌러 고름). 글자로 둔다(가상 요소가 아님: 읽어 주기 · 문구 검사에 보이게). */
+.mk-more { font-weight: 900; }
+
+/* ── 이름표 줄(창 안 · 종이 안의 한 줄: 이름표 + 내용) ────────────────────────────────── */
+.mk-form { display: flex; flex-direction: column; gap: var(--sn-space-s); }
+.mk-form-row {
+  display: grid; grid-template-columns: 6em minmax(0, 1fr); align-items: center; column-gap: var(--sn-space-m);
+  min-height: var(--sn-target);
+}
+.mk-form-label { font-size: var(--sn-font-min); font-weight: 800; color: var(--sn-ink-muted); white-space: nowrap; }
+/* 줄 위의 작은 제목(종이 안의 묶음 이름: '반납 시각 · 오늘'). */
+.mk-title-line {
+  display: flex; align-items: center; gap: var(--sn-space-s); min-height: calc(var(--sn-font-min) * 1.75);
+  font-size: var(--sn-font-min); font-weight: 800; color: var(--sn-ink-muted); white-space: nowrap;
+}
+.mk-note { font-size: var(--sn-font-min); font-weight: 600; line-height: 1.35; color: var(--sn-ink-muted); }
+.mk-line { font-size: var(--sn-font-body); font-weight: 700; white-space: nowrap; }
+.mk-line > b { font-weight: 900; }
+.mk-rule { box-shadow: inset 0 var(--sn-line) 0 var(--sn-rule); padding-top: var(--sn-space-s); }
+
+/* ── 수량 −/+ 칸(품목 줄마다: 이름 · 둘째 줄 · − · 값 · +). 누르는 곳은 sn-qty-button(등급 최소) ── */
+.mk-steps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sn-space-s) var(--sn-space-l); }
+.mk-step { display: flex; align-items: center; gap: var(--sn-space-s); min-width: 0; min-height: var(--sn-target); }
+.mk-step-name { display: flex; flex-direction: column; justify-content: center; flex: 1 1 0; min-width: 0; line-height: 1.15; }
+.mk-step-name > b { font-size: var(--sn-font-body); font-weight: 900; white-space: nowrap; }
+.mk-step-name > small { font-size: var(--sn-font-min); font-weight: 700; color: var(--sn-ink-muted); white-space: nowrap; }
+.mk-step .sn-qty-value { min-width: calc(var(--sn-target) * 1.25); }
+
+/* ── 두 줄 목록 줄(오른쪽 판 · 넘기는 일 · 한 번에 수납): 윗줄 굵게, 아랫줄 작게, 오른쪽 금액 ────────── */
+.mk-list { display: flex; flex-direction: column; }
+.mk-list-row {
+  display: flex; align-items: center; gap: var(--sn-space-s); height: var(--sn-target); padding: 0 var(--sn-space-s);
+  box-shadow: inset 0 calc(var(--sn-line) * -1) 0 var(--sn-rule-soft);
+}
+.mk-list-main { display: flex; flex-direction: column; justify-content: center; flex: 1 1 0; min-width: 0; line-height: 1.15; }
+.mk-list-main > b { font-size: var(--sn-font-base); font-weight: 800; white-space: nowrap; }
+.mk-list-main > small { font-size: var(--sn-font-min); font-weight: 600; color: var(--sn-ink-soft); white-space: nowrap; }
+.mk-list-amount { flex: none; font-size: var(--sn-font-base); font-weight: 900; white-space: nowrap; }
+.mk-panel-title { display: flex; align-items: center; justify-content: space-between; gap: var(--sn-space-s); height: calc(var(--sn-target) - var(--sn-space-m)); font-size: var(--sn-font-body); font-weight: 900; box-shadow: inset 0 calc(var(--sn-line-strong) * -1) 0 var(--sn-ink); }
+.mk-sum { display: flex; flex-direction: column; gap: var(--sn-space-xs); font-size: var(--sn-font-base); font-weight: 700; }
+.mk-sum > .is-total { font-size: var(--sn-font-big); font-weight: 900; }
+.mk-big-money { font-size: calc(var(--sn-font-title) + var(--sn-space-xs)); font-weight: 900; line-height: 1.1; white-space: nowrap; }
+
+/* ── 작은 이름표(바꿈 · 결제 예정 · 내는 팀 · 객실): 16px 글자, 누르는 곳이 아님 ──────────────────── */
+.mk-tag {
+  display: inline-flex; align-items: center; flex: none; width: fit-content; padding: 0 var(--sn-space-s);
+  border: var(--sn-line) solid var(--sn-rule); border-radius: var(--sn-radius-s); background: var(--sn-paper-shade);
+  font-size: var(--sn-font-min); font-weight: 700; color: var(--sn-ink-soft); white-space: nowrap;
+}
+.mk-tag.is-blue { border-color: var(--sn-blue); background: var(--sn-blue-wash); color: var(--sn-blue); }
+.mk-tag.is-purple { border-color: var(--sn-purple); background: var(--sn-purple-wash); color: var(--sn-purple-ink); }

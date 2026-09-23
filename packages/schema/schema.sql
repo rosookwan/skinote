@@ -14,6 +14,12 @@
 -- actor keys and snapshots, so a shop file can move to its own server (or to a
 -- PostgreSQL schema) without breaking a constraint.
 --
+-- Deployment is cloud-first (ADR-19, docs/architecture/deployment.md): control.sqlite and every
+-- shop file live on our central server in Korea, one writer per shop file, each commit replicated
+-- to object storage in another location within seconds. Counters and driver devices keep a
+-- working copy (the same store code on SQLite WASM) and a signed send queue for offline work;
+-- sys_offline_commands says which command each device kind may queue.
+--
 -- Read docs/architecture/data-model.md first. The rules this file follows:
 --   * Every tenant table leads its key with shop_id; references between tenant rows are
 --     composite foreign keys (shop_id, x_id) -> x(shop_id, id). A row of one shop cannot
@@ -70,9 +76,12 @@
 -- @database control
 -- =====================================================================================
 -- PART 1 · CONTROL DATABASE (control.sqlite)
--- One per deployment. On a shop PC it sits next to the shop file; in SaaS it is the
--- central platform database. Security state (lockouts, revocations) is updated in place;
--- every change made through the admin console also writes platform_audit_log.
+-- One per deployment: the central platform database on our server (ADR-19). A hybrid shop's
+-- edge PC (after season 1, deployment.md 1-3) never writes control: it keeps a read-only copy of its
+-- own slice (staff password and PIN verifiers, the signed licence, device public keys) so it can
+-- authenticate while the internet is down, and the centre stays the only writer of this file.
+-- Security state (lockouts, revocations) is updated in place; every change made through the
+-- admin console also writes platform_audit_log.
 -- =====================================================================================
 
 CREATE TABLE schema_migrations (                  -- forward-only migration ledger of THIS file
@@ -91,7 +100,7 @@ CREATE TABLE db_instance (                        -- identity of this physical f
   instance_id              TEXT    NOT NULL,      -- ULID minted when the file is created
   epoch_id                 TEXT    NOT NULL,      -- new ULID at creation and after every restore
   epoch_no                 INTEGER NOT NULL DEFAULT 1,
-  deployment_key           TEXT    NOT NULL,      -- shop_pc | saas | demo (code-owned)
+  deployment_key           TEXT    NOT NULL,      -- cloud | edge (hybrid shop PC, later) | staging | drill | demo (code-owned)
   created_at               TEXT    NOT NULL,
   restored_at              TEXT,
   restored_from_backup_id  TEXT
@@ -129,9 +138,14 @@ CREATE TABLE tenants (                            -- shop directory: where each 
   business_id    TEXT    REFERENCES businesses(id),
   code           TEXT    NOT NULL,                -- short ASCII code used in URLs and support
   name           TEXT    NOT NULL,
-  data_location  TEXT    NOT NULL,                -- 'sqlite:shop-<id>.sqlite' | 'pg:<schema>'
+  data_location  TEXT    NOT NULL,                -- where the writer of the shop is: 'sqlite://<host>/shop-<id>.sqlite' (a
+                                                  -- server of ours) | 'edge://<device id>' (hybrid shop PC, later) |
+                                                  -- 'pg://<cluster>/<schema>'; season 1 writes 'sqlite:shop-<id>.sqlite' (this server)
   status_key     TEXT    NOT NULL DEFAULT 'active',   -- active | suspended | closed (code-owned)
   is_test        INTEGER NOT NULL DEFAULT 0 CHECK (is_test IN (0,1)),   -- demo shop: nothing reaches customers
+  closing_requested_at TEXT,                      -- the shop ended its contract: limited mode, then export and destruction
+                                                  -- (deployment.md 6-7)
+  data_destroyed_at    TEXT,                      -- live file, replicas, snapshots, segments and the shop's data key destroyed
   created_at     TEXT    NOT NULL,
   updated_at     TEXT    NOT NULL,
   version        INTEGER NOT NULL DEFAULT 1
@@ -139,13 +153,17 @@ CREATE TABLE tenants (                            -- shop directory: where each 
 CREATE UNIQUE INDEX tenants_code ON tenants (code);
 
 CREATE TABLE accounts (                           -- a person who can sign in (docs/45)
-  id                    TEXT    NOT NULL PRIMARY KEY,   -- global ULID minted once; a shop PC's control file copies it, never re-mints
+  id                    TEXT    NOT NULL PRIMARY KEY,   -- global ULID minted once by the central control; a copy elsewhere (a
+                                                  -- hybrid shop PC's read-only slice, a PostgreSQL move) keeps it, never re-mints
   login_realm           TEXT    NOT NULL DEFAULT 'platform',   -- tenant code ('shop1') for shop staff, 'platform' for admins;
                                                   -- logins such as 'counter1' may repeat across shops, so the realm is part of the key
   login_id              TEXT,                     -- lower-cased; NULL for imported legacy actors that cannot sign in
   display_name          TEXT    NOT NULL,         -- shown as '삭제된 계정' once deleted_at is set
   password_hash         TEXT,                     -- PHC string (scrypt / argon2id); never leaves the server
-  pin_hash              TEXT,                     -- short PIN for quick staff switch on a registered shop device
+  pin_hash              TEXT,                     -- short PIN for quick staff switch on a registered shop device: a slow hash
+                                                  -- of HMAC(pepper, PIN) where the pepper is a server secret outside every
+                                                  -- database and backup (a leaked control copy alone cannot be brute-forced);
+                                                  -- never sent to devices (they keep their own verifiers, sync doc 7)
   must_change_password  INTEGER NOT NULL DEFAULT 1 CHECK (must_change_password IN (0,1)),
   failed_count          INTEGER NOT NULL DEFAULT 0 CHECK (failed_count >= 0),
   locked_until          TEXT,                     -- 5 failures -> 10 minutes (setting)
@@ -179,19 +197,21 @@ CREATE TABLE platform_admins (                    -- hidden admin console access
 CREATE TABLE sessions (                           -- bearer sessions; the token itself is never stored
   id              TEXT    NOT NULL PRIMARY KEY,
   token_hash      TEXT    NOT NULL,               -- sha256 of the bearer token
-  kind_key        TEXT    NOT NULL,               -- staff | admin | agent | legacy_token (code-owned)
-  account_id      TEXT    REFERENCES accounts(id),-- NULL only for legacy_token sessions until cutover
+  kind_key        TEXT    NOT NULL,               -- staff | admin | agent (code-owned); old access-file tokens are NOT imported:
+                                                  -- every device enrols again at the cutover (migration-plan 5-1)
+  account_id      TEXT    REFERENCES accounts(id),
   tenant_id       TEXT    REFERENCES tenants(id), -- chosen shop; NULL for the admin console
   device_id       TEXT,                           -- devices.id in the shop file (no cross-file FK)
   staff_member_id TEXT,                           -- staff_members.id in the shop file, set after shop choice or PIN switch
-  legacy_actor_json TEXT,                         -- imported {id, role, vehicleId, permissions} of the old access file
+  legacy_actor_json TEXT,                         -- stays NULL: old access-file tokens are not imported (the actor mapping lives in
+                                                  -- staff_members.legacy_actor_key)
   created_at      TEXT    NOT NULL,
   last_used_at    TEXT    NOT NULL,
-  idle_timeout_s  INTEGER NOT NULL CHECK (idle_timeout_s > 0),   -- driver devices: long (14 days); counter: shift length
+  idle_timeout_s  INTEGER NOT NULL CHECK (idle_timeout_s > 0),   -- driver devices: long (14 days) behind an app lock; counter: shift
   expires_at      TEXT    NOT NULL,
   revoked_at      TEXT,
   revoke_reason   TEXT,
-  ip_hash         TEXT,
+  ip_hash         TEXT,                           -- keyed HMAC of the address (key rotated, deployment.md 10-4), not a bare sha256
   user_agent      TEXT
 ) STRICT;
 CREATE UNIQUE INDEX sessions_token ON sessions (token_hash);
@@ -204,10 +224,10 @@ CREATE TABLE login_attempts (
   account_id  TEXT    REFERENCES accounts(id),
   tenant_id   TEXT,
   device_id   TEXT,
-  method_key  TEXT    NOT NULL,                   -- password | pin | token (code-owned)
+  method_key  TEXT    NOT NULL,                   -- password | pin | enrollment (a device entering an enrolment code) (code-owned)
   succeeded   INTEGER NOT NULL CHECK (succeeded IN (0,1)),
-  reason_key  TEXT,                               -- bad_password | locked | suspended | ok
-  ip_hash     TEXT,
+  reason_key  TEXT,                               -- bad_password | locked | suspended | not_enrolled_device | ok
+  ip_hash     TEXT,                               -- keyed HMAC; lockouts and back-off are per (account, device or address)
   at          TEXT    NOT NULL
 ) STRICT;
 CREATE INDEX login_attempts_login ON login_attempts (login_id, at);
@@ -228,10 +248,18 @@ CREATE TABLE plan_features (                      -- a feature is available when
   PRIMARY KEY (plan_key, feature_key)
 ) STRICT;
 
-CREATE TABLE licence_signing_keys (               -- PUBLIC keys only; the private key never enters any database
+CREATE TABLE licence_signing_keys (               -- PUBLIC keys only; no private key enters any database
   key_id       TEXT NOT NULL PRIMARY KEY,
   algorithm    TEXT NOT NULL,                     -- 'Ed25519'
   public_key   TEXT NOT NULL,                     -- base64
+  purpose_key  TEXT NOT NULL DEFAULT 'licence',   -- licence: the offline root key (developer's hardware key / safe) that signs
+                                                  -- shop licences and the certificates of device-token keys; the app ships
+                                                  -- only root public keys | device_token: an online key of the server that signs
+                                                  -- short device tokens, rotated often, certified by a root key (code-owned)
+  certified_by TEXT REFERENCES licence_signing_keys(key_id),   -- device_token keys: the root key that signed the certificate
+  certificate  TEXT,                              -- root signature over (key_id, public_key, purpose_key, not_after, test_only)
+  not_after    TEXT,                              -- a device refuses tokens signed by a device_token key after this
+  test_only    INTEGER NOT NULL DEFAULT 0 CHECK (test_only IN (0,1)),   -- staging key: its tokens are valid only for is_test shops
   created_at   TEXT NOT NULL,
   retired_at   TEXT
 ) STRICT;
@@ -246,9 +274,20 @@ CREATE TABLE licences (                           -- one live licence per shop (
   device_limit           INTEGER,                 -- NULL = plan default
   account_limit          INTEGER,
   feature_overrides_json TEXT    NOT NULL DEFAULT '{}',   -- {"lessons": true}
+  offline_grace_days     INTEGER NOT NULL DEFAULT 14 CHECK (offline_grace_days BETWEEN 1 AND 60),
+                                                  -- a device keeps full use on its cached signed device token this long after
+                                                  -- its last contact with the server (refresh_by); after that only new orders
+                                                  -- stop on that device, money and returns never do (deployment.md 5)
+  expiry_grace_days      INTEGER NOT NULL DEFAULT 14 CHECK (expiry_grace_days BETWEEN 0 AND 60),
+                                                  -- full use after expires_on; then limited mode (no new orders, no settings,
+                                                  -- no new devices); money, returns, closing and data export always work
   status_key             TEXT    NOT NULL DEFAULT 'active', -- active | suspended | deleted
-  token                  TEXT    NOT NULL,        -- vendor-signed claims (Ed25519); the shop server verifies it with the
-                                                  -- public key built into the app, so editing this row does not unlock anything
+  token                  TEXT    NOT NULL,        -- vendor-signed claims (Ed25519, offline root key). The central server checks them
+                                                  -- at every session start and signs short device tokens with an online
+                                                  -- device_token key certified by the root; a device checks the certificate chain
+                                                  -- with the root public key built into the app, so editing a row unlocks nothing.
+                                                  -- The device check is guidance for the screen, not enforcement: records that
+                                                  -- already happened offline are always accepted (deployment.md 5-5)
   signing_key_id         TEXT    NOT NULL REFERENCES licence_signing_keys(key_id),
   suspended_reason       TEXT,
   issued_at              TEXT    NOT NULL,
@@ -262,8 +301,8 @@ CREATE UNIQUE INDEX licences_no ON licences (licence_no);
 CREATE UNIQUE INDEX licences_one_live ON licences (tenant_id) WHERE status_key <> 'deleted';
 
 CREATE TABLE resort_templates (                   -- central resort starter data (docs/45 A05)
-  id                   TEXT    NOT NULL PRIMARY KEY,   -- vendor-fixed ULID shipped with the template package, so a shop PC's
-                                                       -- copy and the central database agree (template_applications.template_id)
+  id                   TEXT    NOT NULL PRIMARY KEY,   -- vendor-fixed ULID shipped with the template package, so every shop file,
+                                                       -- a staging copy and the central database agree (template_applications.template_id)
   key                  TEXT    NOT NULL,          -- muju_deogyusan, jisan_forest ...
   name                 TEXT    NOT NULL,          -- '무주덕유산리조트'
   region               TEXT,
@@ -298,8 +337,8 @@ CREATE TABLE template_usage (                     -- '적용 매장 수'; the sh
 
 CREATE TABLE platform_audit_log (                 -- 사용 내역 of the platform: logins, accounts, licences, templates,
                                                   -- backups, restores, exports. Hash-chained for tamper evidence.
-  chain_id     TEXT    NOT NULL,                  -- db_instance.instance_id of the file that wrote it: chains of several
-                                                  -- shop PCs merge into a central database without renumbering
+  chain_id     TEXT    NOT NULL,                  -- db_instance.instance_id of the file that wrote it: chains of several files
+                                                  -- (a restored copy, a later PostgreSQL move) merge without renumbering
   seq          INTEGER NOT NULL CHECK (seq >= 1), -- gapless order inside the chain (PostgreSQL: appends serialised per chain)
   id           TEXT    NOT NULL,
   at           TEXT    NOT NULL,
@@ -308,8 +347,9 @@ CREATE TABLE platform_audit_log (                 -- 사용 내역 of the platfo
   actor_label  TEXT    NOT NULL,
   device_id    TEXT,
   session_id   TEXT,
-  ip_hash      TEXT,
-  category_key TEXT    NOT NULL,                  -- login | account | licence | template | settings | export | backup | restore | error
+  ip_hash      TEXT,                              -- keyed HMAC, not a bare sha256
+  category_key TEXT    NOT NULL,                  -- login | account | licence | template | settings | export | backup | restore |
+                                                  -- support (supplier data view, remote screen, break-glass file access) | error
   action_key   TEXT    NOT NULL,                  -- 'licence.extend', 'account.suspend', 'backup.verified' ...
   target_type  TEXT,
   target_id    TEXT,
@@ -327,7 +367,7 @@ CREATE INDEX platform_audit_log_tenant ON platform_audit_log (tenant_id, at);
 CREATE INDEX platform_audit_log_account ON platform_audit_log (account_id, at);
 CREATE INDEX platform_audit_log_category ON platform_audit_log (category_key, at);
 
-CREATE TABLE usage_daily (                        -- admin dashboard counters, pushed by each shop server
+CREATE TABLE usage_daily (                        -- admin dashboard counters, written once a day per shop by the central worker
   tenant_id   TEXT    NOT NULL REFERENCES tenants(id),
   date        TEXT    NOT NULL,
   metric_key  TEXT    NOT NULL,                   -- commands | orders | logins | errors | sync_bytes | devices_active | db_bytes
@@ -339,14 +379,21 @@ CREATE TABLE backups (                            -- catalogue of every backup f
   id            TEXT    NOT NULL PRIMARY KEY,
   tenant_id     TEXT    REFERENCES tenants(id),   -- NULL = the control file itself
   database_key  TEXT    NOT NULL,                 -- control | shop
-  kind_key      TEXT    NOT NULL,                 -- hourly | nightly | pre_migration | pre_import | manual | season_archive
-  file_name     TEXT    NOT NULL,
+  kind_key      TEXT    NOT NULL,                 -- daily | weekly_scrubbed | season_scrubbed (no customer PII) | pre_migration |
+                                                  -- post_migration | pre_import | manual | owner_export | owner_export_scrubbed
+                                                  -- (code-owned, deployment.md 6). A VACUUM INTO snapshot is its own restore
+                                                  -- point: WAL frames of the live file cannot be replayed on it (the replication
+                                                  -- tool restores from its own generations); journal segments continue it
+  file_name     TEXT    NOT NULL,                 -- object key in the backup store of the other location (or the owner's file name)
   bytes         INTEGER NOT NULL CHECK (bytes >= 0),
   sha256        TEXT    NOT NULL,
   epoch_id      TEXT    NOT NULL,
   max_rev       INTEGER,                          -- shop files: highest rev inside the copy
   last_hash     TEXT,                             -- shop files: journal hash at max_rev (chain continuity on restore)
   encrypted     INTEGER NOT NULL DEFAULT 1 CHECK (encrypted IN (0,1)),
+  key_id        TEXT,                             -- the shop's data key (public-key encryption, e.g. an age recipient); the
+                                                  -- server holds public keys only, and destroying a shop's key makes every
+                                                  -- copy of that shop unreadable (deployment.md 6-7, 10-1)
   status_key    TEXT    NOT NULL,                 -- written | verified | offsite | failed | expired
   created_at    TEXT    NOT NULL,
   verified_at   TEXT,
@@ -356,9 +403,18 @@ CREATE TABLE backups (                            -- catalogue of every backup f
 ) STRICT;
 CREATE INDEX backups_tenant ON backups (tenant_id, created_at);
 
-CREATE TABLE restore_drills (                     -- weekly automated restore test: restore, integrity_check, verifier, counts
+CREATE TABLE restore_drills (                     -- restore test on a fresh VM in the isolated drill box (deployment.md 6-3):
+                                                  -- the replication tool's own generation + WAL to a point in time, or a VACUUM
+                                                  -- INTO snapshot + journal segments, or segments only; then integrity_check,
+                                                  -- verifier, chain and row digests; finished_at - started_at is the measured RTO
   id           TEXT    NOT NULL PRIMARY KEY,
-  backup_id    TEXT    NOT NULL REFERENCES backups(id),
+  tenant_id    TEXT    REFERENCES tenants(id),    -- NULL = the control file or the whole server
+  backup_id    TEXT    REFERENCES backups(id),    -- the snapshot a snapshot drill started from; NULL for a replica or segment drill
+  source_key   TEXT    NOT NULL DEFAULT 'replica',   -- replica (PITR from the tool's generation) | snapshot | journal (code-owned)
+  provider_key TEXT    NOT NULL DEFAULT 'primary',   -- primary | second (the other company's store, region-loss drill)
+  replica_generation TEXT,                        -- the replication tool's generation id the drill restored
+  target_at    TEXT,                              -- point in time restored to
+  target_rev   INTEGER,                           -- rev R reached; checks compare the chain hash and ledger digests at R
   started_at   TEXT    NOT NULL,
   finished_at  TEXT,
   outcome_key  TEXT    NOT NULL,                  -- passed | failed
@@ -380,9 +436,9 @@ CREATE TABLE tenant_epochs (                      -- every epoch of every shop; 
 CREATE UNIQUE INDEX tenant_epochs_id ON tenant_epochs (epoch_id);
 
 -- Routing before the shop is known (SMS / card / payment callbacks, intake links, online booking).
--- Shop files are per tenant and shop PCs sit behind NAT, so the platform keeps the directory and
--- a relay inbox that each shop server pulls from; under PostgreSQL row security these rows are
--- read before skinote.shop_id is set.
+-- Shop files are per tenant, so the platform keeps the directory and a relay inbox; the writer of
+-- the shop (the central server, or a hybrid shop's edge PC behind NAT) pulls from it; under
+-- PostgreSQL row security these rows are read before skinote.shop_id is set.
 CREATE TABLE public_links (                       -- capability tokens handed to customers (intake form, online booking)
   token_hash   TEXT    NOT NULL PRIMARY KEY,      -- sha256 of the token in the URL fragment
   tenant_id    TEXT    NOT NULL REFERENCES tenants(id),
@@ -404,18 +460,51 @@ CREATE TABLE external_refs (                      -- provider ids that come back
   PRIMARY KEY (provider_key, external_id)
 ) STRICT;
 
-CREATE TABLE inbound_events (                     -- relay inbox: callbacks received centrally, pulled by the shop server
+CREATE TABLE inbound_events (                     -- relay inbox: callbacks received centrally, pulled by the shop's writer
   id            TEXT    NOT NULL PRIMARY KEY,     -- ULID; also the request id of the system command the shop records
   tenant_id     TEXT,                             -- NULL until routed through public_links / external_refs
   provider_key  TEXT    NOT NULL,
   external_id   TEXT,
-  payload_json  TEXT    NOT NULL,
+  payload_json  TEXT    NOT NULL,                 -- only after the provider signature (HMAC) verified; money results are
+                                                  -- re-queried from the provider API before they are recorded (sync doc 9).
+                                                  -- May carry a phone number: emptied to '{}' 30 days after pulled
   received_at   TEXT    NOT NULL,
   routed_at     TEXT,
-  pulled_at     TEXT,                             -- the shop server acknowledged it (idempotent by id)
+  pulled_at     TEXT,                             -- the shop's writer acknowledged it (idempotent by id)
+  payload_purged_at TEXT,
   status_key    TEXT    NOT NULL DEFAULT 'received'   -- received | routed | pulled | unroutable
 ) STRICT;
 CREATE INDEX inbound_events_pending ON inbound_events (tenant_id, received_at) WHERE pulled_at IS NULL;
+
+CREATE TABLE enrollment_routes (                  -- device enrolment codes, routed before the shop is known (deployment.md 5-3): a new
+                                                  -- device enters the code at the one app address and the centre finds the shop here
+  code_hash    TEXT    NOT NULL PRIMARY KEY,      -- sha256 of the code; global, so two shops never hold the same live code
+  tenant_id    TEXT    NOT NULL REFERENCES tenants(id),
+  code_id      TEXT    NOT NULL,                  -- device_enrollment_codes.id in the shop file (no cross-file FK)
+  origin_key   TEXT    NOT NULL DEFAULT 'shop',   -- shop | supplier: a code the supplier made joins only after the owner approves
+  expires_at   TEXT    NOT NULL,                  -- 15 minutes
+  claimed_at   TEXT,                              -- a device entered it; the device joins only after approval on the admin screen
+  used_at      TEXT,
+  created_at   TEXT    NOT NULL
+) STRICT;
+CREATE INDEX enrollment_routes_tenant ON enrollment_routes (tenant_id, created_at);
+
+CREATE TABLE support_access_grants (              -- the shop's time-limited permission for the supplier (deployment.md 9, 10-2):
+                                                  -- unmasked data view or one remote-screen session; every use is written to
+                                                  -- platform_audit_log (category support) and shown in the shop's notice slot
+  id                  TEXT    NOT NULL PRIMARY KEY,
+  tenant_id           TEXT    NOT NULL REFERENCES tenants(id),
+  kind_key            TEXT    NOT NULL,           -- data_unmasked | remote_screen (code-owned)
+  granted_by          TEXT    NOT NULL REFERENCES accounts(id),   -- the owner or manager who pressed 공급자 도움 허락 in 관리
+  reason              TEXT    NOT NULL,
+  confirm_words_hash  TEXT,                       -- remote_screen: the one-time two words the supplier has to say first
+  starts_at           TEXT    NOT NULL,
+  expires_at          TEXT    NOT NULL,           -- e.g. 2 hours
+  revoked_at          TEXT,
+  created_at          TEXT    NOT NULL,
+  CHECK (expires_at > starts_at)
+) STRICT;
+CREATE INDEX support_access_grants_live ON support_access_grants (tenant_id, expires_at) WHERE revoked_at IS NULL;
 
 -- control.sqlite has its own recovery journal (accounts, PINs, sessions, enrolments change here),
 -- exported in segments exactly like the shop journal (sync doc 10). Secrets travel only inside the
@@ -437,7 +526,8 @@ CREATE TABLE control_journal_exports (
   to_seq      INTEGER NOT NULL,
   file_name   TEXT    NOT NULL,
   sha256      TEXT    NOT NULL,
-  target_key  TEXT    NOT NULL,                   -- lan_peer | usb | offsite
+  target_key  TEXT    NOT NULL,                   -- second_store (another company's store in Korea, every minute) |
+                                                  -- edge_peer (a hybrid shop, later)
   status_key  TEXT    NOT NULL,                   -- written | verified | offsite | failed
   created_at  TEXT    NOT NULL,
   CHECK (to_seq >= from_seq)
@@ -478,7 +568,7 @@ CREATE UNIQUE INDEX schema_migrations_name ON schema_migrations (name);
 CREATE TABLE db_instance (                        -- identity of this physical file only (epochs are per shop: shop_instance)
   singleton                INTEGER NOT NULL PRIMARY KEY CHECK (singleton = 1),
   instance_id              TEXT    NOT NULL,      -- also the chain_id of anything this file hash-chains
-  deployment_key           TEXT    NOT NULL,      -- shop_pc | saas | demo
+  deployment_key           TEXT    NOT NULL,      -- cloud | edge | staging | drill | demo
   created_at               TEXT    NOT NULL
 ) STRICT;
 
@@ -605,7 +695,9 @@ CREATE TABLE sys_movement_routes (                  -- the only legal (kind, fro
   from_kind_key      TEXT    NOT NULL REFERENCES sys_location_kinds(key),
   to_kind_key        TEXT    NOT NULL REFERENCES sys_location_kinds(key),
   driver_allowed     INTEGER NOT NULL CHECK (driver_allowed IN (0,1)),
-  offline_allowed    INTEGER NOT NULL DEFAULT 0 CHECK (offline_allowed IN (0,1)),   -- may be queued on a driver device
+  offline_allowed    INTEGER NOT NULL DEFAULT 0 CHECK (offline_allowed IN (0,1)),   -- may be queued offline (counter or driver
+                                                    -- device, by sys_offline_commands); a later migration may raise it 0 -> 1
+                                                    -- (lint allows exactly that UPDATE), never lower it
   added_in           INTEGER NOT NULL,
   PRIMARY KEY (movement_kind_key, from_kind_key, to_kind_key)
 ) STRICT;
@@ -678,6 +770,40 @@ CREATE TABLE sys_payment_purposes (
   label     TEXT    NOT NULL,
   added_in  INTEGER NOT NULL
 ) STRICT;
+
+-- Deposits (보증금) are counted in units: a deposit rule (2.4) says how much per unit, when it is taken, how a
+-- returned unit's deposit goes back and what happens to a unit that never comes back (data-model 4-12 · 4-18,
+-- catalog 11-1). Whether a kind must come back at all is its return policy (sys_return_policies), a separate choice.
+CREATE TABLE sys_deposit_timings (                  -- when a rule's deposit is taken
+  key       TEXT    NOT NULL PRIMARY KEY,           -- at_intake (접수할 때) | at_issue (지급할 때: 권을 줄 때)
+  label     TEXT    NOT NULL,
+  added_in  INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE sys_deposit_refund_methods (           -- how a returned unit's deposit goes back: the preselected choice of the
+                                                    -- return window; staff may pick another one there
+  key       TEXT    NOT NULL PRIMARY KEY,           -- cash (현금으로 돌려드림: counter drawer or the van wallet) | offset_due (미수에서
+                                                    -- 빼기: deposit_apply, the rest in cash) | same_method (받은 수단으로: card cancel)
+  label     TEXT    NOT NULL,
+  added_in  INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE sys_deposit_unreturned_actions (       -- what happens to the deposit of a unit that does not come back
+  key       TEXT    NOT NULL PRIMARY KEY,           -- keep (보증금에서 뺌: the shop keeps it) | charge_loss (분실 값을 청구하고
+                                                    -- 보증금으로 먼저 냄: a loss adjustment + deposit_apply)
+  label     TEXT    NOT NULL,
+  added_in  INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE sys_deposit_entry_kinds (              -- rows of a deposit's unit ledger (deposit_entries) and the money kind each
+                                                    -- row must point at, so a refund row can only name a deposit_out payment
+  key               TEXT    NOT NULL PRIMARY KEY,   -- take | refund | apply | keep | restore
+  label             TEXT    NOT NULL,
+  unit_sign         INTEGER NOT NULL CHECK (unit_sign IN (-1,1)),   -- effect on the held units: take, restore +1; refund, apply, keep -1
+  payment_kind_key  TEXT    NOT NULL REFERENCES sys_payment_kinds(key),
+  added_in          INTEGER NOT NULL
+) STRICT;
+CREATE UNIQUE INDEX sys_deposit_entry_kinds_payment ON sys_deposit_entry_kinds (key, payment_kind_key);   -- FK target
 
 CREATE TABLE sys_counterparty_roles (
   key       TEXT    NOT NULL PRIMARY KEY,           -- resort_vendor, partner_shop, lesson_team, lodging_affiliate, billing_company
@@ -962,11 +1088,31 @@ CREATE TABLE sys_event_types (                      -- catalogue of command type
   class_key         TEXT    NOT NULL,               -- fact | intent | commutative | system (conflict class, sync doc 4)
   audit_label       TEXT    NOT NULL,               -- Korean label for 사용 내역
   is_money          INTEGER NOT NULL DEFAULT 0 CHECK (is_money IN (0,1)),
-  offline_allowed   INTEGER NOT NULL DEFAULT 0 CHECK (offline_allowed IN (0,1)),   -- driver offline whitelist
+  offline_allowed   INTEGER NOT NULL DEFAULT 0 CHECK (offline_allowed IN (0,1)),   -- 1 = some device kind may queue it offline
+                                                    -- (the union of sys_offline_commands; tests keep the two equal). A later
+                                                    -- migration that adds a sys_offline_commands row may raise it 0 -> 1 (lint
+                                                    -- allows exactly that UPDATE, like engine_key), never lower it
   current_version   INTEGER NOT NULL DEFAULT 1,
   payload_schema_key TEXT,                          -- json_schemas key; CI checks it has no PII fields
   engine_key        TEXT    NOT NULL DEFAULT 'native',   -- native | legacy (facade) during the transition
   added_in          INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE sys_offline_commands (                 -- which command each device kind may queue while offline (sync doc 8-2):
+                                                    -- counters (pos) since the cloud-first decision (ADR-19), drivers as before
+  event_type_key   TEXT    NOT NULL REFERENCES sys_event_types(key),
+  device_kind_key  TEXT    NOT NULL REFERENCES sys_device_kinds(key),
+  limit_key        TEXT    REFERENCES sys_offline_limits(key),   -- extra offline rule the command layer checks on the device
+  added_in         INTEGER NOT NULL,
+  PRIMARY KEY (event_type_key, device_kind_key)
+) STRICT;
+
+CREATE TABLE sys_offline_limits (                   -- the extra rules a device checks before it queues a command offline (sync doc 8-2);
+                                                    -- a queued command that breaks one on arrival is still recorded, with a review item
+  key       TEXT    NOT NULL PRIMARY KEY,           -- walk_in_cached_quote | own_payer_cached_quote | cached_quote | shop_ticket_stock |
+                                                    -- same_line_swap
+  label     TEXT    NOT NULL,
+  added_in  INTEGER NOT NULL
 ) STRICT;
 
 -- -------------------------------------------------------------------------------------
@@ -984,7 +1130,10 @@ CREATE TABLE shops (
   link_url             TEXT,
   logo_ref             TEXT,
   timezone             TEXT    NOT NULL DEFAULT 'Asia/Seoul',  -- IANA zone; every business_date is computed with it
-  business_day_cutoff  TEXT    NOT NULL DEFAULT '00:00',       -- local HH:MM; earlier records belong to the previous day
+  business_day_cutoff  TEXT    NOT NULL DEFAULT '00:00',       -- local HH:MM; earlier records belong to the previous day.
+                                                               -- shop.provision writes the ski-shop default 06:00 (a night
+                                                               -- return at 00:40 counts to the evening's ledger); 00:00 is
+                                                               -- only the technical fallback (data-model 3-3)
   currency             TEXT    NOT NULL DEFAULT 'KRW',
   currency_exponent    INTEGER NOT NULL DEFAULT 0 CHECK (currency_exponent >= 0),
   locale               TEXT    NOT NULL DEFAULT 'ko-KR',
@@ -1109,17 +1258,28 @@ CREATE TABLE devices (                            -- registered POS PCs, driver 
   vehicle_id             TEXT,                    -- driver devices: the van it rides in
   branch_id              TEXT,
   closing_scope_id       TEXT,                    -- counter devices: the scope their non-cash money posts to (NULL = 'main')
+  short_no               INTEGER CHECK (short_no IS NULL OR short_no >= 1),   -- 기기 번호 given by the server at enrolment from
+                                                  -- shop_counters('device_short_no'), never reused (revoked devices keep theirs; a
+                                                  -- restore skips the counter by 10, sync doc 10-2): the lead of an offline
+                                                  -- counter's provisional receipt number ('임시 1-12', orders.provisional_receipt_no)
   public_key             TEXT,                    -- non-extractable WebCrypto key; signs queued commands (actor assertion)
   counts_toward_licence  INTEGER NOT NULL DEFAULT 1 CHECK (counts_toward_licence IN (0,1)),
+  enrolled_by_supplier   INTEGER NOT NULL DEFAULT 0 CHECK (enrolled_by_supplier IN (0,1)),   -- joined with a code the supplier
+                                                  -- made (after the owner approved it); the device list shows '공급자 기기'
   app_version            TEXT,
   command_contract       INTEGER,                 -- highest command version the device speaks
   last_device_seq        INTEGER NOT NULL DEFAULT 0 CHECK (last_device_seq >= 0),   -- high-water mark, not a strict order
   last_seen_at           TEXT,
-  offline_capable        INTEGER NOT NULL DEFAULT 0 CHECK (offline_capable IN (0,1)),  -- 1 only after navigator.storage.persist()
+  offline_capable        INTEGER NOT NULL DEFAULT 0 CHECK (offline_capable IN (0,1)),  -- 1 only after navigator.storage.persist();
+                                                  -- counters and driver devices alike keep a working copy and a send queue
   status_key             TEXT    NOT NULL DEFAULT 'active',   -- active | revoked
   registered_at          TEXT    NOT NULL,
   registered_by          TEXT    NOT NULL,
-  revoked_at             TEXT,                    -- stops new sessions; signed facts made before this instant are still accepted
+  revoked_at             TEXT,                    -- stops new sessions; the next contact wipes the working copy. Judged by what the
+                                                  -- SERVER saw, not by the time the device claims: commands of this device that
+                                                  -- arrived before revoked_at are normal; those arriving after it are held
+                                                  -- (command_log 'held', not applied to any projection) until a manager presses
+                                                  -- 넣기 on revoked_device_record (sync doc 7)
   revoke_reason          TEXT,
   updated_rev            INTEGER NOT NULL DEFAULT 0,
   version                INTEGER NOT NULL DEFAULT 1,
@@ -1128,6 +1288,7 @@ CREATE TABLE devices (                            -- registered POS PCs, driver 
   FOREIGN KEY (shop_id, branch_id) REFERENCES branches(shop_id, id),
   FOREIGN KEY (shop_id, closing_scope_id) REFERENCES closing_scopes(shop_id, id)
 ) STRICT;
+CREATE UNIQUE INDEX devices_short_no ON devices (shop_id, short_no) WHERE short_no IS NOT NULL;
 
 CREATE TABLE device_sign_ins (                    -- who was signed in on which device when (append-only): the server checks the
                                                   -- actor a queued command names against this, not against the flushing session
@@ -1135,7 +1296,7 @@ CREATE TABLE device_sign_ins (                    -- who was signed in on which 
   device_id        TEXT    NOT NULL,
   seq              INTEGER NOT NULL CHECK (seq >= 1),
   staff_member_id  TEXT    NOT NULL,
-  method_key       TEXT    NOT NULL,              -- password | pin | legacy_token (code-owned)
+  method_key       TEXT    NOT NULL,              -- password | pin (code-owned; old access-file tokens are not imported)
   signed_in_at     TEXT    NOT NULL,
   session_id       TEXT,                          -- control.sessions.id
   created_rev      INTEGER NOT NULL,
@@ -1148,11 +1309,17 @@ CREATE INDEX device_sign_ins_at ON device_sign_ins (shop_id, device_id, signed_i
 CREATE TABLE device_enrollment_codes (            -- one-time code a manager shows to register a new device
   shop_id      TEXT    NOT NULL REFERENCES shops(id),
   id           TEXT    NOT NULL,
-  code_hash    TEXT    NOT NULL,                  -- sha256 of the 8-digit code
+  code_hash    TEXT    NOT NULL,                  -- sha256 of the code (12 characters without look-alikes, or a QR); routed by
+                                                  -- control enrollment_routes, which is globally unique
   kind_key     TEXT    NOT NULL REFERENCES sys_device_kinds(key),
   vehicle_id   TEXT,
   label        TEXT    NOT NULL,
+  origin_key   TEXT    NOT NULL DEFAULT 'shop',   -- shop | supplier (made in the admin console: the owner has to approve)
   expires_at   TEXT    NOT NULL,
+  claimed_at   TEXT,                              -- a new device entered the code; it joins only after approval (two steps)
+  claimed_agent TEXT,                             -- what the claiming device said it is ('Windows · Chrome'), shown when approving
+  approved_at  TEXT,
+  approved_by  TEXT,                              -- actor key of the person who approved it on the screen that made the code
   used_at      TEXT,
   device_id    TEXT,
   created_at   TEXT    NOT NULL,
@@ -1194,7 +1361,7 @@ CREATE TABLE shop_settings (                      -- versioned policies; rows ar
 
 CREATE TABLE shop_counters (                      -- rev (sync cursor), receipt numbers per day, group codes ...
   shop_id      TEXT    NOT NULL REFERENCES shops(id),
-  counter_key  TEXT    NOT NULL,                  -- rev | receipt | intake_group | payment_group | print_no
+  counter_key  TEXT    NOT NULL,                  -- rev | receipt | intake_group | payment_group | print_no | device_short_no
   scope_key    TEXT    NOT NULL DEFAULT '',       -- '' or a business date / season key
   value        INTEGER NOT NULL,
   PRIMARY KEY (shop_id, counter_key, scope_key)
@@ -1448,6 +1615,44 @@ CREATE TABLE catalog_item_components (            -- sets: 스키 세트 = 스�
   FOREIGN KEY (shop_id, component_item_id) REFERENCES catalog_items(shop_id, id),
   CHECK (bundle_item_id <> component_item_id)
 ) STRICT;
+
+CREATE TABLE deposit_rules (                      -- 보증금 규칙: a per-unit deposit that every SKU of a kind, or one SKU, takes
+                                                  -- ('리프트권 보증금 · 1매 5,000원'). No row = no deposit: the shop chooses, and
+                                                  -- another shop or resort may have none. Held deposits snapshot the rule (deposits)
+  shop_id                TEXT    NOT NULL REFERENCES shops(id),
+  id                     TEXT    NOT NULL,
+  key                    TEXT    NOT NULL,        -- lift_ticket_card
+  label                  TEXT    NOT NULL,        -- '리프트권 보증금' (confirm-window row, slip money line, closing)
+  item_kind_id           TEXT,                    -- target: every SKU of a kind ...
+  catalog_item_id        TEXT,                    -- ... or one SKU. Exactly one target; a SKU rule wins over its kind's rule
+  unit_amount            INTEGER NOT NULL CHECK (unit_amount > 0),   -- per unit in minor units (this shop: 5,000 per 매)
+  timing_key             TEXT    NOT NULL REFERENCES sys_deposit_timings(key),   -- at_intake | at_issue
+  payment_section_id     TEXT,                    -- confirm-window row that asks for it ('리프트권 보증금'); NULL = the kind's row
+  refund_default_key     TEXT    NOT NULL REFERENCES sys_deposit_refund_methods(key),   -- preselected in the return window
+  unreturned_key         TEXT    NOT NULL REFERENCES sys_deposit_unreturned_actions(key),   -- keep | charge_loss
+  unreturned_after_days  INTEGER CHECK (unreturned_after_days IS NULL OR unreturned_after_days >= 0),
+                                                  -- NULL: only a person applies it (deposit.keep); N: the closing N business days
+                                                  -- after the day the unit was due back applies it (0 = that day's closing)
+  loss_amount            INTEGER CHECK (loss_amount IS NULL OR loss_amount > 0),   -- charge_loss: lost-unit charge per unit
+  effective_from         TEXT    NOT NULL,        -- local date; a new amount next season is a new row, not an edit
+  effective_to           TEXT,
+  active                 INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0,1)),
+  sort                   INTEGER NOT NULL DEFAULT 0,
+  template_ref           TEXT,
+  created_at             TEXT    NOT NULL,
+  updated_at             TEXT    NOT NULL,
+  updated_rev            INTEGER NOT NULL DEFAULT 0,
+  version                INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (shop_id, id),
+  FOREIGN KEY (shop_id, item_kind_id) REFERENCES item_kinds(shop_id, id),
+  FOREIGN KEY (shop_id, catalog_item_id) REFERENCES catalog_items(shop_id, id),
+  FOREIGN KEY (shop_id, payment_section_id) REFERENCES payment_sections(shop_id, id),
+  CHECK ((item_kind_id IS NOT NULL) + (catalog_item_id IS NOT NULL) = 1),
+  CHECK (effective_to IS NULL OR effective_to >= effective_from)
+) STRICT;
+CREATE UNIQUE INDEX deposit_rules_key ON deposit_rules (shop_id, key);
+CREATE INDEX deposit_rules_kind ON deposit_rules (shop_id, item_kind_id, effective_from) WHERE item_kind_id IS NOT NULL;
+CREATE INDEX deposit_rules_item ON deposit_rules (shop_id, catalog_item_id, effective_from) WHERE catalog_item_id IS NOT NULL;
 
 CREATE TABLE item_variants (                      -- sizes and grades counted separately (boots 250 mm, helmet M, ski 140 cm)
   shop_id          TEXT    NOT NULL REFERENCES shops(id),
@@ -2456,7 +2661,11 @@ CREATE TABLE customer_tag_assignments (
 CREATE TABLE orders (                             -- 통합접수: one team, recorded under its representative
   shop_id               TEXT    NOT NULL REFERENCES shops(id),
   id                    TEXT    NOT NULL,
-  receipt_no            TEXT,                     -- 'YYMMDD-NNN' from shop_counters; NULL for offline drafts
+  receipt_no            TEXT,                     -- 'YYMMDD-NNN' from shop_counters, given by the server when the create is applied
+                                                  -- (a queued offline create gets it on arrival); NULL only on the device meanwhile
+  provisional_receipt_no TEXT,                    -- '<devices.short_no>-<n>' an offline counter printed ('임시 1-12'); the device counts
+                                                  -- n up and never resets it, so no two devices or days collide. Kept after the
+                                                  -- final receipt_no so the paper slip still finds the team (sync doc 8-3)
   customer_id           TEXT,
   customer_name         TEXT    NOT NULL,         -- snapshot of the representative (PII, redactable)
   customer_phone        TEXT,                     -- snapshot (PII); optional for walk-ins by setting
@@ -2499,9 +2708,11 @@ CREATE TABLE orders (                             -- 통합접수: one team, rec
   FOREIGN KEY (shop_id, branch_id) REFERENCES branches(shop_id, id),
   FOREIGN KEY (shop_id, device_id) REFERENCES devices(shop_id, id),
   CHECK (charged_amount >= 0),
-  CHECK (due_amount >= 0 AND credit_amount >= 0 AND deposit_held_amount >= 0 AND collect_for_others_amount >= 0)
+  CHECK (due_amount >= 0 AND credit_amount >= 0 AND deposit_held_amount >= 0 AND collect_for_others_amount >= 0),
+  CHECK (provisional_receipt_no IS NULL OR device_id IS NOT NULL)   -- only a device prints a provisional number
 ) STRICT;
 CREATE UNIQUE INDEX orders_receipt ON orders (shop_id, receipt_no) WHERE receipt_no IS NOT NULL;
+CREATE UNIQUE INDEX orders_provisional_receipt ON orders (shop_id, provisional_receipt_no) WHERE provisional_receipt_no IS NOT NULL;
 CREATE INDEX orders_business_date ON orders (shop_id, business_date);
 CREATE INDEX orders_service_dates ON orders (shop_id, last_service_date, first_service_date);
 CREATE INDEX orders_open ON orders (shop_id, next_due_at) WHERE is_open = 1;
@@ -3566,6 +3777,8 @@ CREATE TABLE stock_movement_lines (               -- one unit, or a quantity of 
 ) STRICT;
 CREATE INDEX stock_movement_lines_asset ON stock_movement_lines (shop_id, asset_id, created_rev) WHERE asset_id IS NOT NULL;
 CREATE INDEX stock_movement_lines_order_line ON stock_movement_lines (shop_id, order_line_id) WHERE order_line_id IS NOT NULL;
+-- FK target of deposit_entries: the return that released deposit units moved units of that very order line
+CREATE UNIQUE INDEX stock_movement_lines_line_ref ON stock_movement_lines (shop_id, movement_id, line_no, order_line_id);
 
 CREATE TABLE stock_movement_reversals (           -- which reversal line undid which line; each line can be reversed once (append-only)
   shop_id               TEXT    NOT NULL REFERENCES shops(id),
@@ -3828,11 +4041,13 @@ CREATE TABLE exchanges (                          -- 교환: any exchangeable ki
   FOREIGN KEY (shop_id, new_variant_id) REFERENCES item_variants(shop_id, id)
 ) STRICT;
 CREATE INDEX exchanges_order ON exchanges (shop_id, order_id);
+CREATE UNIQUE INDEX exchanges_order_id ON exchanges (shop_id, order_id, id);   -- FK target
 
 CREATE TABLE exchange_units (                     -- a unit swap, or a count swap (goggles M -> L, quantity 2)
   shop_id             TEXT    NOT NULL REFERENCES shops(id),
   exchange_id         TEXT    NOT NULL,
   seq                 INTEGER NOT NULL CHECK (seq >= 1),
+  order_id            TEXT    NOT NULL,           -- = the exchange's order: its return promise is a promise of THIS order
   base_asset_id       TEXT,                       -- unit swaps of a component: the ski these boots belong to
   old_asset_id        TEXT,
   new_asset_id        TEXT,
@@ -3856,7 +4071,9 @@ CREATE TABLE exchange_units (                     -- a unit swap, or a count swa
          OR (old_asset_id IS NULL AND old_variant_id IS NOT NULL AND base_asset_id IS NULL AND new_asset_id IS NULL)),
   FOREIGN KEY (shop_id, delivery_task_id) REFERENCES tasks(shop_id, id),
   FOREIGN KEY (shop_id, collection_task_id) REFERENCES tasks(shop_id, id),
-  FOREIGN KEY (shop_id, return_promise_id) REFERENCES line_promises(shop_id, id)
+  FOREIGN KEY (shop_id, return_promise_id) REFERENCES line_promises(shop_id, id),
+  FOREIGN KEY (shop_id, order_id, exchange_id) REFERENCES exchanges(shop_id, order_id, id),
+  FOREIGN KEY (shop_id, order_id, return_promise_id) REFERENCES line_promises(shop_id, order_id, id)
 ) STRICT;
 
 CREATE TABLE exchange_recoveries (                -- append-only
@@ -3899,11 +4116,13 @@ CREATE TABLE early_returns (                      -- 조기 반납: no money eff
   FOREIGN KEY (shop_id, visit_place_id) REFERENCES places(shop_id, id),
   FOREIGN KEY (shop_id, vehicle_id) REFERENCES vehicles(shop_id, id)
 ) STRICT;
+CREATE UNIQUE INDEX early_returns_order_id ON early_returns (shop_id, order_id, id);   -- FK target
 
 CREATE TABLE early_return_assets (                -- one unit, or a quantity of a count variant (2 of 6 goggles back early)
   shop_id              TEXT    NOT NULL REFERENCES shops(id),
   early_return_id      TEXT    NOT NULL,
   seq                  INTEGER NOT NULL CHECK (seq >= 1),
+  order_id             TEXT    NOT NULL,          -- = the early return's order: its line and promises are of THIS order
   asset_id             TEXT,
   variant_id           TEXT,
   quantity             INTEGER NOT NULL DEFAULT 1 CHECK (quantity >= 1),
@@ -3919,6 +4138,9 @@ CREATE TABLE early_return_assets (                -- one unit, or a quantity of 
   FOREIGN KEY (shop_id, previous_task_id) REFERENCES tasks(shop_id, id),
   FOREIGN KEY (shop_id, previous_promise_id) REFERENCES line_promises(shop_id, id),
   FOREIGN KEY (shop_id, new_task_id) REFERENCES tasks(shop_id, id),
+  FOREIGN KEY (shop_id, order_id, early_return_id) REFERENCES early_returns(shop_id, order_id, id),
+  FOREIGN KEY (shop_id, order_id, order_line_id) REFERENCES order_lines(shop_id, order_id, id),
+  FOREIGN KEY (shop_id, order_id, previous_promise_id) REFERENCES line_promises(shop_id, order_id, id),
   CHECK ((asset_id IS NOT NULL AND variant_id IS NULL AND quantity = 1) OR (asset_id IS NULL AND variant_id IS NOT NULL))
 ) STRICT;
 CREATE UNIQUE INDEX early_return_assets_asset ON early_return_assets (shop_id, early_return_id, asset_id) WHERE asset_id IS NOT NULL;
@@ -4427,6 +4649,8 @@ CREATE INDEX payments_approval ON payments (shop_id, terminal_id, approval_no) W
 -- the same approval reported twice for one intent (agent late + a person's resolve) is one payment; a genuinely
 -- different second approval of one intent is recorded and raised as 'extra_card_approval'
 CREATE UNIQUE INDEX payments_intent_approval ON payments (shop_id, payment_intent_id, approval_no) WHERE payment_intent_id IS NOT NULL AND approval_no IS NOT NULL;
+-- FK target of deposit_entries: a deposit unit row names a money row of the right kind and of the same deposit
+CREATE UNIQUE INDEX payments_deposit_kind ON payments (shop_id, id, kind_key, deposit_id);
 
 CREATE TABLE tax_documents (                      -- 현금영수증 · 세금계산서 issued for money (append-only; a cancel is a new row)
   shop_id              TEXT    NOT NULL REFERENCES shops(id),
@@ -4524,16 +4748,28 @@ CREATE INDEX payment_allocations_order ON payment_allocations (shop_id, order_id
 CREATE INDEX payment_allocations_line ON payment_allocations (shop_id, line_id) WHERE line_id IS NOT NULL;
 CREATE INDEX payment_allocations_posting ON payment_allocations (shop_id, closing_scope_id, posting_date);
 
-CREATE TABLE deposits (                           -- security deposit holds (보증금); never used against charges automatically
+CREATE TABLE deposits (                           -- security deposit holds (보증금); never used against charges automatically.
+                                                  -- A rule deposit is ONE hold per team and rule ('이 팀 권 보증금'); its units
+                                                  -- live per line in deposit_entries, so a team with adult and child tickets
+                                                  -- gets its 10,000 back in one cash handout (one payments row)
   shop_id          TEXT    NOT NULL REFERENCES shops(id),
   id               TEXT    NOT NULL,
   order_id         TEXT    NOT NULL,
-  line_id          TEXT,
+  line_id          TEXT,                          -- manual deposits only (a rule deposit spans the team's lines)
   asset_id         TEXT,
+  deposit_rule_id  TEXT,                          -- NULL = a manual deposit (ID card, cash guarantee) without a rule
+  label            TEXT,                          -- snapshots of the rule when the hold was made: later rule edits never
+  unit_amount      INTEGER CHECK (unit_amount IS NULL OR unit_amount > 0),   -- change what this team was told
+  refund_default_key     TEXT REFERENCES sys_deposit_refund_methods(key),
+  unreturned_key         TEXT REFERENCES sys_deposit_unreturned_actions(key),
+  unreturned_after_days  INTEGER CHECK (unreturned_after_days IS NULL OR unreturned_after_days >= 0),
+  loss_amount            INTEGER CHECK (loss_amount IS NULL OR loss_amount > 0),
   required_amount  INTEGER CHECK (required_amount IS NULL OR required_amount >= 0),
   note             TEXT,
-  held_amount      INTEGER NOT NULL DEFAULT 0 CHECK (held_amount >= 0),   -- projection
-  status_key       TEXT    NOT NULL DEFAULT 'open',   -- projection: open | held | returned | applied | mixed
+  held_amount      INTEGER NOT NULL DEFAULT 0 CHECK (held_amount >= 0),   -- projection: sum of deposit_sign x payments
+  held_quantity    INTEGER NOT NULL DEFAULT 0 CHECK (held_quantity >= 0), -- projection: take + restore - refund - apply - keep
+  kept_quantity    INTEGER NOT NULL DEFAULT 0 CHECK (kept_quantity >= 0), -- projection: keep - restore (units the shop kept)
+  status_key       TEXT    NOT NULL DEFAULT 'open',   -- projection: open | held | returned | applied | kept | mixed
   created_at       TEXT    NOT NULL,
   created_by       TEXT    NOT NULL,
   request_id       TEXT,
@@ -4542,8 +4778,64 @@ CREATE TABLE deposits (                           -- security deposit holds (보
   PRIMARY KEY (shop_id, id),
   FOREIGN KEY (shop_id, order_id) REFERENCES orders(shop_id, id),
   FOREIGN KEY (shop_id, order_id, line_id) REFERENCES order_lines(shop_id, order_id, id),
-  FOREIGN KEY (shop_id, asset_id) REFERENCES assets(shop_id, id)
+  FOREIGN KEY (shop_id, asset_id) REFERENCES assets(shop_id, id),
+  FOREIGN KEY (shop_id, deposit_rule_id) REFERENCES deposit_rules(shop_id, id)
 ) STRICT;
+CREATE UNIQUE INDEX deposits_order_id ON deposits (shop_id, order_id, id);   -- FK target: a unit row belongs to THIS team
+CREATE UNIQUE INDEX deposits_order_rule ON deposits (shop_id, order_id, deposit_rule_id) WHERE deposit_rule_id IS NOT NULL;
+CREATE INDEX deposits_held ON deposits (shop_id, order_id) WHERE held_amount > 0;
+
+CREATE TABLE deposit_entries (                    -- 보증금 장부: the units behind every deposit money row, per line (append-only).
+                                                  -- Held units of a deposit = take + restore - refund - apply - keep. Partial
+                                                  -- returns refund per unit: 2 of 3 tickets back = one refund of 10,000 with two
+                                                  -- unit rows, each naming the return movement line that brought the ticket back
+  shop_id           TEXT    NOT NULL REFERENCES shops(id),
+  deposit_id        TEXT    NOT NULL,
+  seq               INTEGER NOT NULL CHECK (seq >= 1),
+  order_id          TEXT    NOT NULL,             -- = the deposit's order (composite FK)
+  line_id           TEXT,                         -- the line whose units these are; NULL only for a manual deposit without units
+  asset_id          TEXT,                         -- the ticket, when unit-tracked and known
+  entry_kind_key    TEXT    NOT NULL,             -- take | refund | apply | keep | restore (sys_deposit_entry_kinds)
+  payment_kind_key  TEXT    NOT NULL,             -- copied from the entry kind: the payment below must be of this kind
+  quantity          INTEGER NOT NULL CHECK (quantity >= 0),   -- units (0 only for a manual deposit without units)
+  amount            INTEGER NOT NULL CHECK (amount > 0),
+  payment_id        TEXT    NOT NULL,             -- the money row: deposit_in | deposit_out | deposit_apply | deposit_forfeit |
+                                                  -- deposit_restore of the same deposit; one payment may carry several unit rows
+  movement_id       TEXT,                         -- refund / apply: the return (direct_return, collect, found) that brought the
+  movement_line_no  INTEGER,                      -- units back; keep: the write-off of the unit that never came back
+  closing_id        TEXT,                         -- keep applied by a closing (the rule's unreturned_after_days)
+  reason_code_id    TEXT,
+  reason            TEXT,                         -- keep, restore, a refund without a return (cancelled before issue); redact-only
+  occurred_at       TEXT    NOT NULL,
+  recorded_at       TEXT    NOT NULL,
+  closing_scope_id  TEXT    NOT NULL DEFAULT 'main',
+  business_date     TEXT    NOT NULL,
+  posting_date      TEXT    NOT NULL,
+  actor_key         TEXT    NOT NULL,
+  actor_name        TEXT    NOT NULL,
+  device_id         TEXT,
+  request_id        TEXT    NOT NULL,
+  created_rev       INTEGER NOT NULL,
+  PRIMARY KEY (shop_id, deposit_id, seq),
+  FOREIGN KEY (shop_id, order_id, deposit_id) REFERENCES deposits(shop_id, order_id, id),
+  FOREIGN KEY (shop_id, order_id, line_id) REFERENCES order_lines(shop_id, order_id, id),
+  FOREIGN KEY (shop_id, asset_id) REFERENCES assets(shop_id, id),
+  FOREIGN KEY (entry_kind_key, payment_kind_key) REFERENCES sys_deposit_entry_kinds(key, payment_kind_key),
+  FOREIGN KEY (shop_id, payment_id, payment_kind_key, deposit_id) REFERENCES payments(shop_id, id, kind_key, deposit_id),
+  FOREIGN KEY (shop_id, movement_id, movement_line_no) REFERENCES stock_movement_lines(shop_id, movement_id, line_no),
+  -- the movement line that released the units moved THIS line's units
+  FOREIGN KEY (shop_id, movement_id, movement_line_no, line_id) REFERENCES stock_movement_lines(shop_id, movement_id, line_no, order_line_id),
+  FOREIGN KEY (shop_id, closing_id) REFERENCES closings(shop_id, id),
+  FOREIGN KEY (shop_id, reason_code_id) REFERENCES reason_codes(shop_id, id),
+  FOREIGN KEY (shop_id, closing_scope_id) REFERENCES closing_scopes(shop_id, id),
+  FOREIGN KEY (shop_id, device_id) REFERENCES devices(shop_id, id),
+  CHECK ((movement_id IS NULL) = (movement_line_no IS NULL)),
+  CHECK (quantity >= 1 OR line_id IS NULL),
+  CHECK (posting_date >= business_date)
+) STRICT;
+CREATE INDEX deposit_entries_payment ON deposit_entries (shop_id, payment_id);
+CREATE INDEX deposit_entries_line ON deposit_entries (shop_id, line_id) WHERE line_id IS NOT NULL;
+CREATE INDEX deposit_entries_posting ON deposit_entries (shop_id, closing_scope_id, posting_date);
 
 CREATE TABLE charge_adjustments (                 -- signed changes to what is owed (append-only)
   shop_id                  TEXT    NOT NULL REFERENCES shops(id),
@@ -5087,13 +5379,19 @@ CREATE TABLE command_log (                        -- every command ever received
   actor_key          TEXT    NOT NULL,            -- 'staff:<id>' | 'system:<worker>' | 'form:<id>' | 'legacy:<role>:<id>' (never NULL);
                                                   -- data, not key: for queued commands the device-signed actor of the moment it happened
   submitted_by_key   TEXT,                        -- the session that delivered it, when different (PIN switch, shared van phone)
-  actor_signature    TEXT,                        -- device-key signature over (request_id, actor, occurred_at, payload hash)
+  actor_signature    TEXT,                        -- device-key signature over (shop_id, device_id, device_seq, request_id, type,
+                                                  -- command_version, payload hash, ageMs, clockAnchor, recordedBy staff); occurred_at
+                                                  -- is set by the server and therefore not signed
   device_id          TEXT,
   device_seq         INTEGER CHECK (device_seq IS NULL OR device_seq >= 1),   -- unique per device; gaps are detected, order is not forced
   command_type       TEXT    NOT NULL,
   command_version    INTEGER NOT NULL,
-  fingerprint        TEXT    NOT NULL,            -- sha256 of {type, version, payload} only (not basis, times or seq; no PII stored)
-  status_key         TEXT    NOT NULL,            -- applied | partially_applied | superseded | needs_review | rejected | blocked | conflict
+  fingerprint        TEXT    NOT NULL,            -- HMAC(shop secret key, canonical {type, version, payload} with names, phones and
+                                                  -- free text replaced by references) — not a bare sha256 that a phone number
+                                                  -- could be guessed from; not basis, times or seq
+  status_key         TEXT    NOT NULL,            -- applied | partially_applied | superseded | needs_review | rejected | blocked |
+                                                  -- conflict | held (arrived from a revoked device, or quarantined after it
+                                                  -- crashed the writer; applied only when a person decides, sync doc 1 · 7)
   retryable          INTEGER NOT NULL DEFAULT 0 CHECK (retryable IN (0,1)),   -- 1: a retry re-evaluates (DAY_CLOSED, SQLITE_BUSY, INTERNAL)
   error_code         TEXT,
   result_json        TEXT,                        -- the reply; nulled after result_expires_at, the row itself is kept
@@ -5156,7 +5454,9 @@ CREATE TABLE event_pii (                          -- personal data and free text
   rev          INTEGER NOT NULL,
   salt         TEXT    NOT NULL,                  -- random; kept with the row, dropped with it on purge
   pii_json     TEXT,                              -- {"customer":{"name":..., "phone":...}, "text":{"note":...}}; NULL once purged
-  purge_after  TEXT    NOT NULL,                  -- default 30 days: far beyond the backup + segment window
+  purge_after  TEXT    NOT NULL,                  -- default 30 days (retention). The PII part of a journal segment is kept 35 days
+                                                  -- (backup_policy.journal_pii_keep_days) and daily snapshots 35 days, so a restore to
+                                                  -- a point older than that has these values empty, as intended (sync doc 10-2)
   purged_at    TEXT,
   PRIMARY KEY (shop_id, rev),
   FOREIGN KEY (shop_id, rev) REFERENCES events(shop_id, rev)
@@ -5256,6 +5556,25 @@ CREATE TABLE integrity_findings (                 -- verifier output: technical,
 ) STRICT;
 CREATE INDEX integrity_findings_open ON integrity_findings (shop_id, found_at) WHERE status_key = 'open';
 
+CREATE TABLE pii_access_log (                     -- who LOOKED AT personal data (reads; writes are in events): the full phone number
+                                                  -- shown, a last-4 search, a printed list, an export, the day's working copy sent to a
+                                                  -- device (deployment.md 10-4). A list read is one row. Kept retention.pii_access_days
+  shop_id       TEXT    NOT NULL REFERENCES shops(id),
+  id            TEXT    NOT NULL,                 -- ULID
+  actor_key     TEXT    NOT NULL,
+  device_id     TEXT,
+  action_key    TEXT    NOT NULL,                 -- phone_reveal | last4_search | list_print | export | working_copy | support_view
+  subject_type  TEXT,                             -- order | customer | list | copy
+  subject_id    TEXT,
+  item_count    INTEGER NOT NULL DEFAULT 1 CHECK (item_count >= 1),
+  at            TEXT    NOT NULL,
+  purge_after   TEXT    NOT NULL,
+  PRIMARY KEY (shop_id, id),
+  FOREIGN KEY (shop_id, device_id) REFERENCES devices(shop_id, id)
+) STRICT;
+CREATE INDEX pii_access_log_at ON pii_access_log (shop_id, at);
+CREATE INDEX pii_access_log_purge ON pii_access_log (purge_after);
+
 CREATE TABLE journal_exports (                    -- journal segments: events + event_pii + command_log rows + the AFTER-IMAGES of
                                                   -- every row written (restore applies after-images; re-execution only checks)
   shop_id          TEXT    NOT NULL REFERENCES shops(id),
@@ -5269,7 +5588,14 @@ CREATE TABLE journal_exports (                    -- journal segments: events + 
   file_name        TEXT    NOT NULL,
   sha256           TEXT    NOT NULL,
   bytes            INTEGER NOT NULL CHECK (bytes >= 0),
-  target_key       TEXT    NOT NULL,              -- lan_peer (streamed within seconds) | second_disk | usb | offsite
+  target_key       TEXT    NOT NULL,              -- second_store (another company's store in Korea, every minute) | edge_peer
+                                                  -- (a hybrid shop's centre copy, later)
+  part_key         TEXT    NOT NULL DEFAULT 'main',   -- main (events without PII, command_log, after-images without PII columns; kept
+                                                  -- for the season) | pii (event_pii and the PII columns of after-images; its own
+                                                  -- object with a 35-day lifecycle rule) (code-owned, deployment.md 6-1)
+  key_id           TEXT,                          -- the data key it was encrypted to (per shop; pii parts per shop and month, so a
+                                                  -- destroyed key erases them too)
+  expires_at       TEXT,                          -- when the store's lifecycle rule deletes it
   status_key       TEXT    NOT NULL,              -- written | verified | offsite | failed
   created_at       TEXT    NOT NULL,
   offsite_at       TEXT,
@@ -5592,6 +5918,15 @@ CREATE TRIGGER payment_allocations_no_update BEFORE UPDATE OF
   business_date, posting_date, actor_key, request_id, created_rev
   ON payment_allocations BEGIN SELECT RAISE(ABORT, 'APPEND_ONLY payment_allocations'); END;
 CREATE TRIGGER payment_allocations_no_delete BEFORE DELETE ON payment_allocations BEGIN SELECT RAISE(ABORT, 'APPEND_ONLY payment_allocations'); END;
+CREATE TRIGGER deposit_entries_no_update BEFORE UPDATE OF
+  shop_id, deposit_id, seq, order_id, line_id, asset_id, entry_kind_key, payment_kind_key, quantity, amount,
+  payment_id, movement_id, movement_line_no, closing_id, reason_code_id, occurred_at, recorded_at, closing_scope_id,
+  business_date, posting_date, actor_key, actor_name, device_id, request_id, created_rev
+  ON deposit_entries BEGIN SELECT RAISE(ABORT, 'APPEND_ONLY deposit_entries'); END;
+CREATE TRIGGER deposit_entries_redact_only BEFORE UPDATE OF reason ON deposit_entries
+  WHEN (NEW.reason IS NOT OLD.reason AND NEW.reason IS NOT '(지움)')
+  BEGIN SELECT RAISE(ABORT, 'REDACT_ONLY deposit_entries'); END;
+CREATE TRIGGER deposit_entries_no_delete BEFORE DELETE ON deposit_entries BEGIN SELECT RAISE(ABORT, 'APPEND_ONLY deposit_entries'); END;
 CREATE TRIGGER charge_adjustments_no_update BEFORE UPDATE OF
   shop_id, id, order_id, line_id, adjustment_type_id, type_sign, amount, extension_id, cancellation_id,
   service_booking_id, discount_application_id, occurred_at, recorded_at, closing_scope_id, business_date,
@@ -5853,6 +6188,8 @@ INSERT INTO sys_permissions (key, label, group_key, scopes_json, sensitive, adde
  ('payment.reallocate',      '수납 옮기기',          'money',    '["shop"]', 1, 1),
  ('deposit.take',            '보증금 받기',          'money',    '["shop"]', 0, 1),
  ('deposit.return',          '보증금 돌려주기',      'money',    '["shop"]', 1, 1),
+ ('deposit.return_field',    '현장 보증금 돌려주기', 'money',    '["own_vehicle"]', 1, 1),
+ ('deposit.keep',            '보증금에서 빼기',      'money',    '["shop"]', 1, 1),
  ('adjustment.create',       '금액 조정',            'money',    '["shop"]', 1, 1),
  ('cash.entry',              '현금 입출금',          'money',    '["shop"]', 1, 1),
  ('cash.transfer',           '차량 현금 넘기기',     'money',    '["shop","own_vehicle"]', 0, 1),
@@ -5904,10 +6241,10 @@ INSERT INTO sys_setting_definitions (key, label, value_schema_key, default_value
  ('max_line_quantity',               '한 줄 최대 수량',         'setting.max_quantity',           '{"max":500}', 0, 1),
  ('session_idle_minutes',            '자동 로그아웃',           'setting.session_idle',           '{"counter":480,"driver":20160}', 0, 1),
  ('login_lockout',                   '로그인 잠금',             'setting.login_lockout',          '{"max_failures":5,"lock_minutes":10}', 0, 1),
- ('retention',                       '보관 기간',               'setting.retention',              '{"command_result_days":90,"event_pii_days":30,"change_log_days":60,"intent_marks_days":30,"customer_pii_days":1095,"journal_hot_seasons":2}', 0, 1),
- ('backup_policy',                   '백업',                    'setting.backup_policy',          '{"hourly_keep":48,"segment_minutes":5,"nightly_offsite":true,"drill_weekday":"mon"}', 0, 1),
- ('offline_policy',                  '오프라인 기록',           'setting.offline_policy',         '{"max_backdate_hours":168,"future_skew_minutes":5,"sent_log_days":7,"clock_warn_minutes":2,"seq_gap_alert_minutes":30}', 0, 1),
- ('closing_policy',                  '마감 확인',               'setting.closing_policy',         '{"block_on_unsent_van":true,"block_on_money_findings":true,"reopen":"latest_only"}', 0, 1);
+ ('retention',                       '보관 기간',               'setting.retention',              '{"command_result_days":90,"event_pii_days":30,"change_log_days":60,"intent_marks_days":30,"customer_pii_days":1095,"journal_hot_seasons":2,"outbox_payload_days":30,"pii_access_days":365}', 0, 1),
+ ('backup_policy',                   '백업',                    'setting.backup_policy',          '{"wal_keep_days":7,"daily_keep_days":35,"journal_pii_keep_days":35,"weekly_scrubbed_keep_weeks":26,"season_scrubbed_keep_years":5,"drill_weekday":"mon","drill_time":"04:30","owner_export_scrubbed":true,"owner_export":false}', 0, 1),
+ ('offline_policy',                  '오프라인 기록',           'setting.offline_policy',         '{"max_backdate_hours":168,"future_skew_minutes":5,"sent_log_days":7,"sent_pii_hours":24,"clock_warn_minutes":2,"seq_gap_alert_minutes":30,"counter_days_ahead":2,"counter_due_lookback_days":30,"reconnect_window_seconds":120,"fallback_after_failures":2,"fallback_recover_seconds":10,"pii_wipe_hours":{"driver":24,"counter":72},"app_lock_minutes":{"driver_phone":5,"driver_tablet":30}}', 0, 1),
+ ('closing_policy',                  '마감 확인',               'setting.closing_policy',         '{"block_on_unsent_van":true,"block_on_unsent_devices":true,"block_on_money_findings":true,"reopen":"latest_only"}', 0, 1);
 
 INSERT INTO sys_device_kinds (key, label, added_in) VALUES
  ('pos','카운터 포스',1), ('driver_tablet','기사 태블릿',1), ('driver_phone','기사 휴대폰',1),
@@ -5960,11 +6297,11 @@ INSERT INTO sys_movement_routes (movement_kind_key, from_kind_key, to_kind_key, 
  ('stock_opening','external','vehicle',0,0,1), ('stock_opening','external','customer',0,0,1),
  ('stock_receive','external','shop',0,0,1), ('ticket_issue','external','shop',0,0,1),
  ('partner_borrow','counterparty','shop',0,0,1),
- ('load','shop','vehicle',0,0,1),
- ('deliver','shop','customer',0,0,1), ('deliver','vehicle','customer',1,1,1),
+ ('load','shop','vehicle',0,1,1),                                              -- a counter may queue 적재 offline (8-2)
+ ('deliver','shop','customer',0,1,1), ('deliver','vehicle','customer',1,1,1),   -- counter 지급 may be queued offline (ADR-19)
  ('collect','customer','vehicle',1,1,1),
  ('receive','vehicle','shop',1,0,1),
- ('direct_return','customer','shop',0,0,1),
+ ('direct_return','customer','shop',0,1,1),
  ('vendor_refund','vehicle','counterparty',1,1,1), ('vendor_refund','shop','counterparty',0,0,1),
  ('found','void','shop',0,0,1), ('found','customer','shop',0,0,1), ('found','vehicle','shop',0,0,1),
  ('partner_lend','shop','counterparty',0,0,1), ('partner_receive','counterparty','shop',0,0,1),
@@ -6012,10 +6349,26 @@ INSERT INTO sys_payment_kinds (key, label, balance_sign, deposit_sign, cash_sign
  ('payment','수납',1,0,1,0,0,1), ('refund','환불',-1,0,-1,1,0,1),
  ('legacy_refund','이전 자료 환불(대상 모름)',-1,0,-1,0,0,1),   -- import only: old refunds that name no payment
  ('deposit_in','보증금 받음',0,1,1,0,1,1), ('deposit_out','보증금 돌려줌',0,-1,-1,0,1,1),
- ('deposit_apply','보증금으로 결제',1,-1,0,0,1,1);
+ ('deposit_apply','보증금으로 결제',1,-1,0,0,1,1),
+ ('deposit_forfeit','보증금에서 뺌',0,-1,0,0,1,1),   -- a unit never came back: the shop keeps its deposit (no cash moves)
+ ('deposit_restore','뺀 보증금 되돌림',0,1,0,0,1,1);  -- the unit came back after all: held again, then refunded as usual
 
 INSERT INTO sys_payment_purposes (key, label, added_in) VALUES
  ('charge','수납',1), ('prepayment','예약금·선입금',1), ('deposit','보증금',1);
+
+INSERT INTO sys_deposit_timings (key, label, added_in) VALUES
+ ('at_intake','접수할 때',1), ('at_issue','지급할 때',1);
+
+INSERT INTO sys_deposit_refund_methods (key, label, added_in) VALUES
+ ('cash','현금으로 돌려드림',1), ('offset_due','미수에서 빼기',1), ('same_method','받은 수단으로 돌려드림',1);
+
+INSERT INTO sys_deposit_unreturned_actions (key, label, added_in) VALUES
+ ('keep','보증금에서 뺌',1), ('charge_loss','분실 값 따로 받음',1);
+
+INSERT INTO sys_deposit_entry_kinds (key, label, unit_sign, payment_kind_key, added_in) VALUES
+ ('take','보증금 받음',1,'deposit_in',1), ('refund','보증금 돌려드림',-1,'deposit_out',1),
+ ('apply','미수에서 뺌',-1,'deposit_apply',1), ('keep','보증금에서 뺌',-1,'deposit_forfeit',1),
+ ('restore','뺀 보증금 되돌림',1,'deposit_restore',1);
 
 INSERT INTO sys_counterparty_roles (key, label, added_in) VALUES
  ('resort_vendor','발권처',1), ('partner_shop','거래처 샵',1), ('lesson_team','강습팀',1),
@@ -6045,7 +6398,7 @@ INSERT INTO sys_reason_domains (key, label, added_in) VALUES
  ('visit_result','방문 결과',1), ('early_return','조기 반납',1), ('exchange','교환',1), ('handover','인계',1),
  ('asset_condition','정비 상태',1), ('found','찾음',1), ('cash_entry','현금 입출금',1), ('refund','환불',1),
  ('cancellation','취소',1), ('adjustment','금액 조정',1), ('closing_difference','마감 차액',1),
- ('reallocation','수납 옮기기',1), ('price_override','가격 직접 입력',1);
+ ('reallocation','수납 옮기기',1), ('price_override','가격 직접 입력',1), ('deposit','보증금',1);
 
 INSERT INTO sys_stamp_rules (key, scope_key, description, added_in) VALUES
  ('qty_prepared','line','qty_prepared of active quantity',1),
@@ -6109,6 +6462,7 @@ INSERT INTO sys_review_kinds (key, label, message_template, severity_key, routin
  ('task_moved_meanwhile','옮긴 업무의 기록', '{team} 팀 업무를 {to_vehicle}(으)로 옮기기 전에 {from_vehicle}이(가) 이미 처리했습니다. {to_vehicle} 업무는 취소했습니다.', 'info', 'manager', 1),
  ('ticket_unavailable', '차에 권 없음',    '차에 남은 리프트권이 없어 {team} 팀 추가 권을 넣지 못했습니다. 받은 돈은 기록했습니다.', 'action', 'manager', 1),
  ('found_after_charge', '분실 금액 확인',  '{item}을(를) 찾았습니다. {team} 팀에 받은 분실 금액 {amount}원을 돌려드릴지 정해 주세요.', 'action', 'order_banner', 1),
+ ('deposit_kept_returned', '뺀 보증금 확인', '{team} 팀 {item} {qty}{unit}이(가) 돌아왔습니다. 보증금에서 뺀 {amount}원을 돌려드릴지 정해 주세요.', 'action', 'order_banner', 1),
  ('blocked_command',    '멈춘 처리',       '앞선 처리가 되지 않아 이어진 처리 {count}건을 멈췄습니다(돈 기록은 모두 넣었습니다).', 'action', 'origin_device', 1),
  ('device_gap',         '오지 않은 기록',  '{device} 기록 {count}건이 오지 않았습니다. 그 기기를 켜서 보내 주세요.', 'action', 'manager', 1),
  ('clock_suspect',      '기기 시계 확인',  '{device} 시계가 맞지 않아 {count}건의 날짜를 확인해야 합니다.', 'action', 'manager', 1),
@@ -6117,7 +6471,16 @@ INSERT INTO sys_review_kinds (key, label, message_template, severity_key, routin
  ('decision_overridden','내 결정이 바뀜',  '{time}에 정한 {summary}을(를) {other}님이 바꿨습니다.', 'info', 'origin_device', 1),
  ('receipt_no_clash',   '접수 번호 겹침',  '복구 뒤 접수 번호 {no}이(가) 다른 팀에 쓰였습니다. 종이 접수증을 확인해 주세요.', 'action', 'manager', 1),
  ('restore_replay',     '복구 뒤 다시 받음', '복구 뒤 {device} 기기에서 {count}건을 다시 받았습니다.', 'info', 'manager', 1),
- ('ui_defaults_kept',   '화면 설정 확인',  '새 화면 설정 {count}개는 가게에서 바꾼 곳이라 그대로 두었습니다.', 'info', 'manager', 1);
+ ('ui_defaults_kept',   '화면 설정 확인',  '새 화면 설정 {count}개는 가게에서 바꾼 곳이라 그대로 두었습니다.', 'info', 'manager', 1),
+ ('asset_elsewhere',    '다른 곳에 있는 장비', '{item}은(는) 기록상 {where}에 있어 {team} 팀 {action}을(를) 넣지 않았습니다. 물건이 어디 있는지 확인해 주세요.', 'action', 'origin_device', 1),
+ ('deposit_over_returned', '보증금 더 돌려드림', '{team} 팀에 맡은 보증금보다 {amount}원을 더 돌려드렸습니다. {drawer}에서 나간 현금으로 적었습니다. 손님께 받을지 정해 주세요.', 'action', 'order_banner', 1),
+ ('revoked_device_record', '취소한 기기의 기록', '사용을 막은 기기({device})에서 기록 {count}건이 들어왔습니다. 넣지 않고 두었습니다. 맞는 기록이면 넣어 주세요.', 'action', 'manager', 1),
+ ('offline_order_unapplied', '끊긴 동안 받은 접수 확인', '끊긴 동안 받은 접수(임시 {provisional})를 그대로 넣지 못해 대표자 · 품목 · 받은 돈만 적어 두었습니다. 종이 접수증과 맞춰 주세요.', 'action', 'origin_device', 1),
+ ('device_unsynced',    '기기 기록 대기',  '{device} 기록 {count}건이 아직 오지 않았습니다. 마감 전에 그 기기를 인터넷에 연결해 보내 주세요.', 'blocking', 'dialog_step', 1),
+ ('licence_lapsed_record', '라이선스 끝난 뒤의 기록', '라이선스 기간이 끝난 뒤 {device}에서 끊긴 채 받은 접수 {count}건을 넣었습니다. 공급자에게 연락해 주세요.', 'info', 'manager', 1),
+ ('unverified_sign_in', '확인되지 않은 로그인', '{device}에서 {staff}님이 끊긴 채 로그인해 {count}건을 적었습니다. 그 전에 계정이 멈췄거나 번호가 바뀌었습니다. 맞는 기록인지 확인해 주세요.', 'action', 'manager', 1),
+ ('command_held',       '공급자 확인 중',  '{device}에서 온 기록 {count}건을 공급자가 확인하고 있습니다. 다른 일은 그대로 됩니다.', 'info', 'manager', 1),
+ ('recomputed_after_restore', '되살린 뒤 다시 계산', '되살린 뒤 {team} 팀 {what}의 값을 고친 계산으로 다시 적었습니다. 전 {before} · 지금 {after}', 'action', 'manager', 1);
 
 -- engine_key is the season-1 assignment (migration-plan 3-3) and is the ONE field of a sys row a
 -- migration may UPDATE (when a bundle moves to native). native = new TypeScript handler;
@@ -6125,8 +6488,8 @@ INSERT INTO sys_review_kinds (key, label, message_template, severity_key, routin
 -- rejects a fact); legacy = legacy handler through the facade (intents only). CI checks that the
 -- engine registered in code matches this seed.
 INSERT INTO sys_event_types (key, category_key, class_key, audit_label, is_money, offline_allowed, engine_key, added_in) VALUES
- ('order.create',            'order',    'intent',      '접수',                 0, 0, 'native',  1),
- ('order.add',               'order',    'intent',      '품목 추가',            0, 0, 'native',  1),
+ ('order.create',            'order',    'intent',      '접수',                 0, 1, 'native',  1),
+ ('order.add',               'order',    'intent',      '품목 추가',            0, 1, 'native',  1),
  ('order.cancel',            'order',    'intent',      '접수 취소',            1, 0, 'legacy',  1),
  ('order.extend',            'order',    'intent',      '기간 연장',            1, 0, 'legacy',  1),
  ('order.link',              'order',    'intent',      '접수 합치기·연결',     0, 0, 'legacy',  1),
@@ -6134,15 +6497,16 @@ INSERT INTO sys_event_types (key, category_key, class_key, audit_label, is_money
  ('promise.change',          'order',    'intent',      '약속 바꾸기',          0, 0, 'native',  1),
  ('payment_promise.set',     'money',    'intent',      '결제할 팀·시점',       0, 0, 'native',  1),
  ('discount.apply',          'money',    'intent',      '할인',                 1, 0, 'native',  1),
- ('payment.take',            'money',    'fact',        '수납',                 1, 0, 'native',  1),
+ ('payment.take',            'money',    'fact',        '수납',                 1, 1, 'native',  1),
  ('payment.refund',          'money',    'fact',        '환불',                 1, 0, 'native',  1),
  ('payment.reallocate',      'money',    'intent',      '수납 옮기기',          1, 0, 'native',  1),
  ('payment.intent_request',  'money',    'intent',      '카드 결제 요청',       1, 0, 'native',  1),
  ('payment.intent_outcome',  'money',    'system',      '카드 결제 결과',       1, 0, 'native',  1),
  ('payment.intent_resolve',  'money',    'intent',      '카드 결과 확인',       1, 0, 'native',  1),
  ('tax_document.issue',      'money',    'fact',        '현금영수증·세금계산서', 1, 0, 'native',  1),
- ('deposit.take',            'money',    'fact',        '보증금 받기',          1, 0, 'native',  1),
- ('deposit.return',          'money',    'fact',        '보증금 돌려주기',      1, 0, 'native',  1),
+ ('deposit.take',            'money',    'fact',        '보증금 받기',          1, 1, 'native',  1),
+ ('deposit.return',          'money',    'fact',        '보증금 돌려주기',      1, 1, 'native',  1),
+ ('deposit.keep',            'money',    'intent',      '보증금에서 빼기',      1, 0, 'native',  1),
  ('adjustment.create',       'money',    'intent',      '금액 조정',            1, 0, 'native',  1),
  ('cash.entry',              'money',    'fact',        '현금 입출금',          1, 0, 'native',  1),
  ('cash.transfer',           'money',    'fact',        '차량 현금 넘기기',     1, 0, 'native',  1),
@@ -6151,12 +6515,13 @@ INSERT INTO sys_event_types (key, category_key, class_key, audit_label, is_money
  ('closing.reopen',          'money',    'intent',      '마감 다시 열기',       1, 0, 'native',  1),
  ('field.collect',           'money',    'fact',        '현장 수납',            1, 1, 'native',  1),
  ('field.add_ticket',        'order',    'fact',        '배달 중 리프트권 추가', 1, 1, 'native',  1),
- ('stock.load',              'stock',    'fact',        '차량 적재',            0, 0, 'adapter', 1),
- ('stock.issue',             'stock',    'fact',        '지급',                 0, 0, 'adapter', 1),
+ ('field.deposit_return',    'money',    'fact',        '현장 보증금 돌려주기', 1, 1, 'native',  1),
+ ('stock.load',              'stock',    'fact',        '차량 적재',            0, 1, 'adapter', 1),
+ ('stock.issue',             'stock',    'fact',        '지급',                 0, 1, 'adapter', 1),
  ('stock.deliver',           'stock',    'fact',        '배달 전달',            0, 1, 'adapter', 1),
  ('stock.collect',           'stock',    'fact',        '차량 받음',            0, 1, 'adapter', 1),
  ('stock.receive',           'stock',    'fact',        '매장 입고',            0, 0, 'adapter', 1),
- ('stock.direct_return',     'stock',    'fact',        '매장 반납',            0, 0, 'adapter', 1),
+ ('stock.direct_return',     'stock',    'fact',        '매장 반납',            0, 1, 'adapter', 1),
  ('stock.reverse',           'stock',    'intent',      '처리 되돌리기',        0, 0, 'legacy',  1),
  ('stock.intake',            'stock',    'fact',        '재고 들이기',          0, 0, 'adapter', 1),
  ('asset.condition',         'stock',    'fact',        '정비 상태',            0, 0, 'adapter', 1),
@@ -6169,12 +6534,14 @@ INSERT INTO sys_event_types (key, category_key, class_key, audit_label, is_money
  ('ticket.allocate',         'stock',    'intent',      '권 배정',              0, 0, 'legacy',  1),
  ('ticket.release',          'stock',    'intent',      '권 배정 풀기',         0, 0, 'legacy',  1),
  ('ticket.recover',          'stock',    'fact',        '권 회수',              0, 0, 'adapter', 1),
+ ('ticket.hand_out',         'stock',    'fact',        '권 주기(배정과 지급)', 0, 1, 'native',  1),
  ('vendor_refund.plan',      'stock',    'intent',      '발권처 환불 준비',     0, 0, 'legacy',  1),
  ('vendor_refund.attempt',   'stock',    'fact',        '발권처 환불',          1, 1, 'adapter', 1),
  ('exchange.request',        'stock',    'intent',      '교환 요청',            0, 0, 'legacy',  1),
  ('exchange.cancel',         'stock',    'intent',      '교환 취소',            0, 0, 'legacy',  1),
  ('exchange.complete',       'stock',    'fact',        '교환 완료',            0, 0, 'adapter', 1),
  ('exchange.recover',        'stock',    'fact',        '교환 회수',            0, 0, 'adapter', 1),
+ ('exchange.swap',           'stock',    'fact',        '바꿔 드림(카운터)',    0, 1, 'native',  1),
  ('early_return.create',     'stock',    'intent',      '조기 반납',            0, 0, 'legacy',  1),
  ('equipment_loan.move',     'stock',    'fact',        '거래처 장비 빌림·빌려줌', 0, 0, 'adapter', 1),
  ('counterparty.trade',      'money',    'fact',        '거래처 거래',          1, 0, 'adapter', 1),
@@ -6197,7 +6564,7 @@ INSERT INTO sys_event_types (key, category_key, class_key, audit_label, is_money
  ('intake.review',           'order',    'intent',      '사이즈 확인',          0, 0, 'legacy',  1),
  ('intake.apply',            'order',    'intent',      '사이즈 반영',          0, 0, 'legacy',  1),
  ('customer.update',         'order',    'intent',      '고객 정보',            0, 0, 'legacy',  1),
- ('print.request',           'order',    'commutative', '인쇄',                 0, 0, 'native',  1),
+ ('print.request',           'order',    'commutative', '인쇄',                 0, 1, 'native',  1),
  ('print.outcome',           'system',   'system',      '인쇄 결과',            0, 0, 'native',  1),
  ('sms.send',                'order',    'intent',      '문자 보내기',          0, 0, 'native',  1),
  ('sms.outcome',             'system',   'system',      '문자 결과',            0, 0, 'native',  1),
@@ -6208,11 +6575,41 @@ INSERT INTO sys_event_types (key, category_key, class_key, audit_label, is_money
  ('ui_defaults.apply',       'settings', 'system',      '화면 기본 설정 반영',  0, 0, 'native',  1),
  ('staff.set',               'settings', 'intent',      '직원',                 0, 0, 'native',  1),
  ('device.register',         'settings', 'intent',      '기기 등록',            0, 0, 'native',  1),
- ('device.sign_in',          'settings', 'system',      '기기 로그인',          0, 0, 'native',  1),
+ ('device.sign_in',          'settings', 'system',      '기기 로그인',          0, 1, 'native',  1),
  ('review.resolve',          'sync',     'intent',      '확인 필요 처리',       0, 0, 'native',  1),
  ('customer.anonymize',      'settings', 'intent',      '고객 정보 지우기',     0, 0, 'native',  1),
  ('verifier.repair',         'system',   'system',      '검증기 고침',          0, 0, 'native',  1),
  ('legacy.imported',         'import',   'system',      '이전 자료 가져옴',     0, 0, 'import',  1);
+
+-- What each device kind may queue while it cannot reach the server (sync doc 8-2). Counters record the facts
+-- of the counter (지급 · 반납 도장, 적재, 권 주기, 바꿔 드림, money, deposits), new walk-in orders with a provisional
+-- receipt number and extra items priced from the cached published price list; decisions about existing orders
+-- (promise change, cancel, extend, discounts, reallocation, closing) wait for the connection. Drivers keep the
+-- season-1 list. On arrival every queued command is a recorded fact (sync doc 8-12): epoch, basis, conflict keys
+-- and expect never send it back; only its decisions (quote, discount, payer, licence) go to a review item.
+INSERT INTO sys_offline_limits (key, label, added_in) VALUES
+ ('walk_in_cached_quote','현장 대여 · 기기에 있는 게시 요금표 값 · 미리 정한 할인 · 이 팀이나 나중에 냄',1),
+ ('own_payer_cached_quote','기기에 있는 게시 요금표 값 · 결제할 팀이 이 팀 · 열린 접수',1),
+ ('cached_quote','기기에 있는 게시 요금표 값',1),
+ ('shop_ticket_stock','기기 사본의 매장 권 재고에서 · 겹치지 않는 사용 창',1),
+ ('same_line_swap','같은 품목 줄에서 번호 · 규격만 바꿈 · 값 그대로',1);
+
+INSERT INTO sys_offline_commands (event_type_key, device_kind_key, limit_key, added_in) VALUES
+ ('order.create','pos','walk_in_cached_quote',1), ('order.add','pos','own_payer_cached_quote',1),
+ ('stock.issue','pos',NULL,1), ('stock.direct_return','pos',NULL,1), ('stock.load','pos',NULL,1),
+ ('ticket.hand_out','pos','shop_ticket_stock',1), ('exchange.swap','pos','same_line_swap',1),
+ ('payment.take','pos',NULL,1), ('deposit.take','pos',NULL,1), ('deposit.return','pos',NULL,1),
+ ('print.request','pos',NULL,1), ('notification.ack','pos',NULL,1), ('device.sign_in','pos',NULL,1),
+ ('stock.deliver','driver_tablet',NULL,1), ('stock.collect','driver_tablet',NULL,1), ('task.visit','driver_tablet',NULL,1),
+ ('field.collect','driver_tablet',NULL,1), ('field.add_ticket','driver_tablet','cached_quote',1),
+ ('field.deposit_return','driver_tablet',NULL,1), ('vendor_refund.attempt','driver_tablet',NULL,1),
+ ('route.move','driver_tablet',NULL,1), ('route.reset','driver_tablet',NULL,1), ('notification.ack','driver_tablet',NULL,1),
+ ('device.sign_in','driver_tablet',NULL,1),
+ ('stock.deliver','driver_phone',NULL,1), ('stock.collect','driver_phone',NULL,1), ('task.visit','driver_phone',NULL,1),
+ ('field.collect','driver_phone',NULL,1), ('field.add_ticket','driver_phone','cached_quote',1),
+ ('field.deposit_return','driver_phone',NULL,1), ('vendor_refund.attempt','driver_phone',NULL,1),
+ ('route.move','driver_phone',NULL,1), ('route.reset','driver_phone',NULL,1), ('notification.ack','driver_phone',NULL,1),
+ ('device.sign_in','driver_phone',NULL,1);
 
 INSERT INTO sys_workspaces (key, label, added_in) VALUES
  ('pos','카운터',1), ('management','관리',1), ('driver','기사',1);
@@ -6287,7 +6684,7 @@ INSERT INTO sys_status_keys (domain_key, key, default_label, added_in) VALUES
 INSERT INTO sys_confirm_templates (key, label, added_in) VALUES
  ('issue','지급',1), ('return','반납',1), ('load','적재',1), ('collect','받음',1), ('receive','매장 입고',1),
  ('pay','수납',1), ('ticket_secure','발권',1), ('lesson_close','강습 끝',1), ('prepare','준비',1),
- ('visit_result','방문 결과',1), ('field_payment','현장 수납',1), ('add_ticket','권 추가',1);
+ ('visit_result','방문 결과',1), ('field_payment','현장 수납',1), ('add_ticket','리프트권 추가',1), ('swap','바꿔 드림',1);
 
 INSERT INTO sys_actions (key, label, kind_key, command_key, confirm_template_key, undo_command_key, screen_key, rule_scope_key, added_in) VALUES
  ('stamp.issue','지급 도장','stamp','stock.issue','issue','stock.reverse',NULL,'line',1),
@@ -6299,6 +6696,7 @@ INSERT INTO sys_actions (key, label, kind_key, command_key, confirm_template_key
  ('stamp.lesson_done','강습 도장','stamp','lesson.close','lesson_close','lesson.correct',NULL,'line',1),
  ('stamp.pay','수납 도장','stamp','payment.take','pay',NULL,NULL,'order',1),
  ('stamp.prepare','준비 도장','stamp','preparation.set','prepare','preparation.cancel',NULL,'line',1),
+ ('stamp.ticket_hand_out','권 지급 도장','stamp','ticket.hand_out','issue','stock.reverse',NULL,'line',1),
  ('next_step','다음 할 일','next',NULL,NULL,NULL,NULL,'order',1),
  ('new_order','새 접수','screen',NULL,NULL,NULL,'new_order',NULL,1),
  ('close_day','마감','screen',NULL,NULL,NULL,'closing',NULL,1),
@@ -6312,9 +6710,11 @@ INSERT INTO sys_actions (key, label, kind_key, command_key, confirm_template_key
  ('print','인쇄','command','print.request',NULL,NULL,NULL,'order',1),
  ('call','전화','device',NULL,NULL,NULL,NULL,'order',1),
  ('not_collected','못 받음','command','task.visit','visit_result',NULL,NULL,'task',1),
+ ('not_delivered','못 전함','command','task.visit','visit_result',NULL,NULL,'task',1),
  ('field_collect','현장 수납','command','field.collect','field_payment',NULL,NULL,'order',1),
  ('leave_unpaid','미수로 두기','command','payment_promise.set',NULL,NULL,NULL,'order',1),
- ('add_ticket','권 추가','command','field.add_ticket','add_ticket',NULL,NULL,'order',1),
+ ('add_ticket','리프트권 추가','command','field.add_ticket','add_ticket',NULL,NULL,'order',1),
+ ('exchange_swap','바꿔 드림','command','exchange.swap','swap',NULL,NULL,'line',1),
  ('move_up','▲','command','route.move',NULL,NULL,NULL,'task',1),
  ('move_down','▼','command','route.move',NULL,NULL,NULL,'task',1),
  ('move_top','맨 위로','command','route.move',NULL,NULL,NULL,'task',1),

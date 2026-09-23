@@ -9,8 +9,8 @@ import { migratedMemoryDb } from './helpers.js';
 
 /** data-model.md 머리 표와 README '확인한 것'에 적힌 0001의 숫자. */
 const DOCUMENTED_0001 = {
-  control: { tables: 28, sysTables: 1, tenantTables: 0, indexes: 19, triggers: 4, fkGroups: 26 },
-  shop: { tables: 260, sysTables: 62, tenantTables: 194, indexes: 207, triggers: 148, fkGroups: 827 },
+  control: { tables: 30, sysTables: 1, tenantTables: 0, indexes: 21, triggers: 4, fkGroups: 31 },
+  shop: { tables: 269, sysTables: 68, tenantTables: 197, indexes: 225, triggers: 151, fkGroups: 860 },
 };
 
 for (const kind of /** @type {const} */ (['control', 'shop'])) {
