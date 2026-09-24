@@ -277,8 +277,11 @@
   background: var(--sn-paper); color: var(--sn-ink); font-size: var(--sn-font-body); font-weight: 800; white-space: nowrap;
 }
 .sn-action-button:disabled { border-color: var(--sn-rule); color: var(--sn-ink-muted); }
-/* ▲ · ▼: 채운 삼각형 + 낱말. 자주 누르는 버튼이라 더 넓고(--sn-target-repeat), 좁으면 낱말만 빠진다. */
+/* ▲ · ▼: 채운 삼각형 + 낱말. 자주 누르는 버튼이라 더 넓고(--sn-target-repeat), 좁으면 낱말만 빠진다.
+   낱말이 빠진 뒤(좁은 휴대폰)에는 누르는 곳 최소 폭으로 줄여 낱말 버튼('수거 실패')이 안쪽 여백을 갖게 한다. */
 .sn-action-button.is-repeat { min-width: var(--sn-target-repeat); flex-grow: 2; }
+.sn-action-button.is-repeat.is-compact { min-width: var(--sn-target); flex-grow: 1; }
+.sn-action-button:not(.is-compact):not(.is-repeat):not(.is-close) { padding: 0 var(--sn-space-s); }
 .sn-action-glyph { font-size: var(--sn-font-title); }
 .sn-action-button.is-close { flex: 0 0 auto; padding: 0 var(--sn-space-m); }
 
@@ -380,5 +383,6 @@
 .sn-slip-money { display: flex; align-items: center; gap: var(--sn-space-m); flex: none; height: var(--sn-slip-money-h); font-size: var(--sn-font-base); font-weight: 700; box-shadow: inset 0 var(--sn-line) 0 var(--sn-rule); }
 .sn-slip-money-text { flex: 1 1 0; }
 .sn-slip-due { flex: none; font-weight: 900; white-space: nowrap; }
-.sn-slip-stamps { display: flex; gap: var(--sn-space-s); flex: none; }
+/* 돈 줄 높이 전체를 차지해 기울인 글자 도장('수납 완료')의 상자가 칸 안에 들어가게 한다(도장은 전과 같이 가운데). */
+.sn-slip-stamps { display: flex; gap: var(--sn-space-s); flex: none; align-self: stretch; }
 .sn-slip-stamp { display: inline-flex; align-items: center; gap: var(--sn-space-xs); font-size: var(--sn-font-min); font-weight: 700; color: var(--sn-ink-muted); white-space: nowrap; }

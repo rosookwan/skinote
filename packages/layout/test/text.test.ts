@@ -23,7 +23,7 @@ describe('글자 맞추기(ui 4-3)', () => {
     expect(tight).toEqual({ text: '김민수 · 0025', fits: true, dropped: 1 });
   });
 
-  it('짧은 글이 있는 조각은 빠지기 전에 짧은 글로 바뀐다(빨리 확인 줄: 메모 → 긴 장소 → 짧은 장소 순)', () => {
+  it('짧은 글이 있는 조각은 빠지기 전에 짧은 글로 바뀐다(긴급 줄: 메모 → 긴 장소 → 짧은 장소 순)', () => {
     const parts = [{ text: '꽃마을 들국화', short: '들국화', drop: 1 }, { text: '오승민 · 0039', drop: 0 }, { text: '조기 반납', drop: 2 }];
     expect(fitParts(parts, 400, measure).text).toBe('꽃마을 들국화 · 오승민 · 0039 · 조기 반납');
     expect(fitParts(parts, measure('꽃마을 들국화 · 오승민 · 0039'), measure).text).toBe('꽃마을 들국화 · 오승민 · 0039');
@@ -38,7 +38,7 @@ describe('글자 맞추기(ui 4-3)', () => {
     expect(result.fits).toBe(true);
   });
 
-  it('약속: 우선순위 낮은 조각부터(22:00 · 설천 주차장 · 차량)', () => {
+  it('일정: 우선순위 낮은 조각부터(22:00 · 설천 주차장 · 차량)', () => {
     const parts = [{ text: '22:00', drop: 0 }, { text: '설천 주차장', drop: 1 }, { text: '차량', drop: 2 }];
     expect(fitParts(parts, measure('22:00 · 설천 주차장'), measure).text).toBe('22:00 · 설천 주차장');
     expect(fitParts(parts, measure('22:00'), measure).text).toBe('22:00');
@@ -75,13 +75,13 @@ describe('바닥줄 숫자(ui 4-4)', () => {
     expect(dropped.text).toBe('합계 18팀 · 미수 485,000원');
   });
 
-  it('차에 있는 것 목록은 외 N종으로 줄인다', () => {
+  it('차량 재고 목록은 외 N종으로 줄인다', () => {
     const driver = [
-      { key: 'collected_count', label: '받음', value: '4', priority: 90, foldable: true },
-      { key: 'remaining_count', label: '남음', value: '3', priority: 100, foldable: true },
-      { key: 'vehicle_load', label: '차에 있는 것', value: '스키 14 · 보드 3 · 의류 2 · 헬멧 6', priority: 40, foldable: false, items: ['스키 14', '보드 3', '의류 2', '헬멧 6'] },
+      { key: 'collected_count', label: '완료', value: '4', priority: 90, foldable: true },
+      { key: 'remaining_count', label: '잔여', value: '3', priority: 100, foldable: true },
+      { key: 'vehicle_load', label: '차량 재고', value: '스키 14 · 보드 3 · 의류 2 · 헬멧 6', priority: 40, foldable: false, items: ['스키 14', '보드 3', '의류 2', '헬멧 6'] },
     ];
-    const width = measure('받음 4 · 남음 3 · 차에 있는 것 스키 14 · 보드 3 외 2종');
-    expect(fitMetrics(driver, width, measure).text).toBe('받음 4 · 남음 3 · 차에 있는 것 스키 14 · 보드 3 외 2종');
+    const width = measure('완료 4 · 잔여 3 · 차량 재고 스키 14 · 보드 3 외 2종');
+    expect(fitMetrics(driver, width, measure).text).toBe('완료 4 · 잔여 3 · 차량 재고 스키 14 · 보드 3 외 2종');
   });
 });

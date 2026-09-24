@@ -1,12 +1,12 @@
 // C3 야간 수거 목록(ui 6-3)과 카운터의 수거 목록(N3). 같은 화면 설정(collection_list)의 등급 판을 그린다:
 //   기사 태블릿(1024×520 ~ 1280×720) · 기사 휴대폰(360×640, 품목은 팀 칸 둘째 줄) · 카운터(pos 판, 바탕은 기사 태블릿 판).
 // 촘촘한 줄 목록과 쪽 넘김(카드가 아님, 사용자 결정 2026-09-17): 반납 타임 묶음 제목('22:00 반납 · 4 / 8'), 줄 안의 장소 이름표,
-// 맨 위 빨리 확인 줄(전화 · 확인), 줄마다 받음 도장 칸 하나(확인 창 → stock.collect, 오프라인이면 보냄 대기 점선).
-// 줄을 누르면 고르고, 바닥줄 자리에 동작 줄: 설정의 동작(▲ 위로 · ▼ 아래로 · 맨 위로 · 못 받음 · 전화 · 시간순 되돌리기)과 '닫기'.
+// 맨 위 긴급 줄(전화 · 확인), 줄마다 수거 도장 칸 하나(확인 창 → stock.collect, 오프라인이면 전송 대기 점선).
+// 줄을 누르면 고르고, 바닥줄 자리에 동작 줄: 설정의 동작(▲ 위로 · ▼ 아래로 · 맨 위로 · 수거 실패 · 전화 · 시간순 정렬)과 '닫기'.
 // 어느 동작이 보일지는 설정(ledger_view_actions)과 줄의 능력(conditions), 누를 수 있는지는 줄의 disabledActions(서버)가 정한다.
 // 끝 4자리 숫자판은 높이 600px 이상 기사 태블릿에서 오른쪽 판, 그보다 낮거나 휴대폰이면 머리줄 '끝 4자리'로 아래 판.
-// 바닥줄: '받음 4 · 대기 0 · 남음 7 · 차에 있는 것 …', 쪽 넘김, 주 버튼 하나(기사 보라 '매장 입고 14개', 카운터 주황 '인쇄').
-// 화면은 규칙을 계산하지 않는다: 순서 · 도장 · 숫자 · 빨리 확인 · 누를 수 있는지는 읽기 모델 그대로이고, 누르면 명령을 보낸다.
+// 바닥줄: '완료 4 · 전송 대기 0 · 잔여 7 · 차량 재고 …'(카운터는 전송 대기 없음), 쪽 넘김, 주 버튼 하나(기사 보라 '매장 입고 · 14개', 카운터 주황 '인쇄').
+// 화면은 규칙을 계산하지 않는다: 순서 · 도장 · 숫자 · 긴급 · 누를 수 있는지는 읽기 모델 그대로이고, 누르면 명령을 보낸다.
 import {
   ACTION_LABELS, availableActions, draftToEnvelope, menuFor, openCommandDraft, pickPrimaryAction, resolveLedgerView, stampStepMap, visibleView,
   type ActionKey, type ConfirmCommand, type LedgerCell, type LedgerRow, type LedgerTabRow, type LedgerViewResult, type PinRow, type StampCell,
@@ -84,6 +84,8 @@ function useCollectionScreen(workspace: Workspace, date: string | null, external
   const [findOpen, setFindOpen] = useState(false);
   const [visit, setVisit] = useState<LedgerRow | null>(null);
   const [call, setCall] = useState<{ title: string; phone: string } | null>(null);
+  /** 전화 알림 창 제목: '전화 · 김민재 팀'(접수증의 전화 창과 같은 모양). */
+  const callTitle = (name: string) => say('noticeTitle', { label: ACTION_LABELS.call, name });
   const [sheet, setSheet] = useState<Sheet | null>(null);
   const [vanOpen, setVanOpen] = useState(false);
   const flow = useConfirmFlow();
@@ -184,7 +186,7 @@ function useCollectionScreen(workspace: Workspace, date: string | null, external
   const callRow = (row: LedgerRow) => {
     const team = teamOf(row);
     const phone = phoneOf(row);
-    if (phone) setCall({ title: say('teamName', { name: team?.name ?? '' }), phone });
+    if (phone) setCall({ title: callTitle(team?.name ?? ''), phone });
   };
 
   /** 줄의 동작: 종류로 가르고(app/actions.ts), 자기 창이 따로 있는 것만 여기서. */
@@ -204,7 +206,8 @@ function useCollectionScreen(workspace: Workspace, date: string | null, external
 
   const onStamp = (row: LedgerRow, _column: string, cell: StampCell) => {
     if (!row.orderId) return;
-    const target = { orderId: row.orderId, ...(row.taskId ? { taskId: row.taskId } : {}) };
+    const teamName = teamOf(row)?.name;
+    const target = { orderId: row.orderId, ...(row.taskId ? { taskId: row.taskId } : {}), ...(teamName ? { teamName } : {}) };
     pressStamp(flow, steps, timezone, target, cell, (key) => rowDispatch(row, key));
   };
 
@@ -239,7 +242,7 @@ function useCollectionScreen(workspace: Workspace, date: string | null, external
       })
     : [];
 
-  // 주 버튼 하나: 기사 '매장 입고 14개'(연결이 필요), 카운터 '인쇄'. 이름은 동작 이름(sys_actions)과 서버가 준 수.
+  // 주 버튼 하나: 기사 '매장 입고 · 14개'(연결이 필요), 카운터 '인쇄'. 이름은 동작 이름(sys_actions)과 서버가 준 수.
   const primaryRow = view && result ? pickPrimaryAction(view.primary_actions, result.activeConditions) : null;
   const count = result?.primaryFigure?.count ?? 0;
   const primary: PrimaryButtonProps | null = primaryRow ? (() => {
@@ -255,7 +258,7 @@ function useCollectionScreen(workspace: Workspace, date: string | null, external
         disabled: count === 0,
         onPress: () => {
           // 매장 입고는 연결이 있어야 한다(sync 8-4): 끊겼으면 창을 열지 않고 한 문장.
-          if (!connection.online) flow.notify({ title: name, lines: [say('offlineNow'), say('receiveNeedsLink')] });
+          if (!connection.online) flow.notify({ title: name, lines: [say('receiveNeedsLink')] });
           else dispatchAction(key, { flow, target });
         },
       };
@@ -281,7 +284,13 @@ function useCollectionScreen(workspace: Workspace, date: string | null, external
       pin={pin}
       moreCount={pins.length - 1}
       onOpen={(p) => selectTask(p.taskId)}
-      onCall={(p) => { if (p.phone) setCall({ title: p.parts.find((x) => x.drop === 0)?.text ?? '', phone: p.phone }); }}
+      onCall={(p) => {
+        if (!p.phone) return;
+        // 목록에 그 줄이 있으면 팀 이름으로('전화 · 오승민 팀'), 없으면(다른 탭) 긴급 줄의 이름 · 끝 4자리로.
+        const hit = rows.find((r) => r.taskId === p.taskId);
+        const name = hit ? teamOf(hit)?.name : undefined;
+        setCall({ title: name ? callTitle(name) : ACTION_LABELS.call + ' · ' + (p.parts.find((x) => x.drop === 0)?.text ?? ''), phone: p.phone });
+      }}
       {...(driver ? { onAck: ack } : {})}
       compact={profile.key === 'driver_phone'}
       onMore={() => setSheet({
@@ -392,7 +401,7 @@ function useCollectionScreen(workspace: Workspace, date: string | null, external
         />
       ) : null}
       {call ? (
-        <NoticeDialog title={ACTION_LABELS.call + ' · ' + call.title} lines={[call.phone, say('demoNoCall')]} onClose={() => setCall(null)} />
+        <NoticeDialog title={call.title} lines={[call.phone, say('demoNoCall')]} onClose={() => setCall(null)} />
       ) : null}
       {vanOpen && load ? <VanStockDialog load={load} onClose={() => setVanOpen(false)} /> : null}
       {flow.element}

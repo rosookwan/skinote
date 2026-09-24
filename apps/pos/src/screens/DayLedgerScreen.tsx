@@ -121,7 +121,9 @@ export function DayLedgerScreen({ date }: { date: string | null }) {
     const orderId = row.orderId;
     if (!orderId) return;
     setSelected(row.id);
-    pressStamp(flow, steps, timezone, { orderId }, cell, (key) => dispatchAction(key, { flow, target: { orderId } }));
+    const team = Object.values(row.cells).find((c) => c.renderer === 'team');
+    const teamName = team?.renderer === 'team' ? team.name : undefined;
+    pressStamp(flow, steps, timezone, { orderId, ...(teamName ? { teamName } : {}) }, cell, (key) => dispatchAction(key, { flow, target: { orderId } }));
   };
 
   // 주 버튼 하나(조건으로 고른 설정 행): 동작 종류로 가른다(새 접수 · 마감은 화면).

@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>새 접수 ① 품목 고르기 · 둘째 판 시안 V2</title>
+<title>새 접수 ① 품목 · 둘째 판 시안 V2</title>
 <link rel="stylesheet" href="base.css">
 <style>
-  /* V2 새 접수 ① 품목 고르기(spec.md 3-4). 틀은 2-1 가(접수증형): 왼쪽 접수증 종이 704 · 오른쪽 판 280. */
+  /* V2 새 접수 ① 품목(spec.md 3-4). 틀은 2-1 가(접수증형): 왼쪽 접수증 종이 704 · 오른쪽 판 280. */
 
   /* 종이 안: 머리 60 아래로 대표자 줄 · 종류 격자 · 고르는 줄 둘(사이 8). */
   .v2-body { display: flex; flex-direction: column; gap: var(--sn-space-s); padding-top: var(--sn-space-s); }
@@ -67,7 +67,7 @@
   .v2-pick .sn-qty-value { min-width: calc(var(--sn-target) * 1.5); }
   .v2-pick .mk-note { padding-left: var(--sn-space-s); white-space: nowrap; }
 
-  /* 오른쪽 판: 제목 40 · 고른 것 4줄 208 · 합계 · 주 버튼 56 */
+  /* 오른쪽 판: 제목 40 · 선택 품목 4줄 208 · 합계 · 주 버튼 56 */
   .v2-picked { display: flex; flex-direction: column; flex: none; }
   .v2-picked-row {
     display: flex; flex-direction: column; justify-content: center; width: 100%; height: var(--sn-target);
@@ -78,7 +78,7 @@
   .v2-picked-top > b { font-size: var(--sn-font-base); font-weight: 800; white-space: nowrap; }
   .v2-picked-top > span { font-size: var(--sn-font-base); font-weight: 900; white-space: nowrap; }
   .v2-picked-row > small { font-size: var(--sn-font-min); font-weight: 600; color: var(--sn-ink-soft); white-space: nowrap; }
-  /* 합계 네 줄: 이름은 왼쪽, 금액은 위 고른 것 줄과 같은 오른쪽 금액 칸(눈이 금액 한 줄을 따라 내려가게). */
+  /* 합계 네 줄: 이름은 왼쪽, 금액은 위 선택 품목 줄과 같은 오른쪽 금액 칸(눈이 금액 한 줄을 따라 내려가게). */
   .v2-sum { line-height: 1.25; }
   .v2-sum-line { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sn-space-s); padding: 0 var(--sn-space-s); white-space: nowrap; }
   .v2-sum-line > span:last-child { font-weight: 900; }
@@ -113,34 +113,34 @@
           <h1 class="sn-slip-title">새 접수</h1>
           <div class="sn-tabs mk-head-tabs" role="tablist" aria-label="새 접수 단계">
             <button type="button" class="sn-tab" role="tab" aria-selected="true"><span class="v2-step-no">①</span> 품목</button>
-            <button type="button" class="sn-tab" role="tab" aria-selected="false"><span class="v2-step-no">②</span> 약속</button>
-            <button type="button" class="sn-tab" role="tab" aria-selected="false"><span class="v2-step-no">③</span> 확정</button>
+            <button type="button" class="sn-tab" role="tab" aria-selected="false"><span class="v2-step-no">②</span> 일정</button>
+            <button type="button" class="sn-tab" role="tab" aria-selected="false"><span class="v2-step-no">③</span> 결제</button>
           </div>
         </header>
 
         <div class="v2-body">
           <div class="v2-rep">
-            <button type="button" class="sn-button v2-field is-name" aria-label="대표자 이민호 · 누르면 이름 넣기"><small>대표자</small><b>이민호</b></button>
-            <button type="button" class="sn-button v2-field is-phone" aria-label="연락처 010-0000-0042 · 누르면 숫자판"><small>연락처</small><b>010-0000-0042</b><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="3" width="4" height="4" rx="1"/><rect x="10" y="3" width="4" height="4" rx="1"/><rect x="16" y="3" width="4" height="4" rx="1"/><rect x="4" y="10" width="4" height="4" rx="1"/><rect x="10" y="10" width="4" height="4" rx="1"/><rect x="16" y="10" width="4" height="4" rx="1"/><rect x="10" y="17" width="4" height="4" rx="1"/></svg></button>
+            <button type="button" class="sn-button v2-field is-name" aria-label="대표자 이민호 · 이름 입력"><small>대표자</small><b>이민호</b></button>
+            <button type="button" class="sn-button v2-field is-phone" aria-label="연락처 010-0000-0042 · 숫자판"><small>연락처</small><b>010-0000-0042</b><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="3" width="4" height="4" rx="1"/><rect x="10" y="3" width="4" height="4" rx="1"/><rect x="16" y="3" width="4" height="4" rx="1"/><rect x="4" y="10" width="4" height="4" rx="1"/><rect x="10" y="10" width="4" height="4" rx="1"/><rect x="16" y="10" width="4" height="4" rx="1"/><rect x="10" y="17" width="4" height="4" rx="1"/></svg></button>
             <div class="v2-people" role="group" aria-label="인원">
               <small>인원</small>
-              <button type="button" class="sn-qty-button" aria-label="하나 빼기">−</button>
+              <button type="button" class="sn-qty-button" aria-label="수량 감소">−</button>
               <span class="sn-qty-value">4명</span>
-              <button type="button" class="sn-qty-button" aria-label="하나 더하기">+</button>
+              <button type="button" class="sn-qty-button" aria-label="수량 증가">+</button>
             </div>
           </div>
 
           <div class="v2-kinds" role="group" aria-label="품목 종류">
-            <button type="button" class="sn-button v2-kind" aria-expanded="false"><span class="v2-kind-text"><b>스키</b><small>1일 40,000원</small></span><span class="v2-count" aria-label="고른 수 4">4</span></button>
+            <button type="button" class="sn-button v2-kind" aria-expanded="false"><span class="v2-kind-text"><b>스키</b><small>1일 40,000원</small></span><span class="v2-count" aria-label="선택 4">4</span></button>
             <button type="button" class="sn-button v2-kind" aria-expanded="false"><span class="v2-kind-text"><b>보드</b><small>1일 25,000원</small></span></button>
             <button type="button" class="sn-button v2-kind" aria-expanded="false"><span class="v2-kind-text"><b>부츠</b><small>1일 10,000원</small></span></button>
-            <button type="button" class="sn-button v2-kind" aria-expanded="true"><span class="v2-kind-text"><b>의류</b><small>1일 20,000원</small></span><span class="v2-kind-end"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6"/></svg><span class="v2-count" aria-label="고른 수 3">3</span></span></button>
-            <button type="button" class="sn-button v2-kind" aria-expanded="false"><span class="v2-kind-text"><b>헬멧</b><small>1일 5,000원</small></span><span class="v2-count" aria-label="고른 수 1">1</span></button>
+            <button type="button" class="sn-button v2-kind" aria-expanded="true"><span class="v2-kind-text"><b>의류</b><small>1일 20,000원</small></span><span class="v2-kind-end"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6"/></svg><span class="v2-count" aria-label="선택 3">3</span></span></button>
+            <button type="button" class="sn-button v2-kind" aria-expanded="false"><span class="v2-kind-text"><b>헬멧</b><small>1일 5,000원</small></span><span class="v2-count" aria-label="선택 1">1</span></button>
             <button type="button" class="sn-button v2-kind" aria-expanded="false"><span class="v2-kind-text"><b>고글</b><small>1일 5,000원</small></span></button>
-            <button type="button" class="sn-button v2-kind" aria-expanded="false" aria-label="리프트권 · 야간권 4매 · 누르면 권종과 매수 고르기"><span class="v2-kind-text"><b>리프트권</b><small>야간권 35,000원</small></span><span class="v2-count" aria-label="고른 수 4">4</span></button>
+            <button type="button" class="sn-button v2-kind" aria-expanded="false" aria-label="리프트권 · 야간권 4매 · 권종 · 매수 선택"><span class="v2-kind-text"><b>리프트권</b><small>야간권 35,000원</small></span><span class="v2-count" aria-label="선택 4">4</span></button>
           </div>
 
-          <div class="v2-open" role="group" aria-label="의류 고르기">
+          <div class="v2-open" role="group" aria-label="의류 선택">
             <div class="v2-pick">
               <span class="v2-pick-label">의류 사이즈</span>
               <div class="mk-choices">
@@ -153,30 +153,30 @@
             </div>
             <div class="v2-pick">
               <span class="v2-pick-label">사이즈 100</span>
-              <button type="button" class="sn-qty-button" aria-label="하나 빼기">−</button>
+              <button type="button" class="sn-qty-button" aria-label="수량 감소">−</button>
               <span class="sn-qty-value">1벌</span>
-              <button type="button" class="sn-qty-button" aria-label="하나 더하기">+</button>
-              <span class="mk-note">의류 모두 3벌</span>
+              <button type="button" class="sn-qty-button" aria-label="수량 증가">+</button>
+              <span class="mk-note">의류 합계 3벌</span>
             </div>
           </div>
         </div>
       </article>
 
-      <aside class="pos-side" aria-label="고른 것">
-        <div class="mk-panel-title"><span>고른 것</span></div>
+      <aside class="pos-side" aria-label="선택 품목">
+        <div class="mk-panel-title"><span>선택 품목</span></div>
         <ol class="v2-picked">
           <li><button type="button" class="v2-picked-row"><span class="v2-picked-top"><b>스키 4대</b><span>160,000원</span></span><small>부츠 · 폴 포함</small></button></li>
           <li><button type="button" class="v2-picked-row"><span class="v2-picked-top"><b>의류 3벌</b><span>60,000원</span></span><small>95 2벌 · 100 1벌</small></button></li>
-          <li><button type="button" class="v2-picked-row"><span class="v2-picked-top"><b>헬멧 1개</b><span>5,000원</span></span><small>사이즈 중</small></button></li>
-          <li><button type="button" class="v2-picked-row"><span class="v2-picked-top"><b>야간권 성인 4매</b><span>140,000원</span></span><small>보증금 · 이 매장은 1매 5,000원</small></button></li>
+          <li><button type="button" class="v2-picked-row"><span class="v2-picked-top"><b>헬멧 1개</b><span>5,000원</span></span><small>중 사이즈</small></button></li>
+          <li><button type="button" class="v2-picked-row"><span class="v2-picked-top"><b>야간권 성인 4매</b><span>140,000원</span></span><small>보증금 · 매장 기준 1매 5,000원</small></button></li>
         </ol>
         <div class="mk-sum mk-rule v2-sum">
           <span class="v2-sum-line"><span>장비</span><span>225,000원</span></span>
           <span class="v2-sum-line"><span>리프트권</span><span>140,000원</span></span>
           <span class="v2-sum-line is-total"><span>합계</span><span>365,000원</span></span>
-          <span class="v2-sum-line is-deposit"><span>보증금 · 따로 받음</span><span>20,000원</span></span>
+          <span class="v2-sum-line is-deposit"><span>보증금 · 별도</span><span>20,000원</span></span>
         </div>
-        <button type="button" class="sn-primary v2-go" data-primary="true">다음 · 약속 정하기</button>
+        <button type="button" class="sn-primary v2-go" data-primary="true">다음 · 일정</button>
       </aside>
     </div>
 

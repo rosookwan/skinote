@@ -77,6 +77,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; }
 .pos-visit-choice[aria-pressed='true'] { background: var(--sn-ink); color: var(--sn-paper); }
 .pos-visit-block { display: flex; flex-direction: column; gap: var(--sn-space-s); }
 .pos-visit-keypad { display: flex; flex-direction: column; gap: var(--sn-space-s); }
+.pos-visit-keypad-head { display: flex; align-items: center; gap: var(--sn-space-m); }
+.pos-visit-keypad-head .pos-visit-question { flex: 1 1 0; min-width: 0; }
+.pos-visit-keypad-head .sn-keypad-display { flex: 1 1 0; min-width: 0; }
 .pos-visit-review { display: flex; flex-direction: column; gap: var(--sn-space-xs); font-size: var(--sn-font-title); font-weight: 900; }
 
 /* 차에 있는 것: 합계 한 줄 + 팀 줄(쪽 넘김). */

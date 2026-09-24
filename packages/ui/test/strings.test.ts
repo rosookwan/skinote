@@ -6,9 +6,9 @@ describe('문구 표', () => {
   it('고정 문구(검사기 · 문서 docs/42 부록 A가 기대는 이름)', () => {
     expect(Object.fromEntries(FIXED_STRING_KEYS.map((key) => [key, STRINGS_KO[key]]))).toEqual({
       home: '장부', find: '끝 4자리', more: '더 보기', manage: '관리', exit: '나가기', offline: '연결 끊김', page: '{page} / {total}쪽',
-      pinTitle: '빨리 확인', tooNarrow: '화면을 크게 해 주세요', zoomReset: '확대 되돌리기', close: '닫기', prevPage: '이전 쪽', nextPage: '다음 쪽',
-      qtyMinus: '하나 빼기', qtyPlus: '하나 더하기', moveUpLabel: '위로', moveDownLabel: '아래로', moveTop: '맨 위로', notCollected: '못 받음',
-      search: '찾기', erase: '지우기', confirm: '확인', pinAck: '확인',
+      pinTitle: '긴급', tooNarrow: '화면 폭 부족', zoomReset: '확대 초기화', close: '닫기', prevPage: '이전 쪽', nextPage: '다음 쪽',
+      qtyMinus: '수량 감소', qtyPlus: '수량 증가', moveUpLabel: '위로', moveDownLabel: '아래로', moveTop: '맨 위로', notCollected: '수거 실패',
+      search: '찾기', erase: '정정', confirm: '확인', pinAck: '확인',
     });
   });
 

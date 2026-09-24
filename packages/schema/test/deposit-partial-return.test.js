@@ -190,7 +190,7 @@ ok('held units of the team come back to 0 from the unit ledger (take 3 - refund 
 rejects('forfeited deposit money cannot sit in a cash drawer (no cash moves when the shop keeps it)', () => pay('dep-keep-x', 'deposit_forfeit', 5000, { deposit: 'dp-26', method: 'cash', drawer: 'counter-1' }), /CHECK/);
 
 // ---- 안 돌아온 권: 보증금에서 뺌, 나중에 돌아오면 되돌리고 돌려드림 ---------------------------------------------------
-ok('a ticket that never came back: written off, and its deposit kept (보증금에서 뺌)', () => {
+ok('a ticket that never came back: written off, and its deposit kept (보증금 몰수)', () => {
   move('mv-lost-1', 'write_off', 'loc-O26', 'customer', 'loc-void', 'void', 'O26');
   mline('mv-lost-1', 1, 't-4', 'O26-l4', 'ticket-night', 'O26');
   pay('dep-keep-26', 'deposit_forfeit', 5000, { deposit: 'dp-26' });
@@ -204,7 +204,7 @@ ok('it comes back two days later: the kept deposit is restored, then handed back
   pay('dep-out-26', 'deposit_out', 5000, { deposit: 'dp-26', day: '2026-12-28' });
   entry('dp-26', 4, 'refund', 'dep-out-26', { order: 'O26', line: 'O26-l4', asset: 't-4', mv: 'mv-found-1' });
 });
-ok('offset against what the team still owes (미수에서 빼기) is deposit money that pays the charge', () => {
+ok('offset against what the team still owes (미수 차감) is deposit money that pays the charge', () => {
   pay('dep-in-26b', 'deposit_in', 5000, { deposit: 'dp-26' });
   entry('dp-26', 5, 'take', 'dep-in-26b', { order: 'O26', line: 'O26-l4', reason: '다시 받음' });
   pay('dep-apply-26', 'deposit_apply', 5000, { deposit: 'dp-26' });

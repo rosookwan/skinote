@@ -82,7 +82,7 @@ describe('실패의 약속', () => {
 
 describe('상태 문구', () => {
   it('매장 문구 → 기본 문구 → 모르는 키는 —', () => {
-    expect(statusTerm(uiDefaults.status_terms, 'stamp', 'done')).toEqual({ label: '끝', tone: 'seal', rank: 90 });
+    expect(statusTerm(uiDefaults.status_terms, 'stamp', 'done')).toEqual({ label: '완료', tone: 'seal', rank: 90 });
     expect(statusTerm([], 'order', 'awaiting_load').label).toBe('차량 적재 대기');
     expect(statusTerm([], 'order', 'from_the_future').label).toBe('—');
   });

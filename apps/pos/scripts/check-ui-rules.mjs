@@ -155,12 +155,12 @@ class Walk {
     });
   }
 
-  /** 맨 위 창을 닫는다(닫기 · 뒤로, 없으면 Esc). n개가 남을 때까지. */
+  /** 맨 위 창을 닫는다(닫기 · 이전, 없으면 Esc). n개가 남을 때까지. */
   async closeTo(n) {
     for (let guard = 0; guard < 12 && (await this.dialogCount()) > n; guard += 1) {
       const top = this.top();
       const close = top.getByRole('button', { name: '닫기', exact: true });
-      const back = top.getByRole('button', { name: '뒤로', exact: true });
+      const back = top.getByRole('button', { name: '이전', exact: true });
       if (await close.count()) await this.click(close);
       else if (await back.count()) await this.click(back);
       else { await this.page.keyboard.press('Escape'); await this.settle(); }
@@ -210,11 +210,11 @@ class Walk {
       await this.scene(name + '-method' + (i + 1), 'dialog');
     }
     // 수량 −(한 번 빼 보고 되돌린다)
-    const minus = top.getByRole('button', { name: '하나 빼기' });
+    const minus = top.getByRole('button', { name: '수량 감소' });
     if (await minus.count() && await minus.isEnabled()) {
       await this.click(minus);
       await this.scene(name + '-qty', 'dialog');
-      await this.click(top.getByRole('button', { name: '하나 더하기' }));
+      await this.click(top.getByRole('button', { name: '수량 증가' }));
     }
     // 차에 있는 것의 쪽
     const next = top.getByRole('button', { name: '다음 쪽' });
@@ -248,7 +248,7 @@ class Walk {
     if (await extras.count()) await this.probe(extras.first(), name + '-then', { depth: depth + 1 });
   }
 
-  /** 방문 결과 판(못 받음): 이유 → 언제 → 날짜 → 뒤로 → 오늘 다시 → 몇 시 → 직접 입력 → 요약. 남기지 않는다(submit: 남긴다). */
+  /** 방문 결과 판(수거 실패): 사유 → 재방문 → 날짜 → 이전 → 오늘 → 재방문 시각 → 직접 입력 → 기록 확인. 저장하지 않는다(submit: 저장한다). */
   async visitWalk(name, submit = false) {
     const top = this.top();
     const button = (label) => top.getByRole('button', { name: label, exact: true });
@@ -257,8 +257,8 @@ class Walk {
     await this.scene(name + '-when', 'dialog');
     await this.click(button('날짜'));
     await this.scene(name + '-date', 'dialog');
-    await this.click(button('뒤로'));
-    await this.click(button('오늘 다시'));
+    await this.click(button('이전'));
+    await this.click(button('오늘'));
     await this.scene(name + '-time', 'dialog');
     await this.click(button('직접 입력'));
     await this.scene(name + '-custom', 'dialog');
@@ -490,7 +490,7 @@ async function rowBarWalk(w, name) {
     }
   }
   // 시간순 되돌리기는 확인 창을 거친다: 열어 재고 되돌린 뒤, 닫기로 고르기를 끝낸다.
-  const reset = bar().getByRole('button', { name: '시간순 되돌리기', exact: true });
+  const reset = bar().getByRole('button', { name: '시간순 정렬', exact: true });
   if (await reset.count() && await reset.isEnabled()) {
     await w.click(reset);
     if (await w.dialogCount()) {
@@ -536,7 +536,7 @@ async function counterWalk(w) {
   // 나가기
   await w.visit('#/exit', '.pos-card');
   await w.scene('exit');
-  await w.probe(w.page.getByRole('button', { name: '처음 자료로 되돌리기' }), 'exit-reset');
+  await w.probe(w.page.getByRole('button', { name: '체험 자료 초기화', exact: true }), 'exit-reset');
   await w.closeTo(0);
 
   await counterFlow(w);
@@ -546,7 +546,7 @@ async function counterWalk(w) {
 /** 도장을 찍은 뒤의 모양: 지급 → 수납 → 빨리 확인 → 순서 바꿈. */
 async function counterFlow(w) {
   await w.visit('#/ledger/' + w.date, '.sn-ledger tr.sn-row');
-  const todoStamp = 'button.sn-stamp-cell[aria-label$="할 일"]';
+  const todoStamp = 'button.sn-stamp-cell[aria-label$="미처리"]';
   const issue = w.page.locator('.sn-ledger tr.sn-row ' + todoStamp).first();
   if (await issue.count()) {
     const row = w.page.locator('.sn-ledger tr.sn-row', { has: w.page.locator(todoStamp) }).first();
@@ -582,7 +582,7 @@ async function counterFlow(w) {
   const rows = w.page.locator('.sn-ledger tr.sn-row .sn-cell-open');
   if (await rows.count() > 1) {
     await w.click(rows.nth(1));
-    const pin = w.page.getByRole('toolbar').getByRole('button', { name: '빨리 확인', exact: true });
+    const pin = w.page.getByRole('toolbar').getByRole('button', { name: '긴급 요청', exact: true });
     if (await pin.count()) {
       await w.click(pin);
       const ok = w.top().locator('[data-primary="true"]');
@@ -600,8 +600,8 @@ async function counterFlow(w) {
 async function counterNight(w) {
   const advance = async (hours, tens) => {
     await w.visit('#/exit', '.pos-card');
-    for (let i = 0; i < hours; i += 1) await w.click(w.page.getByRole('button', { name: '1시간 앞으로' }));
-    for (let i = 0; i < tens; i += 1) await w.click(w.page.getByRole('button', { name: '10분 앞으로' }));
+    for (let i = 0; i < hours; i += 1) await w.click(w.page.getByRole('button', { name: '+1시간', exact: true }));
+    for (let i = 0; i < tens; i += 1) await w.click(w.page.getByRole('button', { name: '+10분', exact: true }));
   };
   await advance(5, 3);
   await w.visit('#/ledger/' + w.date, '.sn-ledger tr.sn-row');
@@ -719,7 +719,7 @@ async function rowMoves(w, name) {
 /** 받음 → 매장 입고 → 못 받음 남기기 → 연결 끊김(보냄 대기) → 다시 연결 → 카운터가 빨리 확인 하나 더. */
 async function driverFlow(w, list) {
   await list();
-  const todo = () => w.page.locator('.sn-ledger tr.sn-row button.sn-stamp-cell[aria-label$="할 일"]').first();
+  const todo = () => w.page.locator('.sn-ledger tr.sn-row button.sn-stamp-cell[aria-label$="미처리"]').first();
   if (await todo().count()) {
     await w.click(todo());
     await w.scene('flow-confirm-collect', 'dialog');
@@ -739,7 +739,7 @@ async function driverFlow(w, list) {
   const second = w.page.locator('.sn-ledger tr.sn-row .sn-cell-open').nth(1);
   if (await second.count()) {
     await w.click(second);
-    const miss = w.page.getByRole('toolbar').getByRole('button', { name: '못 받음', exact: true });
+    const miss = w.page.getByRole('toolbar').getByRole('button', { name: '수거 실패', exact: true });
     if (await miss.count() && await miss.isEnabled()) {
       await w.click(miss);
       await w.visitWalk('flow-visit', true);
@@ -752,25 +752,25 @@ async function driverFlow(w, list) {
   // 연결 끊김(체험): 나가기 → 연결 끊기 → 받음 도장 점선 · 연결 띠 → 매장 입고는 연결 뒤 → 다시 연결
   await w.visit('#/exit?from=driver', '.pos-card', 'driver');
   await w.scene('exit-driver');
-  await w.click(w.page.getByRole('button', { name: '연결 끊기' }));
+  await w.click(w.page.getByRole('button', { name: '연결 해제', exact: true }));
   await w.scene('exit-driver-offline');
   await list();
   if (await todo().count()) {
-    const row = w.page.locator('.sn-ledger tr.sn-row', { has: w.page.locator('button.sn-stamp-cell[aria-label$="할 일"]') }).first();
+    const row = w.page.locator('.sn-ledger tr.sn-row', { has: w.page.locator('button.sn-stamp-cell[aria-label$="미처리"]') }).first();
     const team = /\b(\d{4})\b/.exec((await row.locator('.sn-cell-open').textContent()) ?? '')?.[1] ?? '';
     await w.click(todo());
     const ok = w.top().locator('[data-primary="true"]');
     if (await ok.count()) await w.click(ok);
     await w.closeTo(0);
     await w.pages('flow-offline');
-    const pending = w.page.locator('.sn-ledger tr.sn-row', { hasText: team }).locator('button.sn-stamp-cell[aria-label*="보냄 대기"]');
+    const pending = w.page.locator('.sn-ledger tr.sn-row', { hasText: team }).locator('button.sn-stamp-cell[aria-label*="전송 대기"]');
     if (await pending.count()) { await w.probe(pending, 'flow-offline-pending'); await w.closeTo(0); }
   }
   const receive2 = w.page.locator('.sn-footer [data-primary="true"]');
   if (await receive2.count() && await receive2.isEnabled()) { await w.probe(receive2, 'flow-offline-receive'); await w.closeTo(0); }
   await w.visit('#/exit?from=driver', '.pos-card', 'driver');
   await w.scene('exit-driver-waiting');
-  await w.click(w.page.getByRole('button', { name: /^다시 연결/ }));
+  await w.click(w.page.getByRole('button', { name: /^재연결/ }));
   await list();
   await w.scene('flow-after-sync');
 
@@ -781,11 +781,11 @@ async function driverFlow(w, list) {
     await desk.waitForSelector('.sn-ledger tr.sn-row');
     await desk.evaluate(() => document.fonts.ready);
     for (const pick of [-1, -2]) {
-      const rows = desk.locator('.sn-ledger tr.sn-row', { has: desk.locator('button.sn-stamp-cell[aria-label$="할 일"]') }).locator('.sn-cell-open');
+      const rows = desk.locator('.sn-ledger tr.sn-row', { has: desk.locator('button.sn-stamp-cell[aria-label$="미처리"]') }).locator('.sn-cell-open');
       const n = await rows.count();
       if (n + pick < 0) break;
       await rows.nth(n + pick).click();
-      const pinButton = desk.getByRole('toolbar').getByRole('button', { name: '빨리 확인', exact: true });
+      const pinButton = desk.getByRole('toolbar').getByRole('button', { name: '긴급 요청', exact: true });
       if (!(await pinButton.count()) || !(await pinButton.isEnabled())) continue;
       await pinButton.click();
       const ok = desk.locator('[role="dialog"] [data-primary="true"]');
@@ -798,7 +798,7 @@ async function driverFlow(w, list) {
   await w.page.locator('.sn-pin').waitFor({ timeout: 3000 }).catch(() => {});
   await w.settle();
   await w.scene('flow-two-pins');
-  if (sent < 2 || !(await w.page.locator('.sn-pin').count())) w.fail('flow-two-pins', '카운터가 보낸 빨리 확인이 기사 목록에 없음(보낸 수 ' + sent + ')');
+  if (sent < 2 || !(await w.page.locator('.sn-pin').count())) w.fail('flow-two-pins', '카운터가 보낸 긴급 요청이 기사 목록에 없음(보낸 수 ' + sent + ')');
   const open = w.page.locator('.sn-pin button.sn-pin-open');
   if (await open.count()) { await w.probe(open, 'flow-pin-list'); await w.closeTo(0); }
   const ack = w.page.locator('.sn-pin').getByRole('button', { name: '확인', exact: true });
@@ -807,7 +807,7 @@ async function driverFlow(w, list) {
 
 async function driverNight(w, list) {
   await w.visit('#/exit?from=driver', '.pos-card', 'driver');
-  for (let i = 0; i < 6; i += 1) await w.click(w.page.getByRole('button', { name: '1시간 앞으로' }));
+  for (let i = 0; i < 6; i += 1) await w.click(w.page.getByRole('button', { name: '+1시간', exact: true }));
   await w.scene('exit-driver-night');
   await list();
   await w.pages('late-driver');

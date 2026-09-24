@@ -15,7 +15,7 @@ const rows = (n: number, heightPx: number, group?: (i: number) => string): FlowR
 const rowIds = (page: Page) => page.entries.flatMap((e) => (e.kind === 'row' ? [e.id] : []));
 
 describe('포스 장부(1024 폭)', () => {
-  it('1024×600: 232px를 빼고 368px에 52px 줄 7개, 지금 줄이 있으면 6개', () => {
+  it('1024×600: 232px를 빼고 368px에 52px 줄 7개, 현재 줄이 있으면 6개', () => {
     const h = listAreaHeight(600, POS);
     expect(h).toBe(368);
     expect(rowsPerPage(h, 52)).toBe(7);
@@ -29,7 +29,7 @@ describe('포스 장부(1024 폭)', () => {
     expect(rowsPerPage(listAreaHeight(569, POS), 52)).toBe(6);
   });
 
-  it('잰 줄을 순서대로 채우고, 지금 줄(24px)이 든 쪽은 한 줄 적다. 처음 여는 쪽은 지금 줄의 쪽', () => {
+  it('잰 줄을 순서대로 채우고, 현재 줄(24px)이 든 쪽은 한 줄 적다. 처음 여는 쪽은 현재 줄의 쪽', () => {
     const pages = paginate(rows(20, 52), { availablePx: 368, nowLinePx: 24, nowBeforeIndex: 9 });
     expect(pages.map((p) => p.to - p.from)).toEqual([7, 6, 7]);
     expect(pageOfNowLine(pages)).toBe(1);
@@ -39,7 +39,7 @@ describe('포스 장부(1024 폭)', () => {
     for (const page of pages) expect(page.usedPx).toBeLessThanOrEqual(368);
   });
 
-  it('모든 시각이 지났으면 지금 줄은 마지막 시각 줄 뒤, 끝난 팀 앞', () => {
+  it('모든 시각이 지났으면 현재 줄은 마지막 시각 줄 뒤, 완료 팀 앞', () => {
     const t = (h: number, m: number) => Date.UTC(2026, 11, 26, h, m);
     const times = [t(0, 0), t(0, 10), t(7, 0), null, null];
     expect(nowLineIndex(times, t(6, 40))).toBe(2);
@@ -55,7 +55,7 @@ describe('포스 장부(1024 폭)', () => {
 });
 
 describe('기사 수거 목록', () => {
-  it('태블릿 1024×520: 196px를 빼고 324px, 빨리 확인 64 + 묶음 제목 40을 빼면 60px 줄 3개', () => {
+  it('태블릿 1024×520: 196px를 빼고 324px, 긴급 64 + 묶음 제목 40을 빼면 60px 줄 3개', () => {
     const h = listAreaHeight(520, TABLET);
     expect(h).toBe(324);
     expect(rowsPerPage(h, 60, { fixedTopPx: 64, groupTitlePx: 40 })).toBe(3);
@@ -72,7 +72,7 @@ describe('기사 수거 목록', () => {
     expect(pages[1]!.entries[0]).toEqual({ kind: 'group', key: '22:10', continued: false });
   });
 
-  it('빨리 확인 · 묶음 제목이 없으면 5개, 오프라인 연결 띠(32px)를 빼도 빨리 확인 · 제목과 3개', () => {
+  it('긴급 · 묶음 제목이 없으면 5개, 연결 끊김 띠(32px)를 빼도 긴급 · 제목과 3개', () => {
     expect(rowsPerPage(listAreaHeight(520, TABLET), 60)).toBe(5);
     const offline = listAreaHeight(520, { ...TABLET, connectionStripPx: 32 });
     expect(offline).toBe(292);
@@ -85,7 +85,7 @@ describe('기사 수거 목록', () => {
     expect(pages[1]!.entries[0]).toEqual({ kind: 'group', key: '22:00', continued: true });
   });
 
-  it('휴대폰 360×640: 184px를 빼고 456px, 묶음 제목과 64px 두 줄 줄 6개(빨리 확인이 있으면 5개), 오프라인 424px에도 6개', () => {
+  it('휴대폰 360×640: 184px를 빼고 456px, 묶음 제목과 64px 두 줄 줄 6개(긴급이 있으면 5개), 연결 끊김 424px에도 6개', () => {
     const h = listAreaHeight(640, PHONE);
     expect(h).toBe(456);
     expect(rowsPerPage(h, 64, { groupTitlePx: 40 })).toBe(6);

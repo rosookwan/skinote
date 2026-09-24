@@ -91,15 +91,19 @@ export function Slip({ slip, view, steps, nowMs, itemsPage, onItemsPaging, onSta
     const date = formatLocalDate(at, timezone);
     return date === slip.businessDate ? '' : formatRelativeDay(date, slip.businessDate) + ' ';
   };
-  // 늦은 약속(반납이 약속 시각을 넘김)은 시각 뒤에 '늦음'을 붙이고 약속 줄을 늦음 색으로.
+  // 지연된 일정(반납이 일정 시각을 넘김)은 종류 말에 '지연'을 붙이고('반납 지연 12:00 · 매장', 시각과 한 조각이라 빠지지 않음)
+  // 일정 줄을 지연 색으로.
   const promiseLate = slip.promises.lines.some((line) => isLate(line.lateAt, nowMs));
   const promiseParts: TextPart[] = slip.promises.distinct > 1
     ? [{ text: t('promisesMany', { n: slip.promises.distinct }), drop: 0 }]
-    : slip.promises.lines.flatMap((line) => [
-        { text: t(line.kind === 'pickup' ? 'pickup' : 'giveBack') + ' ' + dayOf(line.at) + formatTime(line.at, timezone), drop: 0 },
-        ...(isLate(line.lateAt, nowMs) ? [{ text: t('late'), drop: 0 }] : []),
-        ...line.parts.map((p) => ({ ...p, drop: Math.max(1, p.drop) })),
-      ]);
+    : slip.promises.lines.flatMap((line) => {
+        const kind = t(line.kind === 'pickup' ? 'pickup' : 'giveBack');
+        const word = isLate(line.lateAt, nowMs) ? t('lateKind', { label: kind }) : kind;
+        return [
+          { text: word + ' ' + dayOf(line.at) + formatTime(line.at, timezone), drop: 0 },
+          ...line.parts.map((p) => ({ ...p, drop: Math.max(1, p.drop) })),
+        ];
+      });
 
   // 돈 줄: 미수는 늘 이 팀 몫이다. 이 팀이 다른 팀 몫까지 낼 때만 굵은 글이 '받을 돈'(합)이고, 나눔은 앞 글에 적는다.
   const money = slip.money;

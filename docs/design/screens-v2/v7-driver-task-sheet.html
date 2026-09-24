@@ -19,10 +19,10 @@
   /* V7 기사 업무 판 · 한 팀(spec.md 3-8). 틀은 2-1 라(기사 태블릿 1024×600): 머리 60 · 종이 460 · 바닥 80.
      왼쪽 종이 x 8–612(제목 56 + 본문 404), 오른쪽 동작 판 x 620–1016. 누르는 곳 56 이상, 주 버튼 보라 72.
      작은 틀 1024×520(연결이 끊기면 본문 292)에도 들어가게 왼쪽 본문은 가장 작을 때 292(팀 64 · 품목 표 164 · 돈 줄 48 · 사이 8 × 2),
-     돌려주기 약속은 자리가 남는 오른쪽 판에 둔다.
+     반납 일정은 자리가 남는 오른쪽 판에 둔다.
      채택(adoption.md): 힉스필드 그림처럼 오른쪽 판을 큰 버튼 넷(선 그림 + 글)이 채우고, 왼쪽 종이는 품목 줄이 남는 높이를 나눠 쓴다.
      줄 · 버튼 높이는 '연결 띠가 떠 있을 때의 높이'로 정한다(100dvh에서 띠 32를 늘 뺌): 연결이 끊겨도 버튼 · 줄 크기가 그대로이고,
-     연결되어 있을 때 남는 32는 품목 표와 돈 줄 사이 · 버튼과 돌려주기 약속 사이에 남는다. */
+     연결되어 있을 때 남는 32는 품목 표와 돈 줄 사이 · 버튼과 반납 일정 사이에 남는다. */
 
   html:not([data-state='offline']) .v7-strip { display: none; }
 
@@ -38,7 +38,7 @@
   .v7-team-name { font-size: calc(var(--sn-font-big) + var(--sn-space-s)); font-weight: 900; line-height: 1.1; white-space: nowrap; }
   .v7-team-line { font-size: var(--sn-font-body); font-weight: 700; color: var(--sn-ink-soft); line-height: 1.2; white-space: nowrap; }
 
-  /* 품목 표(머리 40 + 줄 × 2). 칸: 품목(나머지) · 수량 88 · 적재 104 · 전달 104.
+  /* 품목 표(머리 40 + 줄 × 2). 칸: 품목(나머지) · 수량 88 · 적재 104 · 배달 104.
      줄 높이 = 띠가 뜬 종이 본문에서 팀 · 머리 · 돈 줄 · 사이를 뺀 나머지의 반, 60(기사 줄) 이상 88(두 줄 줄) 이하:
      1024×600 → 88, 1024×520 → 62. 도장 칸은 줄 전체가 누르는 곳. */
   .v7-items {
@@ -62,8 +62,8 @@
   }
   .v7-money > b { font-weight: 900; }
 
-  /* 오른쪽 동작 판: 종이 한 장(옆 숫자판 판과 같은 모양), 2 × 2 큰 버튼 + 돌려주기 약속(판 바닥, 위 가는 선, 두 줄 56).
-     버튼 높이 = 띠가 뜬 판 안(안 여백 12 × 2)에서 약속 56 · 사이 12 · 버튼 사이 8을 뺀 나머지의 반: 1024×600 → 164, 1024×520 → 124.
+  /* 오른쪽 동작 판: 종이 한 장(옆 숫자판 판과 같은 모양), 2 × 2 큰 버튼 + 반납 일정(판 바닥, 위 가는 선, 두 줄 56).
+     버튼 높이 = 띠가 뜬 판 안(안 여백 12 × 2)에서 일정 56 · 사이 12 · 버튼 사이 8을 뺀 나머지의 반: 1024×600 → 164, 1024×520 → 124.
      버튼은 선 그림(24 격자, 1.75em) 위 · 22px 굵은 글 아래(힉스필드 그림의 큰 옆 버튼). */
   .v7-side {
     display: flex; flex-direction: column; gap: var(--sn-space-m); flex: 1 1 0; min-width: 0;
@@ -77,9 +77,9 @@
   .v7-action { flex-direction: column; gap: var(--sn-space-s); min-width: 0; padding: 0 var(--sn-space-s); font-size: var(--sn-font-big); font-weight: 900; }
   .v7-action > .sn-icon { width: 1.75em; height: 1.75em; }
   .v7-action-text { display: flex; flex-direction: column; align-items: center; line-height: 1.2; }
-  /* 두 줄 버튼: '리프트권 추가' / '야간권 6매 있음'(차에 있는 예비권이 버튼에 붙어 있다). */
+  /* 두 줄 버튼: '리프트권 추가' / '야간권 재고 6매'(차량 예비권 재고가 버튼에 붙어 있다). */
   .v7-action-text > small { font-size: var(--sn-font-body); font-weight: 700; color: var(--sn-ink-soft); }
-  /* 돌려주기 약속(56 = 위 여백 8 + 이름 20 + 사이 4 + 한 줄 24): 전달할 때 손님에게 말해 줄 것(앱 접수증의 약속 줄과 같은 말). */
+  /* 반납 일정(56 = 위 여백 8 + 이름 20 + 사이 4 + 한 줄 24): 배달할 때 손님에게 말해 줄 것(앱 접수증의 일정 줄과 같은 말). */
   .v7-promise {
     display: flex; flex-direction: column; gap: var(--sn-space-xs); flex: none; height: var(--sn-target); margin-top: auto;
     padding: var(--sn-space-s) var(--sn-space-xs) 0; box-shadow: inset 0 var(--sn-line) 0 var(--sn-rule);
@@ -101,13 +101,13 @@
       </div>
       <div class="sn-header-right">
         <button type="button" class="sn-button sn-header-find" aria-label="끝 4자리"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="3" width="4" height="4" rx="1"/><rect x="10" y="3" width="4" height="4" rx="1"/><rect x="16" y="3" width="4" height="4" rx="1"/><rect x="4" y="10" width="4" height="4" rx="1"/><rect x="10" y="10" width="4" height="4" rx="1"/><rect x="16" y="10" width="4" height="4" rx="1"/><rect x="10" y="17" width="4" height="4" rx="1"/></svg><span>끝 4자리</span></button>
-        <button type="button" class="sn-button">차에 있는 것</button>
+        <button type="button" class="sn-button">차량 재고</button>
         <button type="button" class="sn-icon-button" aria-label="알림 1건"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 9a6 6 0 0 1 12 0c0 6 2.5 8 2.5 8h-17S6 15 6 9"/><path d="M10.3 20.5a1.9 1.9 0 0 0 3.4 0"/></svg><span class="sn-badge">1</span></button>
         <button type="button" class="sn-button" aria-label="나가기"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg><span>나가기</span></button>
       </div>
     </header>
 
-    <div class="sn-strip is-offline v7-strip" role="status"><span class="sn-fit">연결 끊김 · 보냄 대기 2 · 마지막 맞춤 16:48</span></div>
+    <div class="sn-strip is-offline v7-strip" role="status"><span class="sn-fit">연결 끊김 · 전송 대기 2 · 마지막 연결 16:48</span></div>
 
     <div class="sn-desk">
       <section class="sn-sheet v7-sheet">
@@ -124,37 +124,37 @@
           <table class="sn-ledger-table v7-items">
             <colgroup><col><col style="width: 88px"><col style="width: 104px"><col style="width: 104px"></colgroup>
             <thead>
-              <tr><th scope="col">품목</th><th scope="col" class="align-end">수량</th><th scope="col" class="align-center">적재</th><th scope="col" class="align-center">전달</th></tr>
+              <tr><th scope="col">품목</th><th scope="col" class="align-end">수량</th><th scope="col" class="align-center">적재</th><th scope="col" class="align-center">배달</th></tr>
             </thead>
             <tbody>
               <tr class="sn-row">
                 <td>스키</td>
                 <td class="align-end"><span class="v7-qty">3대</span></td>
-                <td class="is-stamp align-center"><span class="sn-stamp-cell is-done" role="img" aria-label="적재 끝 16:40"><span class="sn-stamp is-done is-dated"><span class="sn-stamp-text">적재</span><span class="sn-stamp-time">16:40</span></span></span></td>
-                <td class="is-stamp align-center"><button type="button" class="sn-stamp-cell is-todo" aria-label="전달 할 일"><span class="sn-stamp is-todo"></span></button></td>
+                <td class="is-stamp align-center"><span class="sn-stamp-cell is-done" role="img" aria-label="적재 완료 16:40"><span class="sn-stamp is-done is-dated"><span class="sn-stamp-text">적재</span><span class="sn-stamp-time">16:40</span></span></span></td>
+                <td class="is-stamp align-center"><button type="button" class="sn-stamp-cell is-todo" aria-label="배달 미처리"><span class="sn-stamp is-todo"></span></button></td>
               </tr>
               <tr class="sn-row">
                 <td>헬멧</td>
                 <td class="align-end"><span class="v7-qty">3개</span></td>
-                <td class="is-stamp align-center"><span class="sn-stamp-cell is-done" role="img" aria-label="적재 끝 16:40"><span class="sn-stamp is-done is-dated"><span class="sn-stamp-text">적재</span><span class="sn-stamp-time">16:40</span></span></span></td>
-                <td class="is-stamp align-center"><button type="button" class="sn-stamp-cell is-todo" aria-label="전달 할 일"><span class="sn-stamp is-todo"></span></button></td>
+                <td class="is-stamp align-center"><span class="sn-stamp-cell is-done" role="img" aria-label="적재 완료 16:40"><span class="sn-stamp is-done is-dated"><span class="sn-stamp-text">적재</span><span class="sn-stamp-time">16:40</span></span></span></td>
+                <td class="is-stamp align-center"><button type="button" class="sn-stamp-cell is-todo" aria-label="배달 미처리"><span class="sn-stamp is-todo"></span></button></td>
               </tr>
             </tbody>
           </table>
 
-          <div class="v7-money"><b class="tone-green">미수 없음</b><span>· 12/25 계좌이체로 받음</span></div>
+          <div class="v7-money"><b class="tone-green">미수 없음</b><span>· 12/25 계좌이체 수납</span></div>
         </div>
       </section>
 
-      <aside class="v7-side" aria-label="이 팀 일">
+      <aside class="v7-side" aria-label="이 팀 업무">
         <div class="v7-actions">
           <button type="button" class="sn-button v7-action"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="2" y="5" width="20" height="14" rx="2"/><circle cx="12" cy="12" r="3"/><path d="M6 10v4M18 10v4"/></svg><span class="v7-action-text"><span>현장 수납</span></span></button>
-          <button type="button" class="sn-button v7-action"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M2 7a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v2.5a2.5 2.5 0 0 0 0 5V17a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-2.5a2.5 2.5 0 0 0 0-5z"/><path d="M15 5v2.5M15 11v2M15 16.5V19"/></svg><span class="v7-action-text"><span>리프트권 추가</span><small>야간권 6매 있음</small></span></button>
-          <button type="button" class="sn-button v7-action"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/></svg><span class="v7-action-text"><span>못 전함</span></span></button>
+          <button type="button" class="sn-button v7-action"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M2 7a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v2.5a2.5 2.5 0 0 0 0 5V17a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-2.5a2.5 2.5 0 0 0 0-5z"/><path d="M15 5v2.5M15 11v2M15 16.5V19"/></svg><span class="v7-action-text"><span>리프트권 추가</span><small>야간권 재고 6매</small></span></button>
+          <button type="button" class="sn-button v7-action"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/></svg><span class="v7-action-text"><span>배달 실패</span></span></button>
           <button type="button" class="sn-button v7-action"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M21 16.5v3a2 2 0 0 1-2.2 2A19.8 19.8 0 0 1 2.5 5.2 2 2 0 0 1 4.5 3h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8.4 10.8a16 16 0 0 0 4.8 4.8l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/></svg><span class="v7-action-text"><span>전화</span></span></button>
         </div>
         <div class="v7-promise">
-          <span class="v7-promise-label">돌려주기 약속</span>
+          <span class="v7-promise-label">반납 일정</span>
           <span class="v7-promise-line">오늘 22:10 · 만선 티롤 앞 · 1호 차량</span>
         </div>
       </aside>
@@ -163,11 +163,11 @@
     <footer class="sn-footer v7-footer">
       <div class="sn-footer-metrics">
         <div class="pos-footer-back">
-          <button type="button" class="sn-button" aria-label="배달 목록으로 돌아가기"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m15 6-6 6 6 6"/></svg><span>배달 목록</span></button>
-          <span class="sn-fit">전달 0 · 남음 1팀</span>
+          <button type="button" class="sn-button" aria-label="배달 목록"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m15 6-6 6 6 6"/></svg><span>배달 목록</span></button>
+          <span class="sn-fit">완료 0 · 잔여 1</span>
         </div>
       </div>
-      <button type="button" class="sn-primary" data-primary="true"><span class="sn-fit">전달 도장 · 6개</span></button>
+      <button type="button" class="sn-primary" data-primary="true"><span class="sn-fit">배달 처리 · 6개</span></button>
     </footer>
   </div>
 </div>

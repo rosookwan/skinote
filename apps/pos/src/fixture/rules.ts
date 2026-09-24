@@ -170,7 +170,7 @@ export function sortRoute(state: FxState, orders: readonly FxOrder[]): FxOrder[]
 export const VISIT_OUTCOMES = {
   customer_absent: '고객 부재',
   place_changed: '장소 변경',
-  items_not_ready: '물품을 받지 못함',
+  items_not_ready: '물품 미준비',
 } as const;
 
 /** 차량 업무 id(배달 · 수거). 체험 자료에서는 접수마다 하나씩이라 접수 id에서 나온다. */

@@ -1,12 +1,12 @@
 {
-  "rev": 2,
+  "rev": 3,
   "stamp_steps": [
     { "key": "load", "label": "적재", "short_label": null, "stamp_text": "적재", "checklist_label": "차량 적재", "rule_key": "qty_loaded", "action_key": "stamp.load", "required_permission_key": null, "urgency_out": 10, "urgency_back": 0, "tone_key": "seal", "shows_time": 0, "feature_key": "vehicles", "sort": 10 },
     { "key": "ticket_secure", "label": "발권", "short_label": null, "stamp_text": "발권", "checklist_label": "리프트권 발권", "rule_key": "ticket_secured", "action_key": "stamp.ticket_secure", "required_permission_key": null, "urgency_out": 15, "urgency_back": 0, "tone_key": "seal", "shows_time": 0, "feature_key": "lift_tickets", "sort": 15 },
     { "key": "issue", "label": "지급", "short_label": null, "stamp_text": "지급", "checklist_label": "장비 지급", "rule_key": "qty_issued", "action_key": "stamp.issue", "required_permission_key": null, "urgency_out": 20, "urgency_back": 0, "tone_key": "seal", "shows_time": 0, "feature_key": null, "sort": 20 },
     { "key": "pay", "label": "수납", "short_label": null, "stamp_text": "수납", "checklist_label": "수납", "rule_key": "order_due_zero", "action_key": "stamp.pay", "required_permission_key": null, "urgency_out": 30, "urgency_back": 0, "tone_key": "seal", "shows_time": 0, "feature_key": null, "sort": 30 },
     { "key": "lesson_done", "label": "강습", "short_label": null, "stamp_text": "강습", "checklist_label": "강습", "rule_key": "service_closed", "action_key": "stamp.lesson_done", "required_permission_key": null, "urgency_out": 40, "urgency_back": 0, "tone_key": "seal", "shows_time": 0, "feature_key": "lessons", "sort": 40 },
-    { "key": "collect", "label": "받음", "short_label": null, "stamp_text": "받음", "checklist_label": "차량 받음", "rule_key": "qty_collected", "action_key": "stamp.collect", "required_permission_key": null, "urgency_out": 0, "urgency_back": 10, "tone_key": "seal", "shows_time": 1, "feature_key": "vehicles", "sort": 50 },
+    { "key": "collect", "label": "수거", "short_label": null, "stamp_text": "수거", "checklist_label": "차량 수거", "rule_key": "qty_collected", "action_key": "stamp.collect", "required_permission_key": null, "urgency_out": 0, "urgency_back": 10, "tone_key": "seal", "shows_time": 1, "feature_key": "vehicles", "sort": 50 },
     { "key": "return", "label": "반납", "short_label": null, "stamp_text": "반납", "checklist_label": "반납", "rule_key": "qty_returned", "action_key": "stamp.return", "required_permission_key": null, "urgency_out": 0, "urgency_back": 20, "tone_key": "seal", "shows_time": 0, "feature_key": null, "sort": 60 },
     { "key": "receive", "label": "입고", "short_label": null, "stamp_text": "입고", "checklist_label": "매장 입고", "rule_key": "task_received", "action_key": "stamp.receive", "required_permission_key": null, "urgency_out": 0, "urgency_back": 30, "tone_key": "seal", "shows_time": 0, "feature_key": "vehicles", "sort": 70 }
   ],
@@ -19,8 +19,8 @@
         { "column_key": "time", "seq": 10, "header_label": "시각", "short_header_label": null, "renderer_key": "time", "step_keys": null, "stamp_rollup_key": null, "attribute_key": null, "action_key": null, "min_width_em": 4, "preferred_width_em": 4.125, "weight": 0, "drop_priority": 3, "fold_into_column_key": "team", "fold_mode_key": "prefix", "fold_min_share_em": 4, "collapse_group_key": null, "fit_mode_key": "parts", "align_key": "start", "feature_key": null, "feature_on": 1 },
         { "column_key": "team", "seq": 20, "header_label": "팀", "short_header_label": null, "renderer_key": "team", "step_keys": null, "stamp_rollup_key": null, "attribute_key": null, "action_key": null, "min_width_em": 8.25, "preferred_width_em": 9, "weight": 1, "drop_priority": 0, "fold_into_column_key": null, "fold_mode_key": "prefix", "fold_min_share_em": 0, "collapse_group_key": null, "fit_mode_key": "parts", "align_key": "start", "feature_key": null, "feature_on": 1 },
         { "column_key": "items", "seq": 30, "header_label": "품목", "short_header_label": null, "renderer_key": "items", "step_keys": null, "stamp_rollup_key": null, "attribute_key": null, "action_key": null, "min_width_em": 9.5, "preferred_width_em": 12.25, "weight": 3, "drop_priority": 0, "fold_into_column_key": null, "fold_mode_key": "prefix", "fold_min_share_em": 0, "collapse_group_key": null, "fit_mode_key": "items", "align_key": "start", "feature_key": null, "feature_on": 1 },
-        { "column_key": "promise", "seq": 40, "header_label": "반납 약속", "short_header_label": "약속", "renderer_key": "promise", "step_keys": null, "stamp_rollup_key": null, "attribute_key": null, "action_key": null, "min_width_em": 10.5, "preferred_width_em": 13.375, "weight": 2, "drop_priority": 0, "fold_into_column_key": null, "fold_mode_key": "prefix", "fold_min_share_em": 0, "collapse_group_key": null, "fit_mode_key": "parts", "align_key": "start", "feature_key": null, "feature_on": 1 },
-        { "column_key": "money", "seq": 50, "header_label": "돈", "short_header_label": null, "renderer_key": "money", "step_keys": null, "stamp_rollup_key": null, "attribute_key": null, "action_key": null, "min_width_em": 6.5, "preferred_width_em": 7.75, "weight": 1, "drop_priority": 0, "fold_into_column_key": null, "fold_mode_key": "prefix", "fold_min_share_em": 0, "collapse_group_key": null, "fit_mode_key": "alts", "align_key": "end", "feature_key": null, "feature_on": 1 },
+        { "column_key": "promise", "seq": 40, "header_label": "반납 일정", "short_header_label": "일정", "renderer_key": "promise", "step_keys": null, "stamp_rollup_key": null, "attribute_key": null, "action_key": null, "min_width_em": 10.5, "preferred_width_em": 13.375, "weight": 2, "drop_priority": 0, "fold_into_column_key": null, "fold_mode_key": "prefix", "fold_min_share_em": 0, "collapse_group_key": null, "fit_mode_key": "parts", "align_key": "start", "feature_key": null, "feature_on": 1 },
+        { "column_key": "money", "seq": 50, "header_label": "금액", "short_header_label": null, "renderer_key": "money", "step_keys": null, "stamp_rollup_key": null, "attribute_key": null, "action_key": null, "min_width_em": 6.5, "preferred_width_em": 7.75, "weight": 1, "drop_priority": 0, "fold_into_column_key": null, "fold_mode_key": "prefix", "fold_min_share_em": 0, "collapse_group_key": null, "fit_mode_key": "alts", "align_key": "end", "feature_key": null, "feature_on": 1 },
         { "column_key": "stamp:issue", "seq": 60, "header_label": "지급", "short_header_label": null, "renderer_key": "stamp", "step_keys": ["load", "issue"], "stamp_rollup_key": "first_open", "attribute_key": null, "action_key": null, "min_width_em": 4, "preferred_width_em": 4.25, "weight": 0, "drop_priority": 0, "fold_into_column_key": null, "fold_mode_key": "prefix", "fold_min_share_em": 0, "collapse_group_key": "stamps", "fit_mode_key": "parts", "align_key": "center", "feature_key": null, "feature_on": 1 },
         { "column_key": "stamp:return", "seq": 70, "header_label": "반납", "short_header_label": null, "renderer_key": "stamp", "step_keys": ["return"], "stamp_rollup_key": "worst_of", "attribute_key": null, "action_key": null, "min_width_em": 4, "preferred_width_em": 4.25, "weight": 0, "drop_priority": 0, "fold_into_column_key": null, "fold_mode_key": "prefix", "fold_min_share_em": 0, "collapse_group_key": "stamps", "fit_mode_key": "parts", "align_key": "center", "feature_key": null, "feature_on": 1 },
         { "column_key": "stamp:pay", "seq": 80, "header_label": "수납", "short_header_label": null, "renderer_key": "stamp", "step_keys": ["pay"], "stamp_rollup_key": null, "attribute_key": null, "action_key": null, "min_width_em": 4, "preferred_width_em": 4.25, "weight": 0, "drop_priority": 0, "fold_into_column_key": null, "fold_mode_key": "prefix", "fold_min_share_em": 0, "collapse_group_key": "stamps", "fit_mode_key": "parts", "align_key": "center", "feature_key": null, "feature_on": 1 },
@@ -80,21 +80,21 @@
       "base_view": null, "row_grain_key": "task", "group_by_key": "return_slot", "subgroup_by_key": "place", "sort_key": "manual_route",
       "now_line_field": null, "reorderable": 1, "pin_urgent": 1, "feature_key": "vehicles", "feature_on": 1, "sort": 30,
       "columns": [
-        { "column_key": "stamp:collect", "seq": 10, "header_label": "받음", "short_header_label": null, "renderer_key": "stamp", "step_keys": ["collect"], "stamp_rollup_key": "worst_of", "attribute_key": null, "action_key": null, "min_width_em": 5.5, "preferred_width_em": 6, "weight": 0, "drop_priority": 0, "fold_into_column_key": null, "fold_mode_key": "prefix", "fold_min_share_em": 0, "collapse_group_key": null, "fit_mode_key": "parts", "align_key": "center", "feature_key": null, "feature_on": 1 },
+        { "column_key": "stamp:collect", "seq": 10, "header_label": "수거", "short_header_label": null, "renderer_key": "stamp", "step_keys": ["collect"], "stamp_rollup_key": "worst_of", "attribute_key": null, "action_key": null, "min_width_em": 5.5, "preferred_width_em": 6, "weight": 0, "drop_priority": 0, "fold_into_column_key": null, "fold_mode_key": "prefix", "fold_min_share_em": 0, "collapse_group_key": null, "fit_mode_key": "parts", "align_key": "center", "feature_key": null, "feature_on": 1 },
         { "column_key": "team", "seq": 20, "header_label": "팀", "short_header_label": null, "renderer_key": "team", "step_keys": null, "stamp_rollup_key": null, "attribute_key": null, "action_key": null, "min_width_em": 9.375, "preferred_width_em": 14, "weight": 3, "drop_priority": 0, "fold_into_column_key": null, "fold_mode_key": "prefix", "fold_min_share_em": 0, "collapse_group_key": null, "fit_mode_key": "parts", "align_key": "start", "feature_key": null, "feature_on": 1 },
         { "column_key": "items", "seq": 30, "header_label": "품목", "short_header_label": null, "renderer_key": "items", "step_keys": null, "stamp_rollup_key": null, "attribute_key": null, "action_key": null, "min_width_em": 9.5, "preferred_width_em": 12, "weight": 1, "drop_priority": 1, "fold_into_column_key": "team", "fold_mode_key": "second_line", "fold_min_share_em": 0, "collapse_group_key": null, "fit_mode_key": "items", "align_key": "start", "feature_key": null, "feature_on": 1 },
         { "column_key": "action:call", "seq": 40, "header_label": "전화", "short_header_label": null, "renderer_key": "action", "step_keys": null, "stamp_rollup_key": null, "attribute_key": null, "action_key": "call", "min_width_em": 3.5, "preferred_width_em": 6.5, "weight": 0, "drop_priority": 0, "fold_into_column_key": null, "fold_mode_key": "prefix", "fold_min_share_em": 0, "collapse_group_key": null, "fit_mode_key": "alts", "align_key": "center", "feature_key": null, "feature_on": 1 }
       ],
       "tabs": [
         { "tab_key": "all", "label": "전체", "short_label": null, "filter_key": "all", "params": null, "seq": 10, "priority": 100, "overflow_key": "more_sheet", "shows_count": 1, "feature_key": null, "feature_on": 1 },
-        { "tab_key": "remaining", "label": "남음", "short_label": null, "filter_key": "remaining", "params": null, "seq": 20, "priority": 80, "overflow_key": "more_sheet", "shows_count": 1, "feature_key": null, "feature_on": 1 },
-        { "tab_key": "collected", "label": "받음", "short_label": null, "filter_key": "collected", "params": null, "seq": 30, "priority": 60, "overflow_key": "more_sheet", "shows_count": 1, "feature_key": null, "feature_on": 1 }
+        { "tab_key": "remaining", "label": "잔여", "short_label": null, "filter_key": "remaining", "params": null, "seq": 20, "priority": 80, "overflow_key": "more_sheet", "shows_count": 1, "feature_key": null, "feature_on": 1 },
+        { "tab_key": "collected", "label": "완료", "short_label": null, "filter_key": "collected", "params": null, "seq": 30, "priority": 60, "overflow_key": "more_sheet", "shows_count": 1, "feature_key": null, "feature_on": 1 }
       ],
       "metrics": [
-        { "metric_key": "collected_count", "params": null, "seq": 10, "label": "받음", "priority": 90, "overflow_key": "fold", "fit_mode_key": "parts", "feature_key": null, "feature_on": 1 },
-        { "metric_key": "pending_count", "params": null, "seq": 20, "label": "대기", "priority": 70, "overflow_key": "fold", "fit_mode_key": "parts", "feature_key": null, "feature_on": 1 },
-        { "metric_key": "remaining_count", "params": null, "seq": 30, "label": "남음", "priority": 100, "overflow_key": "fold", "fit_mode_key": "parts", "feature_key": null, "feature_on": 1 },
-        { "metric_key": "vehicle_load", "params": null, "seq": 40, "label": "차에 있는 것", "priority": 40, "overflow_key": "fold", "fit_mode_key": "items", "feature_key": null, "feature_on": 1 }
+        { "metric_key": "collected_count", "params": null, "seq": 10, "label": "완료", "priority": 90, "overflow_key": "fold", "fit_mode_key": "parts", "feature_key": null, "feature_on": 1 },
+        { "metric_key": "pending_count", "params": null, "seq": 20, "label": "전송 대기", "priority": 70, "overflow_key": "fold", "fit_mode_key": "parts", "feature_key": null, "feature_on": 1 },
+        { "metric_key": "remaining_count", "params": null, "seq": 30, "label": "잔여", "priority": 100, "overflow_key": "fold", "fit_mode_key": "parts", "feature_key": null, "feature_on": 1 },
+        { "metric_key": "vehicle_load", "params": null, "seq": 40, "label": "차량 재고", "priority": 40, "overflow_key": "fold", "fit_mode_key": "items", "feature_key": null, "feature_on": 1 }
       ],
       "primary_actions": [
         { "seq": 1, "action_key": "receive_to_shop", "condition_key": "always" }
@@ -113,7 +113,7 @@
       "base_view": { "key": "collection_list", "device_class_key": "driver_tablet" }, "row_grain_key": "task", "group_by_key": "return_slot", "subgroup_by_key": "place", "sort_key": "manual_route",
       "now_line_field": null, "reorderable": 1, "pin_urgent": 1, "feature_key": "vehicles", "feature_on": 1, "sort": 31,
       "columns": [
-        { "column_key": "stamp:collect", "seq": 10, "header_label": "받음", "short_header_label": null, "renderer_key": "stamp", "step_keys": ["collect"], "stamp_rollup_key": "worst_of", "attribute_key": null, "action_key": null, "min_width_em": 5.5, "preferred_width_em": 5.5, "weight": 0, "drop_priority": 0, "fold_into_column_key": null, "fold_mode_key": "prefix", "fold_min_share_em": 0, "collapse_group_key": null, "fit_mode_key": "parts", "align_key": "center", "feature_key": null, "feature_on": 1 },
+        { "column_key": "stamp:collect", "seq": 10, "header_label": "수거", "short_header_label": null, "renderer_key": "stamp", "step_keys": ["collect"], "stamp_rollup_key": "worst_of", "attribute_key": null, "action_key": null, "min_width_em": 5.5, "preferred_width_em": 5.5, "weight": 0, "drop_priority": 0, "fold_into_column_key": null, "fold_mode_key": "prefix", "fold_min_share_em": 0, "collapse_group_key": null, "fit_mode_key": "parts", "align_key": "center", "feature_key": null, "feature_on": 1 },
         { "column_key": "team", "seq": 20, "header_label": "팀", "short_header_label": null, "renderer_key": "team", "step_keys": null, "stamp_rollup_key": null, "attribute_key": null, "action_key": null, "min_width_em": 11.5, "preferred_width_em": 11.5, "weight": 1, "drop_priority": 0, "fold_into_column_key": null, "fold_mode_key": "prefix", "fold_min_share_em": 0, "collapse_group_key": null, "fit_mode_key": "parts", "align_key": "start", "feature_key": null, "feature_on": 1 },
         { "column_key": "action:call", "seq": 40, "header_label": "전화", "short_header_label": null, "renderer_key": "action", "step_keys": null, "stamp_rollup_key": null, "attribute_key": null, "action_key": "call", "min_width_em": 3.5, "preferred_width_em": 3.5, "weight": 0, "drop_priority": 0, "fold_into_column_key": null, "fold_mode_key": "prefix", "fold_min_share_em": 0, "collapse_group_key": null, "fit_mode_key": "alts", "align_key": "center", "feature_key": null, "feature_on": 1 }
       ]
@@ -144,39 +144,39 @@
     { "workspace_key": "pos", "key": "review_list", "label": "확인 필요", "short_label": null, "screen_key": "review_list", "seq": 30, "priority": 90, "overflow_key": "more_sheet", "feature_key": null, "feature_on": 1, "permission_key": null, "device_class_key": null, "pinned_end": 0 },
     { "workspace_key": "pos", "key": "intake_requests", "label": "사이즈 요청", "short_label": null, "screen_key": "intake_requests", "seq": 40, "priority": 40, "overflow_key": "more_sheet", "feature_key": "size_preinput", "feature_on": 1, "permission_key": null, "device_class_key": null, "pinned_end": 0 },
     { "workspace_key": "pos", "key": "management", "label": "관리", "short_label": null, "screen_key": "management", "seq": 90, "priority": 100, "overflow_key": "more_sheet", "feature_key": null, "feature_on": 1, "permission_key": null, "device_class_key": null, "pinned_end": 1 },
-    { "workspace_key": "driver", "key": "van_stock", "label": "차에 있는 것", "short_label": null, "screen_key": "van_stock", "seq": 10, "priority": 60, "overflow_key": "more_sheet", "feature_key": "vehicles", "feature_on": 1, "permission_key": null, "device_class_key": null, "pinned_end": 0 }
+    { "workspace_key": "driver", "key": "van_stock", "label": "차량 재고", "short_label": null, "screen_key": "van_stock", "seq": 10, "priority": 60, "overflow_key": "more_sheet", "feature_key": "vehicles", "feature_on": 1, "permission_key": null, "device_class_key": null, "pinned_end": 0 }
   ],
   "status_terms": [
-    { "domain_key": "stamp", "key": "todo", "locale": "ko-KR", "label": "할 일", "tone_key": "ink", "rank": 10 },
-    { "domain_key": "stamp", "key": "partial", "locale": "ko-KR", "label": "일부", "tone_key": "orange", "rank": 20 },
-    { "domain_key": "stamp", "key": "done", "locale": "ko-KR", "label": "끝", "tone_key": "seal", "rank": 90 },
+    { "domain_key": "stamp", "key": "todo", "locale": "ko-KR", "label": "미처리", "tone_key": "ink", "rank": 10 },
+    { "domain_key": "stamp", "key": "partial", "locale": "ko-KR", "label": "부분", "tone_key": "orange", "rank": 20 },
+    { "domain_key": "stamp", "key": "done", "locale": "ko-KR", "label": "완료", "tone_key": "seal", "rank": 90 },
     { "domain_key": "stamp", "key": "na", "locale": "ko-KR", "label": "—", "tone_key": "grey", "rank": 99 },
-    { "domain_key": "stamp", "key": "blocked", "locale": "ko-KR", "label": "먼저 할 일", "tone_key": "grey", "rank": 5 },
+    { "domain_key": "stamp", "key": "blocked", "locale": "ko-KR", "label": "대기", "tone_key": "grey", "rank": 5 },
     { "domain_key": "stamp", "key": "scheduled", "locale": "ko-KR", "label": "예정", "tone_key": "blue", "rank": 30 },
-    { "domain_key": "stamp", "key": "delegated", "locale": "ko-KR", "label": "차량이 함", "tone_key": "purple", "rank": 40 },
+    { "domain_key": "stamp", "key": "delegated", "locale": "ko-KR", "label": "차량 담당", "tone_key": "purple", "rank": 40 },
     { "domain_key": "order", "key": "needs_review", "locale": "ko-KR", "label": "확인 필요", "tone_key": "orange", "rank": 5 },
     { "domain_key": "order", "key": "awaiting_load", "locale": "ko-KR", "label": "차량 적재 대기", "tone_key": "orange", "rank": 10 },
     { "domain_key": "order", "key": "awaiting_issue", "locale": "ko-KR", "label": "지급 대기", "tone_key": "ink", "rank": 20 },
     { "domain_key": "order", "key": "awaiting_exchange", "locale": "ko-KR", "label": "교환 대기", "tone_key": "orange", "rank": 25 },
     { "domain_key": "order", "key": "booked", "locale": "ko-KR", "label": "예약", "tone_key": "blue", "rank": 30 },
     { "domain_key": "order", "key": "in_use", "locale": "ko-KR", "label": "이용 중", "tone_key": "ink", "rank": 40 },
-    { "domain_key": "order", "key": "partial_return", "locale": "ko-KR", "label": "일부 반납", "tone_key": "orange", "rank": 50 },
-    { "domain_key": "order", "key": "awaiting_shop", "locale": "ko-KR", "label": "차량에 있음", "tone_key": "purple", "rank": 60 },
-    { "domain_key": "order", "key": "returned", "locale": "ko-KR", "label": "반납 끝", "tone_key": "green", "rank": 80 },
-    { "domain_key": "order", "key": "completed", "locale": "ko-KR", "label": "끝", "tone_key": "grey", "rank": 90 },
+    { "domain_key": "order", "key": "partial_return", "locale": "ko-KR", "label": "부분 반납", "tone_key": "orange", "rank": 50 },
+    { "domain_key": "order", "key": "awaiting_shop", "locale": "ko-KR", "label": "입고 대기", "tone_key": "purple", "rank": 60 },
+    { "domain_key": "order", "key": "returned", "locale": "ko-KR", "label": "반납 완료", "tone_key": "green", "rank": 80 },
+    { "domain_key": "order", "key": "completed", "locale": "ko-KR", "label": "완료", "tone_key": "grey", "rank": 90 },
     { "domain_key": "order", "key": "cancelled", "locale": "ko-KR", "label": "취소", "tone_key": "grey", "rank": 99 },
-    { "domain_key": "line", "key": "todo", "locale": "ko-KR", "label": "할 일", "tone_key": "ink", "rank": 10 },
-    { "domain_key": "line", "key": "partial", "locale": "ko-KR", "label": "일부", "tone_key": "orange", "rank": 20 },
-    { "domain_key": "line", "key": "done", "locale": "ko-KR", "label": "끝", "tone_key": "green", "rank": 90 },
+    { "domain_key": "line", "key": "todo", "locale": "ko-KR", "label": "미처리", "tone_key": "ink", "rank": 10 },
+    { "domain_key": "line", "key": "partial", "locale": "ko-KR", "label": "부분", "tone_key": "orange", "rank": 20 },
+    { "domain_key": "line", "key": "done", "locale": "ko-KR", "label": "완료", "tone_key": "green", "rank": 90 },
     { "domain_key": "line", "key": "na", "locale": "ko-KR", "label": "해당 없음", "tone_key": "grey", "rank": 99 },
     { "domain_key": "pay_state", "key": "unpaid", "locale": "ko-KR", "label": "미수", "tone_key": "ink", "rank": 10 },
-    { "domain_key": "pay_state", "key": "partial", "locale": "ko-KR", "label": "일부 수납", "tone_key": "ink", "rank": 20 },
+    { "domain_key": "pay_state", "key": "partial", "locale": "ko-KR", "label": "부분 수납", "tone_key": "ink", "rank": 20 },
     { "domain_key": "pay_state", "key": "promised", "locale": "ko-KR", "label": "다른 팀 결제 예정", "tone_key": "blue", "rank": 30 },
-    { "domain_key": "pay_state", "key": "paid", "locale": "ko-KR", "label": "수납 끝", "tone_key": "green", "rank": 90 },
-    { "domain_key": "pay_state", "key": "none", "locale": "ko-KR", "label": "받을 돈 없음", "tone_key": "grey", "rank": 99 },
+    { "domain_key": "pay_state", "key": "paid", "locale": "ko-KR", "label": "수납 완료", "tone_key": "green", "rank": 90 },
+    { "domain_key": "pay_state", "key": "none", "locale": "ko-KR", "label": "청구 없음", "tone_key": "grey", "rank": 99 },
     { "domain_key": "task", "key": "waiting", "locale": "ko-KR", "label": "대기", "tone_key": "ink", "rank": 10 },
-    { "domain_key": "task", "key": "in_progress", "locale": "ko-KR", "label": "가는 중", "tone_key": "blue", "rank": 20 },
-    { "domain_key": "task", "key": "completed", "locale": "ko-KR", "label": "끝", "tone_key": "green", "rank": 90 },
+    { "domain_key": "task", "key": "in_progress", "locale": "ko-KR", "label": "진행 중", "tone_key": "blue", "rank": 20 },
+    { "domain_key": "task", "key": "completed", "locale": "ko-KR", "label": "완료", "tone_key": "green", "rank": 90 },
     { "domain_key": "task", "key": "cancelled", "locale": "ko-KR", "label": "취소", "tone_key": "grey", "rank": 99 }
   ]
 }

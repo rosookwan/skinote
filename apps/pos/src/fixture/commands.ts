@@ -43,59 +43,59 @@ function run(state: FxState, envelope: AnyCommandEnvelope, now: number): Result 
     case 'stock.issue': {
       const p = envelope.payload;
       const o = findOrder(state, p.orderId);
-      if (!o) return rejected('이 접수를 찾을 수 없습니다.');
+      if (!o) return rejected('접수 없음');
       const moved = moveStock(o, p.lines, (id) => { const l = lineOf(o, id); return l ? l.qty - l.issued : 0; }, (id, qty) => {
         const l = lineOf(o, id)!;
         l.issued += qty;
         l.issuedAt = now;
         if (isVehiclePickup(o)) l.loaded = Math.max(l.loaded, l.issued);
       });
-      return moved ? done : nothing('이미 모두 지급했습니다.');
+      return moved ? done : nothing('지급 완료');
     }
     case 'stock.direct_return': {
       const p = envelope.payload;
       const o = findOrder(state, p.orderId);
-      if (!o) return rejected('이 접수를 찾을 수 없습니다.');
+      if (!o) return rejected('접수 없음');
       const moved = moveStock(o, p.lines, (id) => { const l = lineOf(o, id); return l && l.returnable ? l.issued - backCount(l) : 0; }, (id, qty) => {
         const l = lineOf(o, id)!;
         l.returned += qty;
         l.returnedAt = now;
       });
-      return moved ? done : nothing('이미 모두 반납했습니다.');
+      return moved ? done : nothing('반납 완료');
     }
     case 'stock.load': {
       const p = envelope.payload;
       const o = findOrder(state, orderIdOfTask(p.taskId));
-      if (!o) return rejected('이 업무를 찾을 수 없습니다.');
+      if (!o) return rejected('업무 없음');
       const moved = moveStock(o, p.lines, (id) => { const l = lineOf(o, id); return l ? l.qty - Math.max(l.loaded, l.issued) : 0; }, (id, qty) => {
         const l = lineOf(o, id)!;
         l.loaded = Math.max(l.loaded, l.issued) + qty;
         l.loadedAt = now;
       });
-      return moved ? done : nothing('이미 모두 실었습니다.');
+      return moved ? done : nothing('적재 완료');
     }
     case 'stock.collect': {
       const p = envelope.payload;
       const o = findOrder(state, orderIdOfTask(p.taskId));
-      if (!o) return rejected('이 업무를 찾을 수 없습니다.');
+      if (!o) return rejected('업무 없음');
       const moved = moveStock(o, p.lines, (id) => { const l = lineOf(o, id); return l && l.returnable ? l.issued - backCount(l) : 0; }, (id, qty) => {
         const l = lineOf(o, id)!;
         l.collected += qty;
         l.collectedAt = now;
       });
-      return moved ? done : nothing('이미 모두 받았습니다.');
+      return moved ? done : nothing('수거 완료');
     }
     case 'payment.take': {
       const p = envelope.payload;
       const targets = p.orderIds.map((id) => findOrder(state, id)).filter((o): o is FxOrder => o !== undefined);
-      if (targets.length !== p.orderIds.length) return rejected('이 접수를 찾을 수 없습니다.');
+      if (targets.length !== p.orderIds.length) return rejected('접수 없음');
       const current = targets.reduce((sum, o) => sum + ownDue(o), 0);
-      if (current === 0) return nothing('받을 돈이 없습니다.');
+      if (current === 0) return nothing('받을 금액 없음');
       if (envelope.expect?.dueAmount !== undefined && envelope.expect.dueAmount !== current) {
-        return { outcome: 'conflict', error: { code: 'DUE_CHANGED', message: '그사이 받을 돈이 바뀌었습니다. 창을 닫고 다시 열어 주세요.' } };
+        return { outcome: 'conflict', error: { code: 'DUE_CHANGED', message: '받을 금액 변경됨 · 재시도 필요' } };
       }
       const methodKey = p.methodKey;
-      if (!isMethod(methodKey)) return rejected('모르는 결제 수단입니다.');
+      if (!isMethod(methodKey)) return rejected('등록되지 않은 결제 수단');
       let rest = Math.min(p.amount, current);
       targets.forEach((o, i) => {
         const share = Math.min(ownDue(o), rest);
@@ -120,22 +120,22 @@ function run(state: FxState, envelope: AnyCommandEnvelope, now: number): Result 
           moved = true;
         }
       }
-      return moved ? done : nothing('차에 받은 것이 없습니다.');
+      return moved ? done : nothing('입고 대상 없음');
     }
     case 'route.move': {
       // ▲ · ▼ · 맨 위로(sync 4-5): 기준 업무 앞 · 뒤로. 지금 순서에서 자리를 정하고, 첫 손 이동이면 경로 전체에 순위를 쓴다.
       const p = envelope.payload;
       const o = findOrder(state, orderIdOfTask(p.taskId));
       const anchor = p.anchorTaskId ? findOrder(state, orderIdOfTask(p.anchorTaskId)) : undefined;
-      if (!o || !o.giveBack.vehicleId || (p.anchorTaskId && !anchor)) return rejected('이 업무를 찾을 수 없습니다.');
-      if (anchor && slotKey(anchor) !== slotKey(o)) return rejected('같은 반납 타임 안에서만 옮길 수 있습니다.');
+      if (!o || !o.giveBack.vehicleId || (p.anchorTaskId && !anchor)) return rejected('업무 없음');
+      if (anchor && slotKey(anchor) !== slotKey(o)) return rejected('이동 불가 · 다른 반납 타임');
       const order = sortRoute(state, routeOrders(state, o.giveBack.vehicleId, state.businessDate)).map(collectTaskId);
       const rest = order.filter((id) => id !== p.taskId);
       let at = anchor ? rest.indexOf(collectTaskId(anchor)) : rest.findIndex((id) => { const x = findOrder(state, orderIdOfTask(id)); return x !== undefined && slotKey(x) === slotKey(o); });
-      if (at < 0) return rejected('이 업무를 찾을 수 없습니다.');
+      if (at < 0) return rejected('업무 없음');
       if (p.position === 'after') at += 1;
       const next = [...rest.slice(0, at), p.taskId, ...rest.slice(at)];
-      if (next.join() === order.join()) return nothing('이미 그 자리에 있습니다.');
+      if (next.join() === order.join()) return nothing('순서 변경 없음');
       next.forEach((id, i) => { state.routeRanks[id] = 'r' + String(i).padStart(4, '0'); });
       return done;
     }
@@ -143,7 +143,7 @@ function run(state: FxState, envelope: AnyCommandEnvelope, now: number): Result 
       // 시간순 되돌리기: 이 차량 · 날짜의 손 순서를 지운다.
       const p = envelope.payload;
       const ids = routeOrders(state, p.vehicleId, p.date).map(collectTaskId).filter((id) => id in state.routeRanks);
-      if (ids.length === 0) return nothing('이미 시간순입니다.');
+      if (ids.length === 0) return nothing('이미 시간순');
       for (const id of ids) delete state.routeRanks[id];
       return done;
     }
@@ -151,16 +151,16 @@ function run(state: FxState, envelope: AnyCommandEnvelope, now: number): Result 
       // 빨리 확인: 수거 목록 맨 위에 고정하고 기사 기기에 알린다. 같은 업무를 두 번 누르면 '이미 됨'(sync 4-5).
       const p = envelope.payload;
       const o = findOrder(state, orderIdOfTask(p.taskId));
-      if (!o || collectDone(o)) return rejected('차량이 받을 반납이 없습니다.');
-      if (openPins(state).some((pin) => pin.orderId === o.id)) return nothing('이미 빨리 확인을 보냈습니다.');
-      state.pins.push({ id: 'pin' + (state.pins.length + 1), orderId: o.id, at: o.giveBack.at, note: p.note ?? '매장 요청', status: 'requested' });
+      if (!o || collectDone(o)) return rejected('차량 수거 대상 없음');
+      if (openPins(state).some((pin) => pin.orderId === o.id)) return nothing('긴급 요청 완료');
+      state.pins.push({ id: 'pin' + (state.pins.length + 1), orderId: o.id, at: o.giveBack.at, ...(p.note ? { note: p.note } : {}), status: 'requested' });
       return done;
     }
     case 'notification.ack': {
       const p = envelope.payload;
       const pin = state.pins.find((x) => x.id === p.notificationId);
-      if (!pin) return rejected('이 알림을 찾을 수 없습니다.');
-      if (pin.status === 'acknowledged') return nothing('이미 확인했습니다.');
+      if (!pin) return rejected('알림 없음');
+      if (pin.status === 'acknowledged') return nothing('확인 완료');
       pin.status = 'acknowledged';
       return done;
     }
@@ -168,16 +168,16 @@ function run(state: FxState, envelope: AnyCommandEnvelope, now: number): Result 
       // 방문 결과(못 받음): 기록을 쌓고, 다시 갈 때가 있으면 약속을 그때로 옮긴다(목록의 그 반납 타임 · 그날로).
       const p = envelope.payload;
       const o = findOrder(state, orderIdOfTask(p.taskId));
-      if (!o) return rejected('이 업무를 찾을 수 없습니다.');
+      if (!o) return rejected('업무 없음');
       const outcomeKey = p.outcomeKey;
-      if (!isVisitOutcome(outcomeKey)) return rejected('모르는 방문 결과입니다.');
+      if (!isVisitOutcome(outcomeKey)) return rejected('등록되지 않은 사유');
       const retryAt = p.retry?.at ? Date.parse(p.retry.at) : undefined;
       o.visits = [...(o.visits ?? []), { at: now, outcomeKey, beforeAt: o.giveBack.at, ...(retryAt !== undefined ? { retryAt } : {}) }];
       if (retryAt !== undefined && Number.isFinite(retryAt)) o.giveBack = { ...o.giveBack, at: retryAt };
       return done;
     }
     default:
-      return rejected('체험 자료에서는 아직 할 수 없는 일입니다.');
+      return rejected('체험판 미지원');
   }
 }
 
@@ -191,11 +191,11 @@ export function applyCommand(state: FxState, envelope: AnyCommandEnvelope, now: 
   const base = { requestId: envelope.requestId, asOfRev: envelope.basis.rev, epoch: state.epoch, changes: [] };
   if (envelope.basis.epoch !== state.epoch) {
     // 체험 자료를 처음으로 되돌린 뒤 옛 창에서 누른 것.
-    return { ...base, outcome: 'conflict', rev: state.rev, rebased: false, error: { code: 'EPOCH_CHANGED', message: '자료가 처음으로 되돌려졌습니다. 창을 닫고 다시 열어 주세요.' } };
+    return { ...base, outcome: 'conflict', rev: state.rev, rebased: false, error: { code: 'EPOCH_CHANGED', message: '체험 자료 초기화됨 · 재시도 필요' } };
   }
   // 돈 명령은 창이 본 받을 돈(expect)과 함께 와야 한다(sync 4-2). 없으면 적용하지 않는다.
   if (MONEY_COMMANDS.has(envelope.type) && envelope.expect?.dueAmount === undefined) {
-    return { ...base, outcome: 'rejected', rev: state.rev, rebased: false, error: { code: 'EXPECT_REQUIRED', message: '받을 돈을 확인하지 못해 수납하지 않았습니다. 창을 닫고 다시 열어 주세요.' } };
+    return { ...base, outcome: 'rejected', rev: state.rev, rebased: false, error: { code: 'EXPECT_REQUIRED', message: '받을 금액 미확인 · 미수납 · 재시도 필요' } };
   }
   const result = run(state, envelope, now);
   if (result.outcome === 'applied') state.rev += 1;

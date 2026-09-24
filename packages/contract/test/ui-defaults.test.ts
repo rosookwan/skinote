@@ -89,7 +89,7 @@ describe('ui-defaults.json', () => {
     expect(narrow.device_class_key).toBe('pos');
   });
 
-  it('접수증의 빨리 확인은 열린 차량 업무가 있을 때만(has_open_tasks)', () => {
+  it('접수증의 긴급 요청은 열린 차량 업무가 있을 때만(has_open_tasks)', () => {
     const slip = resolveLedgerView(uiDefaults.ledger_views, 'order_slip', 'pos')!;
     expect(availableActions(slip.actions, ['has_open_tasks']).map((a) => a.action_key)).toContain('pin');
     expect(availableActions(slip.actions, []).map((a) => a.action_key)).not.toContain('pin');

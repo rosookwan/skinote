@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>매장 설정 · 가게 규칙 · 둘째 판 시안 V8</title>
+<title>매장 설정 · 운영 규칙 · 둘째 판 시안 V8</title>
 <link rel="stylesheet" href="base.css">
 <style>
-  /* V8 매장 설정 · 가게 규칙(spec.md 3-9). 틀은 2-1 나(장부형): 종이 한 장, 제목 · 탭 60 · 본문 408.
+  /* V8 매장 설정 · 운영 규칙(spec.md 3-9). 틀은 2-1 나(장부형): 종이 한 장, 제목 · 탭 60 · 본문 408.
      본문 = 위 여백 12 + 카드(폭 474)를 위에서 아래로 채우고 넘치면 오른쪽 칸으로(사이 16). 관리 화면도 pos 등급(16px · 52px).
-     그린 상태: 세 곳(리프트권 반납 · 리프트권 보증금 · 전날 장부로 치는 시각)을 바꾸고 아직 저장하지 않음.
+     그린 상태: 세 곳(리프트권 반납 · 리프트권 보증금 · 영업일 기준 시각)을 변경하고 아직 저장하지 않음.
      카드는 통째로만 쪽을 넘긴다(ui 4-3): 설치한 앱 높이(1024×569 본문 377, 1024×529 본문 337)에서는
-     1쪽 = 리프트권 반납 · 리프트권 보증금, 2쪽 = 리프트권 값 · 당일 취소 환불 · 전날 장부로 치는 시각, 바닥줄에 '‹ 1 / 2쪽 ›'. */
+     1쪽 = 리프트권 반납 · 리프트권 보증금, 2쪽 = 리프트권 결제 · 당일 취소 환불 · 영업일 기준 시각, 바닥줄에 '‹ 1 / 2쪽 ›'. */
 
   .v8-body {
     display: flex; flex-direction: column; flex-wrap: wrap; align-content: flex-start; gap: var(--sn-space-s) var(--sn-space-l);
@@ -25,12 +25,12 @@
   }
   .v8-card-title { display: flex; align-items: center; justify-content: space-between; gap: var(--sn-space-s); min-height: calc(var(--sn-font-min) * 1.75); }
   .v8-card-title > h2 { font-size: var(--sn-font-body); font-weight: 900; white-space: nowrap; }
-  /* 바꾼 카드의 이름표(아직 저장하지 않음). */
+  /* 변경한 카드의 이름표(미저장). */
   .v8-card .mk-tag { line-height: 1.5; }
   .v8-card .mk-note { line-height: 1.375; }
   .v8-card .mk-form { gap: var(--sn-space-s); }
   .v8-card .mk-form-label { font-size: var(--sn-font-min); }
-  /* 고르기와 값은 따로: '받음 | 안 받음 | 1매 5,000원 ›'. 값 버튼은 고르기가 아니라 금액 숫자판을 연다(남색 바탕이 되지 않음). */
+  /* 고르기와 값은 따로: '사용 | 미사용 | 1매 5,000원 ›'. 값 버튼은 고르기가 아니라 금액 숫자판을 연다(남색 바탕이 되지 않음). */
   .v8-card .mk-choice.is-two > small { font-weight: 700; }
   .v8-value { padding: 0 var(--sn-space-m); }
 
@@ -43,7 +43,7 @@
   .v8-card.is-row { flex-direction: row; align-items: center; justify-content: space-between; gap: var(--sn-space-l); }
   .v8-card.is-row .mk-choices { flex: 1 1 0; }
 
-  /* 전날 장부로 치는 시각의 예시 두 줄 + 마감 뒤 한 줄. */
+  /* 영업일 기준 시각의 예시 두 줄 + 마감 후 한 줄. */
   .v8-examples { display: flex; flex-direction: column; font-size: var(--sn-font-min); font-weight: 700; color: var(--sn-ink-soft); line-height: 1.375; white-space: nowrap; }
   .v8-examples b { font-weight: 900; color: var(--sn-ink); }
 
@@ -84,76 +84,76 @@
             <button type="button" role="tab" class="sn-tab" aria-selected="false">반납 타임</button>
             <button type="button" role="tab" class="sn-tab" aria-selected="false">요금 · 할인</button>
             <button type="button" role="tab" class="sn-tab" aria-selected="false">차량 · 직원</button>
-            <button type="button" role="tab" class="sn-tab" aria-selected="true">가게 규칙</button>
+            <button type="button" role="tab" class="sn-tab" aria-selected="true">운영 규칙</button>
           </div>
         </div>
 
         <div class="v8-body">
           <!-- 반납 카드: 반납 정책을 매장이 고르는 품목 종류마다 한 장(이름 = 종류 이름 + '반납'). 이 매장은 리프트권 하나. -->
           <section class="v8-card">
-            <div class="v8-card-title"><h2>리프트권 반납</h2><span class="mk-tag">바꿈</span></div>
+            <div class="v8-card-title"><h2>리프트권 반납</h2><span class="mk-tag">변경됨</span></div>
             <div class="mk-choices">
-              <button type="button" class="sn-button mk-choice" aria-pressed="true">꼭 돌려받음</button>
-              <button type="button" class="sn-button mk-choice" aria-pressed="false">주면 끝 · 돌아오면 적음</button>
+              <button type="button" class="sn-button mk-choice" aria-pressed="true">반납 필수</button>
+              <button type="button" class="sn-button mk-choice" aria-pressed="false">반납 선택 · 반납 시 기록</button>
             </div>
-            <p class="mk-note">꼭 돌려받으면 권이 돌아와야 그 팀 일이 끝납니다.</p>
+            <p class="mk-note">반납 필수 · 리프트권 반납 후 완료</p>
           </section>
 
-          <!-- 보증금 카드: 보증금 규칙마다 한 장(이름 = 규칙 이름, 단위 = 종류의 단위 '매'). 권종마다 다른 규칙이 있으면 '권종마다 다른 값 ›' 줄. -->
+          <!-- 보증금 카드: 보증금 규칙마다 한 장(이름 = 규칙 이름, 단위 = 종류의 단위 '매'). 권종마다 다른 규칙이 있으면 '권종별 금액 ›' 줄. -->
           <section class="v8-card">
-            <div class="v8-card-title"><h2>리프트권 보증금</h2><span class="mk-tag">바꿈</span></div>
+            <div class="v8-card-title"><h2>리프트권 보증금</h2><span class="mk-tag">변경됨</span></div>
             <div class="mk-form">
               <div class="mk-form-row">
                 <span class="mk-form-label">보증금</span>
                 <div class="mk-choices">
-                  <button type="button" class="sn-button mk-choice" aria-pressed="true">받음</button>
-                  <button type="button" class="sn-button mk-choice" aria-pressed="false">안 받음</button>
+                  <button type="button" class="sn-button mk-choice" aria-pressed="true">사용</button>
+                  <button type="button" class="sn-button mk-choice" aria-pressed="false">미사용</button>
                   <button type="button" class="sn-button v8-value">1매 5,000원 <span class="mk-more">›</span></button>
                 </div>
               </div>
               <div class="mk-form-row">
-                <span class="mk-form-label">받는 때</span>
+                <span class="mk-form-label">입금 시점</span>
                 <div class="mk-choices">
-                  <button type="button" class="sn-button mk-choice is-two" aria-pressed="true"><span>접수할 때</span><small>못 받으면 권을 줄 때</small></button>
-                  <button type="button" class="sn-button mk-choice" aria-pressed="false">권을 줄 때</button>
+                  <button type="button" class="sn-button mk-choice is-two" aria-pressed="true"><span>접수 시</span><small>미입금: 지급 시</small></button>
+                  <button type="button" class="sn-button mk-choice" aria-pressed="false">지급 시</button>
                 </div>
               </div>
               <div class="mk-form-row">
-                <span class="mk-form-label">안 돌아오면</span>
+                <span class="mk-form-label">미반납 시</span>
                 <div class="mk-choices">
-                  <button type="button" class="sn-button mk-choice" aria-pressed="true">보증금 안 돌려드림</button>
-                  <button type="button" class="sn-button mk-choice is-two" aria-pressed="false"><span>권 값 받음</span><small>보증금만큼 빼고</small></button>
+                  <button type="button" class="sn-button mk-choice" aria-pressed="true">보증금 몰수</button>
+                  <button type="button" class="sn-button mk-choice is-two" aria-pressed="false"><span>분실금 청구</span><small>보증금 공제</small></button>
                 </div>
               </div>
             </div>
           </section>
 
           <section class="v8-card is-page-2">
-            <div class="v8-card-title"><h2>리프트권 값 · 전화 예약</h2></div>
+            <div class="v8-card-title"><h2>리프트권 결제 · 전화 예약</h2></div>
             <div class="mk-choices">
               <button type="button" class="sn-button mk-choice" aria-pressed="true">선입금 전액</button>
-              <button type="button" class="sn-button mk-choice" aria-pressed="false">예약금만</button>
-              <button type="button" class="sn-button mk-choice" aria-pressed="false">당일에 받음</button>
+              <button type="button" class="sn-button mk-choice" aria-pressed="false">예약금</button>
+              <button type="button" class="sn-button mk-choice" aria-pressed="false">당일 결제</button>
             </div>
           </section>
 
           <section class="v8-card is-row is-page-2">
             <div class="v8-card-title"><h2>당일 취소 환불</h2></div>
             <div class="mk-choices">
-              <button type="button" class="sn-button mk-choice" aria-pressed="true">환불함</button>
-              <button type="button" class="sn-button mk-choice" aria-pressed="false">환불 안 함</button>
+              <button type="button" class="sn-button mk-choice" aria-pressed="true">환불</button>
+              <button type="button" class="sn-button mk-choice" aria-pressed="false">환불 없음</button>
             </div>
           </section>
 
           <section class="v8-card is-page-2">
-            <div class="v8-card-title"><h2>전날 장부로 치는 시각</h2><span class="mk-tag">바꿈</span></div>
+            <div class="v8-card-title"><h2>영업일 기준 시각</h2><span class="mk-tag">변경됨</span></div>
             <div class="mk-choices">
-              <button type="button" class="sn-button mk-choice" aria-pressed="false">자정</button>
-              <button type="button" class="sn-button mk-choice" aria-pressed="false">새벽 3시</button>
-              <button type="button" class="sn-button mk-choice" aria-pressed="true">새벽 6시</button>
-              <button type="button" class="sn-button mk-choice" aria-pressed="false">다른 시각</button>
+              <button type="button" class="sn-button mk-choice" aria-pressed="false">00:00</button>
+              <button type="button" class="sn-button mk-choice" aria-pressed="false">03:00</button>
+              <button type="button" class="sn-button mk-choice" aria-pressed="true">06:00</button>
+              <button type="button" class="sn-button mk-choice" aria-pressed="false">직접 입력</button>
             </div>
-            <p class="v8-examples"><span>27일 00:15 반납 → <b>26일 장부</b></span><span>27일 07:00 반납 → <b>27일 장부</b></span><span>마감한 뒤에 온 것은 다음 마감에 셉니다.</span></p>
+            <p class="v8-examples"><span>27일 00:15 반납 → <b>26일 장부</b></span><span>27일 07:00 반납 → <b>27일 장부</b></span><span>마감 후 기록 · 다음 마감 반영</span></p>
           </section>
         </div>
       </section>
@@ -162,8 +162,8 @@
     <footer class="sn-footer">
       <div class="sn-footer-metrics">
         <div class="pos-footer-back">
-          <button type="button" class="sn-button" aria-label="관리로 돌아가기"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m15 6-6 6 6 6"/></svg><span>관리</span></button>
-          <span class="sn-fit">바꾼 곳 3 · 저장하면 다음 기록부터 바뀝니다</span>
+          <button type="button" class="sn-button" aria-label="관리"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m15 6-6 6 6 6"/></svg><span>관리</span></button>
+          <span class="sn-fit">변경 3건 · 다음 기록부터 적용</span>
         </div>
       </div>
       <nav class="sn-pager sn-footer-pager v8-pager" aria-label="1 / 2쪽">
@@ -171,7 +171,7 @@
         <span class="sn-pager-text">1 / 2쪽</span>
         <button type="button" class="sn-pager-button" aria-label="다음 쪽"><svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 6 6 6-6 6"/></svg></button>
       </nav>
-      <button type="button" class="sn-primary" data-primary="true">저장 · 3곳</button>
+      <button type="button" class="sn-primary" data-primary="true">저장 · 3건</button>
     </footer>
   </div>
 </div>

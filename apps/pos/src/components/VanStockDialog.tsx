@@ -1,5 +1,5 @@
-// 차에 있는 것(ui 6-5): 차량에 실린 장비의 합과 팀별로 누구 것인지. 읽기 모델(vehicleLoad)을 그리기만 한다.
-// 팀 줄은 잰 창 높이로 쪽을 나눈다(스크롤 없음). 수가 없으면 한 문장.
+// 차량 재고(ui 6-5): 차량에 실린 장비의 합과 팀별로 누구 것인지. 읽기 모델(vehicleLoad)을 그리기만 한다.
+// 팀 줄은 잰 창 높이로 쪽을 나눈다(스크롤 없음). 수가 없으면 '입고 대상 없음'.
 import type { VehicleLoad } from '@skinote/contract';
 import { confirmWindow } from '@skinote/layout';
 import { Pager, TextFit, formatItem, useUi } from '@skinote/ui';

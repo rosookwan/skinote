@@ -67,6 +67,12 @@ export function confirmEnvelope(draft: AnyCommandDraft, command: ConfirmCommand,
   return draftToEnvelope(draft, {}, withChoices(command, qty, method));
 }
 
+/** 주 버튼 글: 초안의 동작 이름에, 수량 −/+가 있으면 지금 수량을 붙인다('지급 처리 · 2개', 수를 바꾸면 따라 바뀜). */
+export function confirmText(view: ConfirmDraftView, qty: number | null): string {
+  const label = view.confirmLabel ?? view.title;
+  return view.quantity && qty !== null ? say('confirmQty', { label, n: qty, unit: view.quantity.unit }) : label;
+}
+
 export function useConfirmFlow(): ConfirmFlow {
   const client = useClient();
   const [request, setRequest] = useState<ConfirmRequest | null>(null);
@@ -136,7 +142,7 @@ export function useConfirmFlow(): ConfirmFlow {
           title={view.title}
           summary={[...(request?.lead ? [request.lead] : []), ...view.summary]}
           {...(view.quantity && qty !== null ? { quantity: { ...view.quantity, value: qty }, onQuantityChange: setQty } : {})}
-          confirmLabel={view.confirmLabel ?? view.title}
+          confirmLabel={confirmText(view, qty)}
           onConfirm={confirm}
           onClose={close}
           busy={busy}
@@ -163,24 +169,27 @@ export function useConfirmFlow(): ConfirmFlow {
 
 /**
  * 도장 칸을 눌렀을 때(장부 · 접수증 · 수거 목록 같음). 서버가 알림(pressNote)을 붙였으면 창 대신 그 문장과 대신 할 동작(차량이 할 도장,
- * 이 기기가 찍지 않는 도장, 보냄 대기). 그 밖에는 상태로: 할 일 · 일부 → 그 단계의 확인 창, 먼저 할 일 → 막고 있는 단계의 창,
- * 끝 → 찍은 시각, 예정 → 한 문장과 '지금 수납'.
+ * 이 기기가 찍지 않는 도장, 전송 대기, 다른 팀 결제 예정). 그 밖에는 상태로: 미처리 · 부분 → 그 단계의 확인 창, 대기 → 막고 있는
+ * 단계의 창(첫 줄에 '반납 불가 · 지급 대기'), 완료 → '지급 완료 · 09:26', 예정 → 한 줄('이정호 팀 결제 예정')과 '직접 수납'.
+ * 알림 창 제목은 단계 이름 + 팀('반납 · 김민재 팀')이다. 확인 창 제목(동작 이름 + 팀)과 같은 모양.
  */
 export function pressStamp(
   flow: ConfirmFlow,
   steps: ReadonlyMap<string, StampStepRow>,
   timezone: string,
-  target: { orderId: string; lineIds?: string[]; taskId?: string },
+  target: { orderId: string; lineIds?: string[]; taskId?: string; teamName?: string },
   cell: StampCell,
   dispatch: (actionKey: ActionKey) => void,
 ): void {
   const step = steps.get(cell.stepKey);
   if (!step) return;
-  const openStep = (actionKey: StampStepRow['action_key'], lead?: string) => flow.open({ ...target, actionKey, ...(lead ? { lead } : {}) });
+  const { teamName, ...draftTarget } = target;
+  const title = teamName ? say('noticeTitle', { label: step.label, name: teamName }) : step.label;
+  const openStep = (actionKey: StampStepRow['action_key'], lead?: string) => flow.open({ ...draftTarget, actionKey, ...(lead ? { lead } : {}) });
   if (cell.pressNote) {
     const action = cell.pressNote.action;
     flow.notify({
-      title: step.label,
+      title,
       lines: cell.pressNote.lines,
       ...(action ? { actions: [{ label: action.label, onPress: () => { flow.notify(null); dispatch(action.actionKey); } }] } : {}),
     });
@@ -193,21 +202,22 @@ export function pressStamp(
       return;
     case 'blocked': {
       const blocker = cell.blockedBy ? steps.get(cell.blockedBy.stepKey) : undefined;
-      const message = (cell.blockedBy?.message ?? say('blockedDefault')) + '.';
+      // 까닭은 짧은 표시('반납 불가 · 지급 대기')라 마침표를 붙이지 않는다.
+      const message = cell.blockedBy?.message ?? say('blockedDefault');
       if (blocker && blocker.key !== step.key) openStep(blocker.action_key, message);
-      else flow.notify({ title: step.label, lines: [message] });
+      else flow.notify({ title, lines: [message] });
       return;
     }
     case 'done':
-      flow.notify({ title: actionLabel(step.action_key), lines: [cell.at ? say('stampedAt', { time: formatTime(cell.at, timezone) }) : say('stamped')] });
+      flow.notify({ title, lines: [cell.at ? say('stampedAt', { label: step.label, time: formatTime(cell.at, timezone) }) : say('stamped', { label: step.label })] });
       return;
     case 'delegated':
-      flow.notify({ title: step.label, lines: [say('delegatedTo', { who: cell.delegatedTo ?? say('vehicle') })] });
+      flow.notify({ title, lines: [say('delegatedTo', { who: cell.delegatedTo ?? say('vehicle') })] });
       return;
     case 'scheduled':
       flow.notify({
-        title: step.label,
-        lines: [say('scheduledNote', { note: cell.scheduledNote ?? say('scheduledDefault') }), say('payNowHint')],
+        title,
+        lines: [say('scheduledNote', { note: cell.scheduledNote ?? say('scheduledDefault') })],
         actions: [{ label: say('payNow'), onPress: () => openStep(step.action_key) }],
       });
       return;

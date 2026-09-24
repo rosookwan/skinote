@@ -7,6 +7,7 @@ import { BOUNDARY_RULES, findBoundaryViolations } from '../../../scripts/check-i
 import { afterFailure, type LiveState } from '../src/app/client.tsx';
 import { stepButton } from '../src/app/labels.ts';
 import { APP_STRINGS_KO, say } from '../src/app/strings.ts';
+import { confirmText } from '../src/components/ConfirmFlow.tsx';
 import { choicesPerPage } from '../src/components/NoticeDialog.tsx';
 import { laterThanNow } from '../src/components/VisitResultDialog.tsx';
 import { kstAt } from '../src/fixture/time.ts';
@@ -41,7 +42,7 @@ describe('해시 경로', () => {
 const r = (id: string, dueAt: string): LedgerRow => ({ id, rank: id, dueAt, finished: false, cells: {} });
 
 describe('자리 지키기', () => {
-  it('다음 약속이 바뀐 줄은 제자리에 두고 자리 바뀜 표시, 새 줄은 끝에, 없어진 줄은 빠진다', () => {
+  it('다음 일정이 바뀐 줄은 제자리에 두고 순서 변경 표시, 새 줄은 끝에, 없어진 줄은 빠진다', () => {
     const first = keepPositions([r('a', '12:00'), r('b', '16:00'), r('c', '16:30')], null, 'k1');
     expect(first.rows.map((x) => x.id)).toEqual(['a', 'b', 'c']);
     // b에 도장을 찍어 다음 약속이 22:00이 됨 → 서버 순서는 a · c · b, d가 새로 생김.
@@ -62,13 +63,20 @@ describe('자리 지키기', () => {
 
 describe('버튼 이름', () => {
   it('동작 이름 + 읽기 모델이 준 수', () => {
-    expect(stepButton('stamp.issue', { count: 6 })).toEqual({ label: '지급 도장 · 6개', alts: ['지급 도장 · 6개', '지급 도장'] });
-    expect(stepButton('stamp.pay', { amount: 120_000 }).label).toBe('수납 도장 · 120,000원');
+    expect(stepButton('stamp.issue', { count: 6 })).toEqual({ label: '지급 처리 · 6개', alts: ['지급 처리 · 6개', '지급 처리'] });
+    expect(stepButton('stamp.pay', { amount: 120_000 }).label).toBe('수납 처리 · 120,000원');
     expect(stepButton('new_order', undefined)).toEqual({ label: '새 접수', alts: ['새 접수'] });
-    // 권(매)이 섞이면 확인 창과 같은 수: '지급 도장 · 6개 · 3매'. 좁으면 매 → 개 순으로 뺀다.
+    // 권(매)이 섞이면 확인 창과 같은 수: '지급 처리 · 6개 · 3매'. 좁으면 매 → 개 순으로 뺀다.
     expect(stepButton('stamp.issue', { count: 6, units: [{ unit: '매', qty: 3 }] })).toEqual({
-      label: '지급 도장 · 6개 · 3매', alts: ['지급 도장 · 6개 · 3매', '지급 도장 · 6개', '지급 도장'],
+      label: '지급 처리 · 6개 · 3매', alts: ['지급 처리 · 6개 · 3매', '지급 처리 · 6개', '지급 처리'],
     });
+  });
+
+  it('수량 −/+가 있는 확인 창의 주 버튼은 동작 이름 + 지금 수량(수를 바꾸면 따라 바뀜)', () => {
+    const view = { basis: { epoch: 'e', rev: 1 }, title: '지급 처리 · 이정호 팀', summary: [], confirmLabel: '지급 처리', quantity: { value: 2, min: 1, max: 2, unit: '개' } };
+    expect(confirmText(view, 2)).toBe('지급 처리 · 2개');
+    expect(confirmText(view, 1)).toBe('지급 처리 · 1개');
+    expect(confirmText({ ...view, quantity: undefined, confirmLabel: '지급 처리 · 6개' }, null)).toBe('지급 처리 · 6개');
   });
 });
 
@@ -86,7 +94,7 @@ describe('방문 결과 판의 시각(자정 넘은 야간 수거)', () => {
   });
 });
 
-describe('고르기 판의 쪽(스크롤 없음)', () => {
+describe('선택 판의 쪽(스크롤 없음)', () => {
   it('창 높이로 한 쪽의 버튼 수를 센다: 1024×600 포스는 두 칸 × 줄 수, 휴대폰은 그보다 적다', () => {
     const pos = DEVICE_PROFILES.pos;
     const phone = DEVICE_PROFILES.driver_phone;
@@ -109,7 +117,7 @@ describe('앱 문구 표', () => {
       expect(text.replace(/\{\w+\}/g, '')).not.toMatch(/[A-Za-z]/);
       expect(text).not.toContain('…');
     }
-    expect(say('notFound', { last4: '0030' })).toBe('끝 4자리가 0030인 팀이 없습니다');
+    expect(say('notFound', { last4: '0030' })).toBe('끝 4자리 0030 · 해당 팀 없음');
     // @ts-expect-error 값이 빠진 자리
     expect(() => say('teamName')).toThrow('{name}');
   });

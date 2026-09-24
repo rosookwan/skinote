@@ -30,7 +30,7 @@ describe('접수 확정 창(ui 4-5)', () => {
     expect(confirmWindow({ width: 1024, height: 768 }, SPEC, 4, 4, 3).pageCount).toBe(2);
   });
 
-  it('875×600: 창 폭 811 → 수단 버튼 6개(720px)가 들어간다(빠른 수단 4 + 나중에 + 다른 수단)', () => {
+  it('875×600: 창 폭 811 → 수단 버튼 6개(720px)가 들어간다(빠른 수단 4 + 후불 + 기타)', () => {
     const w = confirmWindow({ width: 875, height: 600 }, SPEC, 3, 4);
     expect(w.widthPx).toBe(811);
     expect(w.methodButtonsFit).toBeGreaterThanOrEqual(6);

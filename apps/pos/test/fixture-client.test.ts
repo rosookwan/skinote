@@ -68,7 +68,7 @@ describe('체험 자료(시안의 하루)', () => {
     expect(AREAS.find((a) => a.label === '꽃마을')?.places.map((p) => p.label)).toContain('들국화');
   });
 
-  it('오늘 대여 장부: 15:40, 늦은 줄이 맨 위, 다음 약속 순, 끝난 팀은 맨 뒤', async () => {
+  it('오늘 대여 장부: 15:40, 지연 줄이 맨 위, 다음 일정 순, 완료 팀은 맨 뒤', async () => {
     const { client } = setup();
     const ledger = await client.ledgerView('day_ledger', { tabKey: 'all' });
     expect(ledger.serverTime).toBe(at(15, 40));
@@ -86,7 +86,7 @@ describe('체험 자료(시안의 하루)', () => {
     expect(ledger.nightPrep).toBeUndefined();
   });
 
-  it('박준호 팀 한 줄: 수령 16:00, 반납 약속 22:00 설천 주차장 · 차량, 미수 120,000원(검정), 도장 지급 · 반납(먼저 할 일) · 수납(일부)', async () => {
+  it('박준호 팀 한 줄: 수령 16:00, 반납 일정 22:00 설천 주차장 · 차량, 미수 120,000원(검정), 도장 지급 · 반납(대기) · 수납(부분)', async () => {
     const { client } = setup();
     const r = row(await client.ledgerView('day_ledger', {}), 'o22');
     expect(r.dueAt).toBe(at(16, 0));
@@ -97,11 +97,11 @@ describe('체험 자료(시안의 하루)', () => {
     expect(money(r)).toMatchObject({ alts: ['미수 120,000원', '120,000원'], stacked: { over: '미수', main: '120,000원' }, tone: 'ink' });
     expect(money(r).lateAt).toBeUndefined();
     expect(stamp(r, 'stamp:issue')).toEqual({ stepKey: 'issue', state: 'todo' });
-    expect(stamp(r, 'stamp:return')).toMatchObject({ stepKey: 'return', state: 'blocked', blockedBy: { stepKey: 'issue' } });
+    expect(stamp(r, 'stamp:return')).toMatchObject({ stepKey: 'return', state: 'blocked', blockedBy: { stepKey: 'issue', message: '반납 불가 · 지급 대기' } });
     expect(stamp(r, 'stamp:pay')).toEqual({ stepKey: 'pay', state: 'partial' });
   });
 
-  it('여러 경우: 늦은 미수(빨강 기준 시각), 차량 배달은 적재부터, 다른 팀이 결제, 차량 반납은 차량이 받음', async () => {
+  it('여러 경우: 지연 미수(빨강 기준 시각), 차량 배달은 적재부터, 다른 팀 결제, 차량 반납은 차량 수거', async () => {
     const { client } = setup();
     const ledger = await client.ledgerView('day_ledger', {});
     const late = row(ledger, 'o27');
@@ -114,13 +114,15 @@ describe('체험 자료(시안의 하루)', () => {
     expect(stamp(row(ledger, 'o21'), 'stamp:pay')).toEqual({ stepKey: 'pay', state: 'done', at: at(9, 5) });
     expect(money(row(ledger, 'o36'))).toMatchObject({ alts: ['이정호 팀 결제 예정', '결제 예정'], tone: 'blue' });
     expect(stamp(row(ledger, 'o36'), 'stamp:pay')).toMatchObject({ state: 'scheduled', scheduledNote: '이정호 팀 결제 예정' });
-    // 미수는 이 팀 몫만: 다른 팀 몫까지 받을 팀의 합은 '받을 돈'(미수 두 가지가 보이지 않게).
-    expect(money(row(ledger, 'o32'))).toMatchObject({ alts: ['미수 90,000원 · 다른 팀 몫 60,000원', '받을 돈 150,000원', '150,000원'], stacked: { over: '받을 돈', main: '150,000원' } });
+    // 예정 도장을 누르면: 누가 낼지 한 줄과 '직접 수납 · 금액'(이 팀이 지금 직접 낼 때, 동작 이름 + 금액).
+    expect(stamp(row(ledger, 'o36'), 'stamp:pay').pressNote).toEqual({ lines: ['이정호 팀 결제 예정'], action: { actionKey: 'stamp.pay', label: '직접 수납 · 60,000원' } });
+    // 미수는 이 팀 몫만: 다른 팀 몫(대납)까지 받을 팀의 합은 '받을 금액'(미수 두 가지가 보이지 않게).
+    expect(money(row(ledger, 'o32'))).toMatchObject({ alts: ['미수 90,000원 · 대납 60,000원', '받을 금액 150,000원', '150,000원'], stacked: { over: '받을 금액', main: '150,000원' } });
     expect(stamp(row(ledger, 'o25'), 'stamp:return')).toMatchObject({ stepKey: 'return', state: 'delegated', at: at(22, 0), delegatedTo: '1호 차량' });
-    // 차량이 할 도장을 카운터에서 누르면: 누가 · 언제 하는지 한 문장과 '매장에서 반납'(서버가 정한 문장 · 동작).
+    // 차량이 할 도장을 카운터에서 누르면: 누가 · 언제 하는지 한 줄과 '매장 반납 처리'(서버가 정한 글 · 동작, 조사 없음).
     expect(stamp(row(ledger, 'o25'), 'stamp:return').pressNote).toEqual({
-      lines: ['1호 차량이 22:00에 받습니다.', '손님이 매장에 오셨으면 매장에서 도장을 찍습니다.'],
-      action: { actionKey: 'stamp.return', label: '매장에서 반납' },
+      lines: ['1호 차량 수거 예정 · 22:00'],
+      action: { actionKey: 'stamp.return', label: '매장 반납 처리' },
     });
     expect(stamp(row(ledger, 'o25'), 'stamp:issue')).toEqual({ stepKey: 'issue', state: 'done', at: at(9, 18) });
     expect(row(ledger, 'o39').cells['promise']).toMatchObject({ parts: [{ text: '21:50 꽃마을 들국화' }, { text: '차량' }, { text: '조기 반납' }] });
@@ -137,8 +139,8 @@ describe('체험 자료(시안의 하루)', () => {
   });
 });
 
-describe('대여 접수증과 남은 일 목록', () => {
-  it('박준호 팀: 칸 한 줄, 품목 네 줄(적재 칸 없음), 약속 두 줄, 돈 줄, 남은 일 — 지금은 장비 지급 6개', async () => {
+describe('대여 접수증과 처리 현황', () => {
+  it('박준호 팀: 칸 한 줄, 품목 네 줄(적재 칸 없음), 일정 두 줄, 돈 줄, 처리 현황 — 지금은 지급 처리 · 6개', async () => {
     const { client } = setup();
     const slip = await client.query('orderSlip', { orderId: 'o22' });
     expect(slip.receiptNo).toBe('261226-017');
@@ -152,11 +154,11 @@ describe('대여 접수증과 남은 일 목록', () => {
     ]);
     expect(slip.money).toMatchObject({ charged: 225_000, paid: 105_000, due: 120_000, payments: [{ amount: 105_000, methodLabel: '계좌이체', date: '2026-12-24' }] });
     expect(slip.checklist.map((c) => [c.stepKey, c.state])).toEqual([['order', 'done'], ['issue', 'now'], ['pay', 'later'], ['return', 'later']]);
-    expect(slip.checklist[0]!.parts.map((p) => p.text)).toEqual(['접수', '전화 예약', '리프트권 105,000원 받음']);
+    expect(slip.checklist[0]!.parts.map((p) => p.text)).toEqual(['접수', '전화 예약', '리프트권 105,000원 수납']);
     expect(slip.checklist[1]!.parts.map((p) => p.text)).toEqual(['장비 지급']);
     // 품목은 둘째 줄(화면이 넘치면 '외 N종'으로 줄인다).
     expect(slip.checklist[1]!.items).toEqual([{ label: '스키', qty: 2 }, { label: '보드', qty: 1 }, { label: '헬멧', qty: 3 }, { label: '야간권', qty: 3, unit: '매' }]);
-    expect(slip.checklist[3]!.parts.map((p) => p.text)).toEqual(['반납', '오늘 22:00', '설천 주차장', '차량이 받음']);
+    expect(slip.checklist[3]!.parts.map((p) => p.text)).toEqual(['반납', '오늘 22:00', '설천 주차장', '차량 수거']);
     // 주 버튼의 수는 확인 창과 같은 셈(개 + 매).
     expect(slip.nextStep).toEqual({ stepKey: 'issue', actionKey: 'stamp.issue', figure: { count: 6, units: [{ unit: '매', qty: 3 }] } });
     expect(slip.activeConditions).toEqual(expect.arrayContaining(['partial_cancel_allowed', 'return_required', 'vehicle_return', 'has_due']));
@@ -168,15 +170,15 @@ describe('대여 접수증과 남은 일 목록', () => {
     expect(slip.lines[0]!.cells['amount']).toEqual({ renderer: 'money', alts: ['80,000원'], tone: 'ink' });
   });
 
-  it('차량 배달 팀(최하은): 적재 칸이 있고, 지금 할 일은 차량 적재', async () => {
+  it('차량 배달 팀(최하은): 적재 칸이 있고, 다음 처리는 차량 적재', async () => {
     const { client } = setup();
     const slip = await client.query('orderSlip', { orderId: 'o26' });
     expect(slip.lines[0]!.cells['stamp:load']).toMatchObject({ stamp: { stepKey: 'load', state: 'todo' } });
-    expect(slip.lines[0]!.cells['stamp:issue']).toMatchObject({ stamp: { state: 'blocked', blockedBy: { stepKey: 'load' } } });
+    expect(slip.lines[0]!.cells['stamp:issue']).toMatchObject({ stamp: { state: 'blocked', blockedBy: { stepKey: 'load', message: '지급 불가 · 적재 대기' } } });
     expect(slip.nextStep).toEqual({ stepKey: 'load', actionKey: 'stamp.load', figure: { count: 6 } });
   });
 
-  it('늦은 반납(김영희, 12:00 매장): 남은 일 · 약속 줄에 늦음의 기준 시각, 받을 돈이 없는 팀에는 수납 조건이 없다', async () => {
+  it('지연 반납(김영희, 12:00 매장): 처리 현황 · 일정 줄에 지연의 기준 시각, 받을 금액이 없는 팀에는 수납 조건이 없다', async () => {
     const { client } = setup();
     const slip = await client.query('orderSlip', { orderId: 'o27' });
     expect(slip.checklist.find((c) => c.stepKey === 'return')?.lateAt).toBe(at(12, 30));
@@ -186,7 +188,7 @@ describe('대여 접수증과 남은 일 목록', () => {
     expect(paid.activeConditions).toContain('has_items_out');
   });
 
-  it('다른 팀 몫까지 받을 팀(이정호): 미수는 이 팀 몫, 받을 돈은 합', async () => {
+  it('대납하는 팀(이정호): 미수는 이 팀 몫, 받을 금액은 합', async () => {
     const { client } = setup();
     const slip = await client.query('orderSlip', { orderId: 'o32' });
     expect(slip.money).toMatchObject({ due: 90_000, collectForOthers: 60_000, collectTotal: 150_000 });
@@ -199,12 +201,12 @@ describe('대여 접수증과 남은 일 목록', () => {
 });
 
 describe('확인 창 → 명령 → 도장', () => {
-  it('지급 도장: 초안이 남은 수를 모두 담고, 보내면 도장에 찍은 시각이 붙고, 다음 할 일이 수납이 된다', async () => {
+  it('지급 처리: 초안이 잔여 수를 모두 담고(안내 문장 없음), 보내면 도장에 처리 시각이 붙고, 다음 처리가 수납이 된다', async () => {
     const { client, pass } = setup();
     const view = await client.query('confirmDraft', { orderId: 'o22', actionKey: 'stamp.issue' });
-    expect(view.title).toBe('지급 도장 · 박준호 팀');
-    expect(view.summary[0]).toBe('스키 2 · 보드 1 · 헬멧 3 · 야간권 성인 3매');
-    expect(view.confirmLabel).toBe('지급 도장 찍기 · 6개 · 3매');
+    expect(view.title).toBe('지급 처리 · 박준호 팀');
+    expect(view.summary).toEqual(['스키 2 · 보드 1 · 헬멧 3 · 야간권 성인 3매']);
+    expect(view.confirmLabel).toBe('지급 처리 · 6개 · 3매');
     expect(view.command).toEqual({ type: 'stock.issue', payload: { orderId: 'o22', lines: [
       { lineId: 'o22-l1', quantity: 2 }, { lineId: 'o22-l2', quantity: 1 }, { lineId: 'o22-l3', quantity: 3 }, { lineId: 'o22-l4', quantity: 3 },
     ] } });
@@ -229,11 +231,12 @@ describe('확인 창 → 명령 → 도장', () => {
     expect(changes).toBe(1);
   });
 
-  it('한 줄 도장: 수량 −/+로 일부만 지급하면 칸은 일부(개수)', async () => {
+  it('한 줄 도장: 수량 −/+로 부분 지급하면 칸은 부분(개수)', async () => {
     const { client } = setup();
     const view = await client.query('confirmDraft', { orderId: 'o22', actionKey: 'stamp.issue', lineIds: ['o22-l1'] });
     expect(view.quantity).toEqual({ value: 2, min: 1, max: 2, unit: '개' });
-    expect(view.confirmLabel).toBe('지급 도장 찍기');
+    expect(view.summary).toEqual(['스키 · 잔여 2개']);
+    expect(view.confirmLabel).toBe('지급 처리');
     await confirmAndSend(client, view, { qty: 1 });
     const slip = await client.query('orderSlip', { orderId: 'o22' });
     expect(slip.lines[0]!.cells['stamp:issue']).toMatchObject({ stamp: { state: 'partial', progress: { done: 1, total: 2 } } });
@@ -241,10 +244,10 @@ describe('확인 창 → 명령 → 도장', () => {
     expect(stamp(r, 'stamp:issue')).toMatchObject({ state: 'partial', progress: { done: 1, total: 9 } });
   });
 
-  it('수납: 이정호 팀이 이서연 팀 몫까지 한 번에 내면 두 팀 모두 미수 0, 수단은 창에서 고른 것', async () => {
+  it('수납: 이정호 팀이 이서연 팀 몫까지 한 번에 내면 두 팀 모두 미수 0, 수단은 창에서 선택', async () => {
     const { client } = setup();
     const view = await client.query('confirmDraft', { orderId: 'o32', actionKey: 'stamp.pay' });
-    expect(view.summary).toEqual(['이정호 팀 90,000원', '이서연 팀 60,000원', '받을 돈 150,000원']);
+    expect(view.summary).toEqual(['미수 90,000원', '이서연 팀분 대납 60,000원', '받을 금액 150,000원']);
     expect(view.methods?.map((m) => m.label)).toEqual(['카드', '현금', '계좌이체']);
     expect(view.expect).toEqual({ dueAmount: 150_000 });
     const { envelope, outcome } = await confirmAndSend(client, view, { method: 'cash' });
@@ -255,10 +258,10 @@ describe('확인 창 → 명령 → 도장', () => {
     const ledger = await client.ledgerView('day_ledger', {});
     expect(stamp(row(ledger, 'o32'), 'stamp:pay')).toMatchObject({ state: 'done' });
     expect(stamp(row(ledger, 'o36'), 'stamp:pay')).toMatchObject({ state: 'done' });
-    expect(money(row(ledger, 'o36')).alts).toEqual(['수납 끝']);
+    expect(money(row(ledger, 'o36')).alts).toEqual(['수납 완료']);
   });
 
-  it('돈이 그사이 바뀌면 충돌, expect 없는 돈 명령은 거절, 받을 돈이 없으면 창 대신 한 문장', async () => {
+  it('돈이 그사이 바뀌면 충돌, expect 없는 돈 명령은 거절, 받을 금액이 없으면 창 대신 한 줄', async () => {
     const { client } = setup();
     const view = await client.query('confirmDraft', { orderId: 'o22', actionKey: 'pay' });
     // 창을 연 뒤 다른 카운터가 이 팀 돈을 일부 받았다: 이 창의 expect(120,000원)는 이제 맞지 않다.
@@ -267,38 +270,38 @@ describe('확인 창 → 명령 → 도장', () => {
     await confirmAndSend(client, { ...other, command: { type: 'payment.take', payload: { orderIds: ['o22'], amount: 20_000, methodKey: 'cash' } }, expect: { dueAmount: 120_000 } });
     const late = await client.command(confirmEnvelope(opened, view.command!, null, null));
     expect(late.outcome).toBe('conflict');
-    expect(late.error?.code).toBe('DUE_CHANGED');
+    expect(late.error).toEqual({ code: 'DUE_CHANGED', message: '받을 금액 변경됨 · 재시도 필요' });
     // 받을 돈을 확인하지 않은 돈 명령(expect 없음)은 적용하지 않는다.
     const bare = await client.command(plainEnvelope(view.command!, (await client.ledgerView('day_ledger', {})).basis));
     expect(bare.outcome).toBe('rejected');
     expect(bare.error?.code).toBe('EXPECT_REQUIRED');
     const paid = await client.query('confirmDraft', { orderId: 'o21', actionKey: 'pay' });
     expect(paid.command).toBeUndefined();
-    expect(paid.notice).toBe('받을 돈이 없습니다.');
+    expect(paid.notice).toBe('받을 금액 없음');
   });
 
-  it('적재 도장 뒤 차량 배달 팀의 지급 칸은 보라 차량 17:00', async () => {
+  it('적재 처리 뒤 차량 배달 팀의 지급 칸은 보라 차량 17:00', async () => {
     const { client } = setup();
     const view = await client.query('confirmDraft', { orderId: 'o26', actionKey: 'stamp.load' });
     expect(view.command).toMatchObject({ type: 'stock.load', payload: { taskId: 'deliver:o26' } });
     await confirmAndSend(client, view);
     const r = row(await client.ledgerView('day_ledger', {}), 'o26');
     expect(stamp(r, 'stamp:issue')).toMatchObject({ stepKey: 'issue', state: 'delegated', at: at(17, 0), delegatedTo: '1호 차량' });
-    expect(stamp(r, 'stamp:issue').pressNote?.action).toEqual({ actionKey: 'stamp.issue', label: '매장에서 지급' });
+    expect(stamp(r, 'stamp:issue').pressNote).toEqual({ lines: ['1호 차량 배달 예정 · 17:00'], action: { actionKey: 'stamp.issue', label: '매장 지급 처리' } });
   });
 
-  it('처음으로 되돌린 뒤 옛 창의 명령은 거절(epoch)', async () => {
+  it('초기화 뒤 옛 창의 명령은 거절(epoch)', async () => {
     const { client } = setup();
     const view = await client.query('confirmDraft', { orderId: 'o22', actionKey: 'stamp.issue' });
     client.reset();
     const { outcome } = await confirmAndSend(client, view);
     expect(outcome.outcome).toBe('conflict');
-    expect(outcome.error?.code).toBe('EPOCH_CHANGED');
+    expect(outcome.error).toEqual({ code: 'EPOCH_CHANGED', message: '체험 자료 초기화됨 · 재시도 필요' });
   });
 });
 
 describe('찾기 · 저장 · 체험 시계', () => {
-  it('끝 4자리로 찾기', async () => {
+  it('끝 4자리 찾기', async () => {
     const { client } = setup();
     expect((await client.query('findLast4', { last4: '0022' })).matches).toEqual([
       expect.objectContaining({ orderId: 'o22', teamName: '박준호', last4: '0022' }),
@@ -306,7 +309,7 @@ describe('찾기 · 저장 · 체험 시계', () => {
     expect((await client.query('findLast4', { last4: '9999' })).matches).toEqual([]);
   });
 
-  it('저장소에 남고 다른 창(새 클라이언트)이 이어서 읽는다. 처음으로 되돌리면 15:40 처음 자료', async () => {
+  it('저장소에 남고 다른 창(새 클라이언트)이 이어서 읽는다. 초기화하면 15:40 체험 자료', async () => {
     const storage = new MemoryStorage();
     const first = setup(storage);
     await confirmAndSend(first.client, await first.client.query('confirmDraft', { orderId: 'o22', actionKey: 'stamp.issue' }));
@@ -346,7 +349,7 @@ describe('찾기 · 저장 · 체험 시계', () => {
     expect(late.nightPrep).toBeUndefined();
   });
 
-  it('기사 수거 목록(다음 단계가 쓸 읽기 모델): 반납 타임 묶음, 빨리 확인 한 건', async () => {
+  it('기사 수거 목록(다음 단계가 쓸 읽기 모델): 반납 타임 묶음, 긴급 한 건', async () => {
     const { client } = setup();
     const list = await client.ledgerView('collection_list', { vehicleId: 'v1' });
     expect(list.groups.map((g) => g.label)).toEqual(['16:30 반납', '21:50 반납', '22:00 반납', '22:10 반납']);
@@ -355,12 +358,12 @@ describe('찾기 · 저장 · 체험 시계', () => {
   });
 });
 
-describe('수거 목록(C3) · 빨리 확인 · 기사 기기 연결', () => {
+describe('수거 목록(C3) · 긴급 · 기사 기기 연결', () => {
   const list = (client: FixtureClient, params: Parameters<FixtureClient['ledgerView']>[1] = {}) => client.ledgerView('collection_list', { vehicleId: 'v1', ...params });
   const metric = (result: LedgerViewResult, key: string) => result.metrics.find((m) => m.metricKey === key);
   const ids = (result: LedgerViewResult, group?: string) => result.rows.filter((r) => group === undefined || r.groupKey === group).map((r) => r.id);
 
-  it('읽기 모델: 반납 타임 묶음(짧은 이름), 장소 이름표, 받음 · 대기 · 남음, 차에 있는 것 없음, 등급 판', async () => {
+  it('읽기 모델: 반납 타임 묶음(짧은 이름), 장소 이름표, 완료 · 전송 대기 · 잔여, 차량 재고 없음, 등급 판', async () => {
     const { client } = setup();
     const tablet = await list(client);
     expect(tablet.groups.map((g) => [g.label, g.shortLabel, g.done, g.total])).toEqual([
@@ -382,11 +385,12 @@ describe('수거 목록(C3) · 빨리 확인 · 기사 기기 연결', () => {
     expect(ids(phone)).toEqual(ids(tablet));
   });
 
-  it('받음 도장: 확인 창 → stock.collect → 받음 시각 · 차에 있는 것 · 매장 입고 수, 매장 입고 뒤에는 0', async () => {
+  it('수거 처리: 확인 창 → stock.collect → 수거 시각 · 차량 재고 · 매장 입고 수, 매장 입고 뒤에는 0', async () => {
     const { client, pass } = setup();
     const view = await client.query('confirmDraft', { orderId: 'o25', taskId: 'collect:o25', actionKey: 'stamp.collect' });
-    expect(view.title).toBe('받음 도장 · 김민수 팀');
-    expect(view.confirmLabel).toBe('받음 도장 찍기 · 6개');
+    expect(view.title).toBe('수거 처리 · 김민수 팀');
+    expect(view.confirmLabel).toBe('수거 처리 · 6개');
+    expect(view.summary).toEqual(['스키 4 · 헬멧 2']);
     expect(view.command).toEqual({ type: 'stock.collect', payload: { taskId: 'collect:o25', lines: [{ lineId: 'o25-l1', quantity: 4 }, { lineId: 'o25-l2', quantity: 2 }] } });
     pass(60_000);
     expect((await confirmAndSend(client, view)).outcome.outcome).toBe('applied');
@@ -398,17 +402,17 @@ describe('수거 목록(C3) · 빨리 확인 · 기사 기기 연결', () => {
     expect(after.groups.find((g) => g.key === 's2200')).toMatchObject({ done: 1, total: 7 });
     expect(after.vehicleLoad?.byTask).toEqual([{ taskId: 'collect:o25', teamName: '김민수', last4: '0025', items: [{ label: '스키', qty: 4 }, { label: '헬멧', qty: 2 }] }]);
     const again = await client.query('confirmDraft', { taskId: 'collect:o25', actionKey: 'stamp.collect' });
-    expect(again.notice).toBe('이미 모두 받았습니다.');
+    expect(again.notice).toBe('수거 완료');
     const receive = await client.query('confirmDraft', { actionKey: 'receive_to_shop', vehicleId: 'v1' });
-    expect(receive).toMatchObject({ title: '매장 입고 · 1호 차량', confirmLabel: '매장 입고 · 6개', command: { type: 'stock.receive', payload: { vehicleId: 'v1', taskIds: ['collect:o25'] } } });
+    expect(receive).toMatchObject({ title: '매장 입고 · 1호 차량', summary: ['1팀 · 스키 4 · 헬멧 2'], confirmLabel: '매장 입고 · 6개', command: { type: 'stock.receive', payload: { vehicleId: 'v1', taskIds: ['collect:o25'] } } });
     await confirmAndSend(client, receive);
     const received = await list(client);
     expect(received.primaryFigure).toEqual({ count: 0 });
     expect(metric(received, 'vehicle_load')).toMatchObject({ items: [] });
-    expect((await client.query('confirmDraft', { actionKey: 'receive_to_shop', vehicleId: 'v1' })).notice).toBe('차에 받은 것이 없습니다.');
+    expect((await client.query('confirmDraft', { actionKey: 'receive_to_shop', vehicleId: 'v1' })).notice).toBe('입고 대상 없음');
   });
 
-  it('▲ · ▼ · 맨 위로는 한 반납 타임 안에서만, 시간순 되돌리기', async () => {
+  it('▲ · ▼ · 맨 위로는 한 반납 타임 안에서만, 시간순 정렬', async () => {
     const { client } = setup();
     const before = await list(client);
     const slot = ids(before, 's2200');
@@ -421,32 +425,35 @@ describe('수거 목록(C3) · 빨리 확인 · 기사 기기 연결', () => {
     // 다른 반납 타임의 줄을 기준으로는 옮기지 않는다.
     const other = await send({ type: 'route.move', payload: { taskId: slot[0]!, anchorTaskId: 'collect:o21', position: 'before' } });
     expect(other.outcome).toBe('rejected');
-    expect(other.error?.message).toBe('같은 반납 타임 안에서만 옮길 수 있습니다.');
-    // 시간순 되돌리기는 목록 전체가 바뀌므로 확인 창을 거친다(서버가 초안을 준다).
+    expect(other.error?.message).toBe('이동 불가 · 다른 반납 타임');
+    // 시간순 정렬은 목록 전체가 바뀌므로 확인 창을 거친다(서버가 초안을 준다).
     const reset = await client.query('confirmDraft', { actionKey: 'route_reset', vehicleId: 'v1' });
-    expect(reset).toMatchObject({ title: '시간순 되돌리기 · 1호 차량', confirmLabel: '되돌리기', command: { type: 'route.reset', payload: { vehicleId: 'v1', date: '2026-12-26' } } });
+    expect(reset).toMatchObject({ title: '시간순 정렬 · 1호 차량', summary: ['수동 순서 삭제 · 시간순 정렬', '긴급 줄 맨 위 유지'], confirmLabel: '시간순 정렬', command: { type: 'route.reset', payload: { vehicleId: 'v1', date: '2026-12-26' } } });
     expect((await confirmAndSend(client, reset)).outcome.outcome).toBe('applied');
     expect(ids(await list(client), 's2200')).toEqual(slot);
-    expect((await client.query('confirmDraft', { actionKey: 'route_reset', vehicleId: 'v1' })).notice).toBe('이미 약속 시각 순서입니다.');
+    expect((await client.query('confirmDraft', { actionKey: 'route_reset', vehicleId: 'v1' })).notice).toBe('이미 시간순');
   });
 
-  it('빨리 확인(카운터 → 기사): 확인 창 → 맨 위 고정 · 두 번은 이미 됨 · 기사 확인 · 받으면 사라짐', async () => {
+  it('긴급 요청(카운터 → 기사): 확인 창 → 맨 위 고정 · 두 번은 이미 됨 · 기사 확인 · 수거하면 사라짐', async () => {
     const { client } = setup();
     const slip = await client.query('orderSlip', { orderId: 'o31' });
     expect(slip.activeConditions).toContain('has_open_tasks');
     expect((await client.query('orderSlip', { orderId: 'o22' })).activeConditions).not.toContain('has_open_tasks');
     const view = await client.query('confirmDraft', { orderId: 'o31', actionKey: 'pin' });
-    expect(view).toMatchObject({ title: '빨리 확인 · 서지훈 팀', confirmLabel: '빨리 확인 보내기', command: { type: 'task.pin', payload: { taskId: 'collect:o31', note: '매장 요청' } } });
-    expect(view.summary[1]).toBe('1호 차량 수거 목록 맨 위에 고정하고 기사에게 알립니다.');
+    expect(view).toMatchObject({ title: '긴급 요청 · 서지훈 팀', confirmLabel: '긴급 요청', command: { type: 'task.pin', payload: { taskId: 'collect:o31' } } });
+    // 반납 일정에 메모가 없으면 긴급 줄에도 메모가 없다(뜻 없는 기본 글을 넣지 않음).
+    expect(view.command?.type === 'task.pin' ? view.command.payload.note : 'x').toBeUndefined();
+    expect(view.summary[0]).toBe('22:00 설천 주차장 · 서지훈 · 0031');
+    expect(view.summary[1]).toBe('1호 차량 수거 목록 맨 위 고정 · 기사 알림');
     await confirmAndSend(client, view);
     const pinned = await list(client);
     expect(pinned.pins?.map((p) => [p.taskId, p.status])).toEqual([['collect:o39', 'requested'], ['collect:o31', 'requested']]);
     expect(ids(pinned, 's2200')[0]).toBe('collect:o31');
-    expect((await client.query('orderSlip', { orderId: 'o31' })).promises.lines[1]!.parts.map((p) => p.text)).toContain('빨리 확인 보냄');
-    expect((await client.query('confirmDraft', { orderId: 'o31', actionKey: 'pin' })).notice).toBe('이미 보냈습니다. 기사 확인을 기다립니다.');
+    expect((await client.query('orderSlip', { orderId: 'o31' })).promises.lines[1]!.parts.map((p) => p.text)).toContain('긴급 요청');
+    expect((await client.query('confirmDraft', { orderId: 'o31', actionKey: 'pin' })).notice).toBe('긴급 요청 · 기사 확인 대기');
     const twice = await client.command(plainEnvelope({ type: 'task.pin', payload: { taskId: 'collect:o31' } }, pinned.basis));
-    expect(twice.outcome).toBe('superseded');
-    expect((await client.query('confirmDraft', { orderId: 'o28', actionKey: 'pin' })).notice).toBe('내일 09:00 수거라 오늘 수거 목록에 없습니다.');
+    expect(twice).toMatchObject({ outcome: 'superseded', error: { message: '긴급 요청 완료' } });
+    expect((await client.query('confirmDraft', { orderId: 'o28', actionKey: 'pin' })).notice).toBe('내일 09:00 수거 · 오늘 목록 제외');
     const pin = pinned.pins!.find((p) => p.taskId === 'collect:o31')!;
     await client.command(plainEnvelope({ type: 'notification.ack', payload: { notificationId: pin.pinId } }, pinned.basis));
     expect((await list(client)).pins?.find((p) => p.taskId === 'collect:o31')?.status).toBe('acknowledged');
@@ -454,7 +461,7 @@ describe('수거 목록(C3) · 빨리 확인 · 기사 기기 연결', () => {
     expect((await list(client)).pins?.map((p) => p.taskId)).toEqual(['collect:o39']);
   });
 
-  it('못 받음(방문 결과): 내일로 옮기면 오늘 목록에서 빠지고 장부 약속 · 확인 필요에 보인다', async () => {
+  it('수거 실패(방문 결과): 내일로 옮기면 오늘 목록에서 빠지고 장부 일정 · 확인 필요에 보인다', async () => {
     const { client } = setup();
     const basis = (await list(client)).basis;
     const retryAt = new Date(kstAt('2026-12-26', 1, 22, 0)).toISOString();
@@ -462,12 +469,29 @@ describe('수거 목록(C3) · 빨리 확인 · 기사 기기 연결', () => {
     expect(outcome.outcome).toBe('applied');
     expect(ids(await list(client))).not.toContain('collect:o34');
     expect(row(await client.ledgerView('day_ledger', {}), 'o34').cells['promise']).toMatchObject({ parts: [{ text: '내일 22:00 설천 주차장' }, { text: '차량' }] });
-    expect((await client.query('reviewList', {})).map((r) => r.message)).toContain('한동수 팀 고객 부재 · 내일 22:00에 다시 감');
+    expect((await client.query('reviewList', {})).map((r) => r.message)).toContain('한동수 팀 고객 부재 · 재방문 내일 22:00');
     const bad = await client.command(plainEnvelope({ type: 'task.visit', payload: { taskId: 'collect:o35', outcomeKey: 'nope' } }, basis));
     expect(bad.outcome).toBe('rejected');
   });
 
-  it('기사 기기 연결 끊김: 받음은 보냄 대기(점선 · 대기 수), 카운터에는 안 보이고, 매장 입고는 거절, 다시 이으면 보낸다', async () => {
+  it('수거 실패 뒤 오늘 다시 가면: 재방문만 있는 묶음은 재방문, 반납 타임에 섞이면 줄에 재방문', async () => {
+    const { client } = setup();
+    const basis = (await list(client)).basis;
+    const retryAt = new Date(kstAt('2026-12-26', 0, 23, 50)).toISOString();
+    await client.command(plainEnvelope({ type: 'task.visit', payload: { taskId: 'collect:o23', outcomeKey: 'customer_absent', retry: { date: '2026-12-26', at: retryAt } } }, basis));
+    const after = await list(client);
+    expect(after.groups.find((g) => g.key === 's2350')).toMatchObject({ label: '23:50 재방문', shortLabel: '23:50' });
+    expect(after.rows.find((r) => r.id === 'collect:o23')?.reviewNote).toBeUndefined();
+    expect(after.groups.find((g) => g.key === 's2200')?.label).toBe('22:00 반납');
+    // 반납 타임(22:00)으로 다시 가면 묶음은 '22:00 반납' 그대로이고 그 줄에 '재방문'.
+    const at22 = new Date(kstAt('2026-12-26', 0, 22, 0)).toISOString();
+    await client.command(plainEnvelope({ type: 'task.visit', payload: { taskId: 'collect:o21', outcomeKey: 'customer_absent', retry: { date: '2026-12-26', at: at22 } } }, after.basis));
+    const mixed = await list(client);
+    expect(mixed.groups.find((g) => g.key === 's2200')?.label).toBe('22:00 반납');
+    expect(mixed.rows.find((r) => r.id === 'collect:o21')?.reviewNote).toBe('재방문');
+  });
+
+  it('기사 기기 연결 끊김: 수거는 전송 대기(점선 · 전송 대기 수), 카운터에는 안 보이고, 매장 입고는 거절, 재연결하면 보낸다', async () => {
     const { client, pass } = setup();
     client.setDevice('driver');
     client.setOffline(true);
@@ -478,13 +502,13 @@ describe('수거 목록(C3) · 빨리 확인 · 기사 기기 연결', () => {
     expect(outcome.outcome).toBe('queued');
     expect((await client.command(envelope)).outcome).toBe('queued');
     expect(client.connection().pendingCount).toBe(1);
-    expect((await client.pending()).map((p) => [p.type, p.state, p.summary])).toEqual([['stock.collect', 'queued', '김민수 · 0025 받음 15:42']]);
+    expect((await client.pending()).map((p) => [p.type, p.state, p.summary])).toEqual([['stock.collect', 'queued', '김민수 · 0025 수거 15:42']]);
     const driver = await list(client);
     expect(stamp(row(driver, 'collect:o25'), 'stamp:collect')).toMatchObject({ stepKey: 'collect', state: 'done', at: at(15, 42), pending: true });
-    expect(stamp(row(driver, 'collect:o25'), 'stamp:collect').pressNote?.lines).toEqual(['15:42에 찍었습니다.', '연결이 끊겨 보냄 대기에 있습니다. 연결되면 보냅니다.']);
+    expect(stamp(row(driver, 'collect:o25'), 'stamp:collect').pressNote?.lines).toEqual(['15:42 처리 · 전송 대기']);
     expect([metric(driver, 'collected_count'), metric(driver, 'pending_count'), metric(driver, 'remaining_count')].map((m) => m && 'value' in m ? m.value : null)).toEqual([0, 1, 10]);
     const receive = await client.query('confirmDraft', { actionKey: 'receive_to_shop', vehicleId: 'v1' });
-    expect((await confirmAndSend(client, receive)).outcome.outcome).toBe('rejected');
+    expect((await confirmAndSend(client, receive)).outcome).toMatchObject({ outcome: 'rejected', error: { code: 'OFFLINE', message: '연결 끊김 · 연결 후 가능' } });
     client.setDevice('counter');
     expect(stamp(row(await list(client, { deviceClass: 'pos' }), 'collect:o25'), 'stamp:collect').state).toBe('todo');
     expect(client.connection()).toEqual({ online: true, pendingCount: 0 });
@@ -502,7 +526,7 @@ describe('수거 목록(C3) · 빨리 확인 · 기사 기기 연결', () => {
 });
 
 describe('줄의 능력 · 누를 수 없는 동작 · 도장 알림(서버가 정함)', () => {
-  it('수거 목록: 받은 줄의 못 받음, 묶음 첫 · 끝 줄의 ▲ · ▼, 빨리 확인으로 고정된 줄의 순서는 회색', async () => {
+  it('수거 목록: 수거 완료 줄의 수거 실패, 묶음 첫 · 끝 줄의 ▲ · ▼, 긴급으로 고정된 줄의 순서는 회색', async () => {
     const { client } = setup();
     const tablet = await client.ledgerView('collection_list', { vehicleId: 'v1' });
     const slot = tablet.rows.filter((r) => r.groupKey === 's2200');
@@ -511,22 +535,22 @@ describe('줄의 능력 · 누를 수 없는 동작 · 도장 알림(서버가 �
     expect(off(slot.at(-1)!)).toEqual(['move_down']);
     expect(off(slot[1]!)).toEqual([]);
     expect(off(row(tablet, 'collect:o39'))).toEqual(['move_down', 'move_top', 'move_up']);
-    expect(row(tablet, 'collect:o39').disabledActions?.[0]?.reason).toBe('빨리 확인으로 고정된 줄은 옮기지 않습니다.');
+    expect(row(tablet, 'collect:o39').disabledActions?.[0]?.reason).toBe('긴급 고정 · 이동 불가');
     expect(row(tablet, 'collect:o25').conditions).toEqual(expect.arrayContaining(['vehicle_return', 'has_open_tasks', 'has_items_out']));
-    expect(tablet.visitReasons?.map((r) => r.label)).toEqual(['고객 부재', '장소 변경', '물품을 받지 못함']);
+    expect(tablet.visitReasons?.map((r) => r.label)).toEqual(['고객 부재', '장소 변경', '물품 미준비']);
     await confirmAndSend(client, await client.query('confirmDraft', { taskId: 'collect:o25', actionKey: 'stamp.collect' }));
     const after = await client.ledgerView('collection_list', { vehicleId: 'v1' });
-    expect(row(after, 'collect:o25').disabledActions).toContainEqual({ actionKey: 'not_collected', reason: '이미 받았습니다.' });
+    expect(row(after, 'collect:o25').disabledActions).toContainEqual({ actionKey: 'not_collected', reason: '수거 완료' });
   });
 
-  it('카운터(포스 판)의 받음 도장은 기사가 찍는다: 창 대신 한 문장과 접수증 열기', async () => {
+  it('카운터(포스 판)의 수거 도장은 기사가 찍는다: 창 대신 한 줄과 접수증', async () => {
     const { client } = setup();
     const counter = await client.ledgerView('collection_list', { vehicleId: 'v1', deviceClass: 'pos' });
     expect(stamp(row(counter, 'collect:o25'), 'stamp:collect')).toMatchObject({
       state: 'todo',
       pressNote: {
-        lines: ['1호 차량 기사가 받으면 찍힙니다.', '손님이 매장에 직접 가져왔으면 접수증에서 반납 도장을 찍습니다.'],
-        action: { actionKey: 'open_slip', label: '접수증 열기' },
+        lines: ['1호 차량 수거 예정'],
+        action: { actionKey: 'open_slip', label: '접수증' },
       },
     });
     const driver = await client.ledgerView('collection_list', { vehicleId: 'v1', deviceClass: 'driver_tablet' });
@@ -552,7 +576,7 @@ describe('설정에 칸을 더하면 코드를 고치지 않아도 나온다(ui 
     return config;
   }
 
-  it('발권 도장 칸(규칙 ticket_secured)은 리프트권이 있는 팀에만 할 일, 장소 칸은 긴 이름과 짧은 이름', () => {
+  it('발권 도장 칸(규칙 ticket_secured)은 리프트권이 있는 팀에만 미처리, 장소 칸은 긴 이름과 짧은 이름', () => {
     const ctx = { state: state(), config: withExtraColumns(), now: DEMO_START_MS };
     const ledger = dayLedger(ctx, {});
     expect(stamp(row(ledger, 'o22'), 'stamp:ticket')).toEqual({ stepKey: 'ticket_secure', state: 'todo' });
@@ -568,7 +592,7 @@ describe('설정에 칸을 더하면 코드를 고치지 않아도 나온다(ui 
     expect(slip.lines[0]!.cells['qty']).toEqual({ renderer: 'text', parts: [{ text: '2', drop: 0 }] });
   });
 
-  it('수거 목록에 반납 도장 칸을 더하면 받음이 아니라 반납 규칙으로 채운다', () => {
+  it('수거 목록에 반납 도장 칸을 더하면 수거가 아니라 반납 규칙으로 채운다', () => {
     const config = structuredClone(defaultUiConfig());
     const tablet = config.ledgerViews.find((v) => v.key === 'collection_list' && v.device_class_key === 'driver_tablet')!;
     const collect = tablet.columns[0]!;

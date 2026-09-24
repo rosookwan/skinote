@@ -205,7 +205,7 @@ async function posScenes(page, shoot) {
   for (const d of '9999') await click(dialog.getByRole('button', { name: d, exact: true }));
   await click(dialog.getByRole('button', { name: '찾기' }));
   await shoot('05-find-none');
-  for (let i = 0; i < 4; i += 1) await click(dialog.getByRole('button', { name: '지우기' }));
+  for (let i = 0; i < 4; i += 1) await click(dialog.getByRole('button', { name: '정정' }));
   for (const d of '0022') await click(dialog.getByRole('button', { name: d, exact: true }));
   await click(dialog.getByRole('button', { name: '찾기' }));
   await page.waitForSelector('.sn-slip');
@@ -222,7 +222,7 @@ async function posScenes(page, shoot) {
 
   // 박준호 팀 지급 도장 → 확인 창 → 찍기 → 도장에 시각, 줄은 자리를 지킴
   const park = page.locator('tr.sn-row', { hasText: '박준호' });
-  await click(park.getByRole('button', { name: /^지급 할 일/ }));
+  await click(park.getByRole('button', { name: /^지급 미처리/ }));
   await shoot('08-confirm-issue');
   await click(dialog.locator('[data-primary="true"]'));
   await dialog.waitFor({ state: 'detached' });
@@ -250,7 +250,7 @@ async function posScenes(page, shoot) {
   // 품목 한 줄 도장(수량 −/+)
   await go('#/orders/o32', '.sn-slip');
   await shoot('14-slip-family-payer');
-  await click(page.locator('.sn-slip-items tr.sn-row').first().getByRole('button', { name: /^지급 할 일/ }));
+  await click(page.locator('.sn-slip-items tr.sn-row').first().getByRole('button', { name: /^지급 미처리/ }));
   await shoot('15-confirm-line-qty');
   await closeDialog();
   await go('#/orders/o26', '.sn-slip');
@@ -260,9 +260,9 @@ async function posScenes(page, shoot) {
 
   // 빨리 확인(N12): 서지훈 팀(22:00 설천 주차장, 차량 수거) 접수증의 옆 동작 → 확인 창 → 보내기 → 약속 줄에 '빨리 확인 보냄'
   await go('#/orders/o31', '.sn-slip');
-  const pinAction = page.locator('.pos-side').getByRole('button', { name: '빨리 확인' });
+  const pinAction = page.locator('.pos-side').getByRole('button', { name: '긴급 요청' });
   if (await pinAction.count()) await click(pinAction);
-  else { await click(page.locator('.pos-side').getByRole('button', { name: '더 보기' })); await click(dialog.getByRole('button', { name: '빨리 확인' })); }
+  else { await click(page.locator('.pos-side').getByRole('button', { name: '더 보기' })); await click(dialog.getByRole('button', { name: '긴급 요청' })); }
   await shoot('26-confirm-pin');
   await click(dialog.locator('[data-primary="true"]'));
   await dialog.waitFor({ state: 'detached' });
@@ -285,11 +285,11 @@ async function posScenes(page, shoot) {
   await shoot('30-collection-selected');
   await click(page.getByRole('toolbar').getByRole('button', { name: '위로' }));
   await shoot('31-collection-moved');
-  await click(page.getByRole('toolbar').getByRole('button', { name: '빨리 확인' }));
+  await click(page.getByRole('toolbar').getByRole('button', { name: '긴급 요청' }));
   await shoot('32-collection-confirm-pin');
   await closeDialog();
   await click(page.locator('tr.sn-row', { hasText: '이수진' }).locator('.sn-cell-open'));
-  await click(page.locator('tr.sn-row', { hasText: '김민재' }).getByRole('button', { name: /^받음 할 일/ }));
+  await click(page.locator('tr.sn-row', { hasText: '김민재' }).getByRole('button', { name: /^수거 미처리/ }));
   await shoot('33-collection-stamp-notice');
   await closeDialog();
 
@@ -308,14 +308,14 @@ async function posScenes(page, shoot) {
   else { await click(page.getByRole('button', { name: '더 보기' })); await click(dialog.getByRole('button', { name: '나가기' })); }
   await page.waitForSelector('.pos-card');
   await shoot('19-exit');
-  await click(page.getByRole('button', { name: '처음 자료로 되돌리기' }));
+  await click(page.getByRole('button', { name: '체험 자료 초기화', exact: true }));
   await shoot('20-exit-reset');
   await click(dialog.locator('[data-primary="true"]'));
 
   // 체험 시계: 21:10(야간 수거 준비 안내 · 늦은 줄), 알림, 22:10(마지막 반납 타임 뒤 → 주 버튼 마감)
-  for (let i = 0; i < 5; i += 1) await click(page.getByRole('button', { name: '1시간 앞으로' }));
-  for (let i = 0; i < 3; i += 1) await click(page.getByRole('button', { name: '10분 앞으로' }));
-  await click(page.getByRole('button', { name: '장부로 돌아가기' }));
+  for (let i = 0; i < 5; i += 1) await click(page.getByRole('button', { name: '+1시간', exact: true }));
+  for (let i = 0; i < 3; i += 1) await click(page.getByRole('button', { name: '+10분', exact: true }));
+  await click(page.getByRole('button', { name: '장부', exact: true }));
   await page.waitForSelector('.sn-row');
   await settle(page);
   await shoot('22-ledger-night-prep');
@@ -323,8 +323,8 @@ async function posScenes(page, shoot) {
   await shoot('23-alerts');
   await closeDialog();
   await go('#/exit', '.pos-card');
-  await click(page.getByRole('button', { name: '1시간 앞으로' }));
-  await click(page.getByRole('button', { name: '장부로 돌아가기' }));
+  await click(page.getByRole('button', { name: '+1시간', exact: true }));
+  await click(page.getByRole('button', { name: '장부', exact: true }));
   await page.waitForSelector('.sn-row');
   await settle(page);
   await shoot('24-ledger-after-last-slot');
@@ -367,14 +367,14 @@ async function driverScenes(page, shoot, counter) {
   await shoot('d04-moved-up');
 
   // 못 받음 → 방문 결과 판(모두 버튼): 고객 부재 → 날짜 보기 → 뒤로 → 오늘 다시 → 직접 입력 22:30 → 남기기
-  await click(bar.getByRole('button', { name: '못 받음' }));
+  await click(bar.getByRole('button', { name: '수거 실패' }));
   await shoot('d05-visit-reason');
   await click(dialog.getByRole('button', { name: '고객 부재' }));
   await shoot('d06-visit-when');
   await click(dialog.getByRole('button', { name: '날짜' }));
   await shoot('d07-visit-date');
-  await click(dialog.getByRole('button', { name: '뒤로' }));
-  await click(dialog.getByRole('button', { name: '오늘 다시' }));
+  await click(dialog.getByRole('button', { name: '이전', exact: true }));
+  await click(dialog.getByRole('button', { name: '오늘', exact: true }));
   await shoot('d08-visit-time');
   await click(dialog.getByRole('button', { name: '직접 입력' }));
   for (const d of '2230') await click(dialog.getByRole('button', { name: d, exact: true }));
@@ -387,7 +387,7 @@ async function driverScenes(page, shoot, counter) {
   await shoot('d11-after-visit');
 
   // 받음 도장: 확인 창 → 찍기 → '받음 15:4x'
-  await click(row('김민재').getByRole('button', { name: /^받음 할 일/ }));
+  await click(row('김민재').getByRole('button', { name: /^수거 미처리/ }));
   await shoot('d12-confirm-collect');
   await click(dialog.locator('[data-primary="true"]'));
   await dialog.waitFor({ state: 'detached' });
@@ -416,7 +416,7 @@ async function driverScenes(page, shoot, counter) {
   await shoot('d18-pin-acknowledged');
 
   // 차에 있는 것(메뉴) → 매장 입고(주 버튼, 보라) → 확인 창 → 입고
-  await headerAction('차에 있는 것');
+  await headerAction('차량 재고');
   await shoot('d19-van-stock');
   await closeDialog();
   await click(page.locator('.sn-footer [data-primary="true"]'));
@@ -431,24 +431,24 @@ async function driverScenes(page, shoot, counter) {
   await page.waitForSelector('.pos-card');
   await settle(page);
   await shoot('d22-exit-driver');
-  await click(page.getByRole('button', { name: '연결 끊기' }));
-  await click(page.getByRole('button', { name: '수거 목록으로' }));
+  await click(page.getByRole('button', { name: '연결 해제', exact: true }));
+  await click(page.getByRole('button', { name: '수거 목록', exact: true }));
   await page.waitForSelector('.sn-row');
   await settle(page);
-  await click(row('김민수').getByRole('button', { name: /^받음 할 일/ }));
+  await click(row('김민수').getByRole('button', { name: /^수거 미처리/ }));
   await click(dialog.locator('[data-primary="true"]'));
   await dialog.waitFor({ state: 'detached' });
   await settle(page);
   await shoot('d23-offline-pending');
-  await click(row('김민수').getByRole('button', { name: /^받음 끝/ }));
+  await click(row('김민수').getByRole('button', { name: /^수거 완료/ }));
   await shoot('d24-pending-notice');
   await closeDialog();
   await headerAction('나가기');
   await page.waitForSelector('.pos-card');
   await settle(page);
   await shoot('d25-exit-offline');
-  await click(page.getByRole('button', { name: /^다시 연결/ }));
-  await click(page.getByRole('button', { name: '수거 목록으로' }));
+  await click(page.getByRole('button', { name: /^재연결/ }));
+  await click(page.getByRole('button', { name: '수거 목록', exact: true }));
   await page.waitForSelector('.sn-row');
   await settle(page);
   await shoot('d26-after-sync');
@@ -459,9 +459,9 @@ async function driverScenes(page, shoot, counter) {
     await desk.waitForSelector('.sn-slip');
     await settle(desk);
     const deskDialog = desk.locator('[role="dialog"]');
-    const direct = desk.locator('.pos-side').getByRole('button', { name: '빨리 확인' });
+    const direct = desk.locator('.pos-side').getByRole('button', { name: '긴급 요청' });
     if (await direct.count()) await direct.first().click();
-    else { await desk.locator('.pos-side').getByRole('button', { name: '더 보기' }).first().click(); await deskDialog.getByRole('button', { name: '빨리 확인' }).first().click(); }
+    else { await desk.locator('.pos-side').getByRole('button', { name: '더 보기' }).first().click(); await deskDialog.getByRole('button', { name: '긴급 요청' }).first().click(); }
     await deskDialog.locator('[data-primary="true"]').first().click();
     await deskDialog.waitFor({ state: 'detached' });
   });

@@ -112,7 +112,7 @@ export function OrderSlipScreen({ orderId }: { orderId: string }) {
               nowMs={nowMs}
               itemsPage={itemsPage}
               onItemsPaging={setItemsPages}
-              onStampPress={(line, _column, cell) => pressStamp(flow, steps, timezone, { orderId: slip.orderId, lineIds: [line.id] }, cell, (key) => dispatch(key, [line.id]))}
+              onStampPress={(line, _column, cell) => pressStamp(flow, steps, timezone, { orderId: slip.orderId, lineIds: [line.id], teamName: slip.teamName }, cell, (key) => dispatch(key, [line.id]))}
             />
             <aside className="pos-side" aria-label={say('remainingSteps')}>
               <Checklist
@@ -159,8 +159,8 @@ export function OrderSlipScreen({ orderId }: { orderId: string }) {
       ) : null}
       {phone && slip ? (
         <NoticeDialog
-          title={actionLabel('call')}
-          lines={[say('teamName', { name: slip.teamName }) + ' · ' + (phoneField?.value ?? ''), say('demoNoCall')]}
+          title={say('noticeTitle', { label: actionLabel('call'), name: slip.teamName })}
+          lines={[phoneField?.value ?? '', say('demoNoCall')]}
           onClose={() => setPhone(false)}
         />
       ) : null}

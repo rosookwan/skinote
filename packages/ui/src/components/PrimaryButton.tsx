@@ -4,7 +4,7 @@ import { TextFit } from './TextFit.tsx';
 
 export interface PrimaryButtonProps {
   label: ReactNode;
-  /** 폭이 모자라면 쓸 짧은 이름들(긴 것부터: '매장 입고 14개', '입고 14개'). 주면 label 대신 맞춰 쓴다. */
+  /** 폭이 모자라면 쓸 짧은 이름들(긴 것부터: '매장 입고 · 14개', '입고 · 14개'). 주면 label 대신 맞춰 쓴다. */
   alts?: readonly string[];
   /** 남는 폭을 모두 차지(휴대폰 바닥줄: 가로 전체). */
   fill?: boolean;

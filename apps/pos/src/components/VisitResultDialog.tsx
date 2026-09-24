@@ -1,8 +1,8 @@
-// 방문 결과 판(ui 6-3 · N11): 기사가 줄을 고르고 '못 받음'을 누르면 연다. 모두 버튼이다(장갑, 고령):
-//   ① 무슨 일인가요? 고객 부재 · 장소 변경 · 물품을 받지 못함
-//   ② 언제 다시 갈까요? 오늘 다시 · 내일 · 날짜(→ 모레부터 날짜 버튼)
-//   ③ 몇 시에? 목록의 반납 타임 시각 · 직접 입력(→ 숫자판으로 시 · 분)
-//   ④ 한 줄 요약과 보라 주 버튼 '남기기' → task.visit(오프라인이면 보냄 대기).
+// 방문 결과 판(ui 6-3 · N11): 기사가 줄을 고르고 '수거 실패'를 누르면 연다. 모두 버튼이다(장갑, 고령):
+//   ① 사유: 고객 부재 · 장소 변경 · 물품 미준비
+//   ② 재방문: 오늘 · 내일 · 날짜(→ 재방문 날짜: 모레부터 날짜 버튼)
+//   ③ 재방문 시각: 목록의 반납 타임 시각 · 직접 입력(→ 숫자판으로 시 · 분, 숫자 칸 왼쪽에 '재방문 시각 · 직접 입력')
+//   ④ 기록 확인: 한 줄 요약과 보라 주 버튼 '저장' → task.visit(오프라인이면 전송 대기).
 // 창 크기는 확인 창과 같은 규칙(layout의 confirmWindow)이고 스크롤이 없다. 화면은 무엇을 옮길지 계산하지 않는다:
 // 고른 이유 · 날짜 · 시각만 명령에 넣고, 약속을 옮기는 것은 서버(체험판은 FixtureClient)가 한다. 이유 목록은 읽기 모델
 // (visitReasons, 매장 설정의 reason_codes)에서 온다. 시각 버튼은 날짜 · 시각을 매장 시간대의 절대 시각으로 바꿔 지금과 견준다
@@ -121,11 +121,18 @@ export function VisitResultDialog({ taskId, teamName, last4, today, nowMs, reaso
       break;
     case 'custom': {
       const shown = (digits + '____').slice(0, 4);
+      // 숫자판은 높이를 다 쓰므로 무엇을 넣는지('오늘 재방문 시각 · 직접 입력')는 숫자 칸 왼쪽에 둔다(좁으면 '직접 입력'이 빠짐).
       body = (
         <div className="pos-visit-keypad">
-          <output className={'sn-keypad-display' + (digits.length ? ' has-value' : '')} aria-live="polite">
-            {shown.slice(0, 2).split('').join(' ') + ' : ' + shown.slice(2).split('').join(' ')}
-          </output>
+          <div className="pos-visit-keypad-head">
+            <TextFit
+              className="pos-visit-question"
+              input={{ mode: 'parts', parts: [{ text: (date ? dayWord(date) + ' ' : '') + say('visitWhatTime'), drop: 0 }, { text: say('visitCustom'), drop: 1 }] }}
+            />
+            <output className={'sn-keypad-display' + (digits.length ? ' has-value' : '')} aria-live="polite">
+              {shown.slice(0, 2).split('').join(' ') + ' : ' + shown.slice(2).split('').join(' ')}
+            </output>
+          </div>
           <div className="sn-keypad-keys">
             {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((d) => (
               <button key={d} type="button" className="sn-key" onClick={() => setDigits((v) => (v.length < 4 ? v + d : v))}>{d}</button>

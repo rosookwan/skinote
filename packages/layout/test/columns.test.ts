@@ -106,7 +106,7 @@ describe('오늘 대여 장부 칸 폭(ui 4-2)', () => {
     expect(layout.collapsedGroups).toEqual([]);
   });
 
-  it('판이 700px보다 좁으면 두 줄 줄(1줄 팀 · 품목, 2줄 약속 · 돈 · 도장), 그보다 훨씬 좁으면 들어가지 않음', () => {
+  it('판이 700px보다 좁으면 두 줄 줄(1줄 팀 · 품목, 2줄 일정 · 금액 · 도장), 그보다 훨씬 좁으면 들어가지 않음', () => {
     const stacked = fitColumns(ledger(NO_LESSONS), 699, { basePx: BASE, secondLineAllowed: false });
     expect(stacked.mode).toBe('stacked');
     expect(stacked.columns.filter((c) => c.line === 1).map((c) => c.key)).toEqual(['team', 'items']);
@@ -120,7 +120,7 @@ describe('오늘 대여 장부 칸 폭(ui 4-2)', () => {
 });
 
 describe('기사 수거 목록 칸 폭(ui 6-3)', () => {
-  it('휴대폰 360×640: 받음 5.5em · 팀 11.5em(품목은 둘째 줄) · 전화 3.5em = 328 = 360 − 32', () => {
+  it('휴대폰 360×640: 수거 5.5em · 팀 11.5em(품목은 둘째 줄) · 전화 3.5em = 328 = 360 − 32', () => {
     const w = sheet(360, DRIVER_INSET);
     expect(w).toBe(328);
     const layout = fitColumns(specsFor('collection_list', 'driver_phone', { vehicles: true }), w, { basePx: BASE, secondLineAllowed: true });

@@ -7,9 +7,9 @@
 <link rel="stylesheet" href="base.css">
 <style>
   /* V4 접수 확정 창 · 칸별 수납(spec.md 3-3, ui 4-5 · 6-4). 창 860 × 504(ui 4-5 그대로, 1024×529의 한도 505 안):
-     제목 56 + 위 12 + 칸 1 · 2(각 104) + 칸 3 보증금 52 + 결제할 팀 64 + 지금 받는 돈 40 + 바닥 72.
-     칸 = 제목 줄 40(글만: 이름 · 품목 · 할인 · 결제 예정 · 금액) + 수단 줄 52(수단 버튼 + 오른쪽 끝 '할인 고르기') + 아래 틈 12, 칸 사이는 높이를 먹지 않는 가는 선.
-     창 높이는 늘 504: '나중에'인 칸이 없으면 결제할 팀 줄은 자리만 남는다(visibility: hidden, 다른 줄이 움직이지 않게). */
+     제목 56 + 위 12 + 칸 1 · 2(각 104) + 칸 3 보증금 52 + 결제 팀 64 + 받을 금액 40 + 바닥 72.
+     칸 = 제목 줄 40(글만: 이름 · 품목 · 할인 · 결제 예정 · 금액) + 수단 줄 52(수단 버튼 + 오른쪽 끝 '할인 적용') + 아래 틈 12, 칸 사이는 높이를 먹지 않는 가는 선.
+     창 높이는 늘 504: '후불'인 칸이 없으면 결제 팀 줄은 자리만 남는다(visibility: hidden, 다른 줄이 움직이지 않게). */
   .v4-body { gap: 0; padding-top: var(--sn-space-m); padding-bottom: 0; }
   .v4-sec { display: flex; flex-direction: column; height: calc(var(--sn-target) * 2); padding-bottom: var(--sn-space-m); box-shadow: inset 0 calc(var(--sn-line) * -1) 0 var(--sn-rule); }
   .v4-top { display: flex; align-items: center; gap: var(--sn-space-m); height: calc(var(--sn-target) - var(--sn-space-m)); }
@@ -18,7 +18,7 @@
   .v4-disc { flex: none; font-size: var(--sn-font-base); font-weight: 700; color: var(--sn-ink-muted); white-space: nowrap; }
   .v4-payer-note { flex: none; font-size: var(--sn-font-base); font-weight: 800; white-space: nowrap; }
   .v4-amount { flex: none; font-size: var(--sn-font-big); font-weight: 900; white-space: nowrap; text-align: right; }
-  /* 나중에인 칸의 금액: 지금 받지 않으므로 옅은 먹(지금 받는 금액만 도드라지게). */
+  /* 후불인 칸의 금액: 지금 받지 않으므로 옅은 먹(받을 금액만 도드라지게). */
   .v4-amount.is-later { color: var(--sn-ink-muted); }
   .v4-methods { flex-wrap: nowrap; align-items: center; gap: var(--sn-space-m); height: var(--sn-target); }
   .v4-methods .v4-discount { margin-left: auto; padding: 0 var(--sn-space-m); }
@@ -29,12 +29,12 @@
   .v4-payer .mk-choice.is-find { gap: var(--sn-space-s); }
   .v4-now { display: flex; align-items: center; gap: var(--sn-space-s); height: calc(var(--sn-target) - var(--sn-space-m)); }
   .v4-now > b { font-weight: 900; }
-  /* 상태: 주소 #card = 장비도 지금 카드로(나중에인 칸 없음). 결제할 팀 줄은 자리만 남고 창 높이는 그대로 504. */
+  /* 상태: 주소 #card = 장비도 지금 카드로(후불인 칸 없음). 결제 팀 줄은 자리만 남고 창 높이는 그대로 504. */
   .sn-root:not([data-state='card']) [data-show='card'],
   .sn-root[data-state='card'] [data-show='later'] { display: none; }
   .sn-root[data-state='card'] .v4-payer { visibility: hidden; }
 
-  /* 뒤 화면: 새 접수 ② 약속(v3-new-order-promise.html의 화면을 그대로 옮김, spec.md 3-5). */
+  /* 뒤 화면: 새 접수 ② 일정(v3-new-order-promise.html의 화면을 그대로 옮김, spec.md 3-5). */
   .v3-step-no { font-size: calc(var(--sn-font-big) + var(--sn-space-xs)); font-weight: 700; line-height: 1; vertical-align: -0.08em; }
 
   .v3-body { display: flex; flex-direction: column; gap: var(--sn-space-s); padding-top: var(--sn-space-m); }
@@ -48,7 +48,7 @@
      '내일'을 고르면 다시 누를 수 있다. 늦음이 아니므로 빨강이 아니다. */
   .v3-slots .mk-choice:disabled { border-style: dashed; background: transparent; }
 
-  /* 오른쪽 판: 제목 40 · 약속 4줄 208 · 안내 · 주 버튼 56 */
+  /* 오른쪽 판: 제목 40 · 일정 4줄 208 · 안내 · 주 버튼 56 */
   .v3-rows { flex: none; }
   .v3-note { flex: none; padding: var(--sn-space-xs) var(--sn-space-xs) 0; }
   .v3-go { width: 100%; margin-top: auto; padding: 0 var(--sn-space-m); }
@@ -74,13 +74,13 @@
     </header>
 
     <div class="sn-desk pos-slip-desk">
-      <article class="sn-slip" aria-label="새 접수 · 약속">
+      <article class="sn-slip" aria-label="새 접수 · 일정">
         <header class="sn-slip-head">
           <h1 class="sn-slip-title">새 접수</h1>
           <div class="sn-tabs mk-head-tabs" role="tablist" aria-label="새 접수 단계">
             <button type="button" class="sn-tab" role="tab" aria-selected="false"><span class="v3-step-no">①</span> 품목</button>
-            <button type="button" class="sn-tab" role="tab" aria-selected="true"><span class="v3-step-no">②</span> 약속</button>
-            <button type="button" class="sn-tab" role="tab" aria-selected="false"><span class="v3-step-no">③</span> 확정</button>
+            <button type="button" class="sn-tab" role="tab" aria-selected="true"><span class="v3-step-no">②</span> 일정</button>
+            <button type="button" class="sn-tab" role="tab" aria-selected="false"><span class="v3-step-no">③</span> 결제</button>
           </div>
         </header>
 
@@ -88,26 +88,26 @@
           <section class="v3-block v3-wide" aria-label="수령 방법">
             <h2 class="mk-title-line">수령 방법</h2>
             <div class="mk-choices">
-              <button type="button" class="sn-button mk-choice" aria-pressed="true">매장 직접 · 지금</button>
-              <button type="button" class="sn-button mk-choice" aria-pressed="false" aria-label="예약 · 누르면 수령일과 시각 고르기(전화 예약)">예약 · 수령일 <span class="mk-more">›</span></button>
+              <button type="button" class="sn-button mk-choice" aria-pressed="true">매장 직접 · 즉시</button>
+              <button type="button" class="sn-button mk-choice" aria-pressed="false" aria-label="예약 · 수령일 · 시각 선택(전화 예약)">예약 · 수령일 <span class="mk-more">›</span></button>
               <button type="button" class="sn-button mk-choice" aria-pressed="false">차량 배달 <span class="mk-more">›</span></button>
             </div>
           </section>
 
-          <section class="v3-block v3-wide" aria-label="반납 날">
-            <h2 class="mk-title-line">반납 날</h2>
+          <section class="v3-block v3-wide" aria-label="반납일">
+            <h2 class="mk-title-line">반납일</h2>
             <div class="mk-choices">
               <button type="button" class="sn-button mk-choice" aria-pressed="true">오늘</button>
               <button type="button" class="sn-button mk-choice" aria-pressed="false">내일</button>
-              <button type="button" class="sn-button mk-choice" aria-pressed="false" aria-label="다른 날 · 누르면 날짜 고르기">다른 날 <span class="mk-more">›</span></button>
+              <button type="button" class="sn-button mk-choice" aria-pressed="false" aria-label="다른 날 · 날짜 선택">다른 날 <span class="mk-more">›</span></button>
             </div>
           </section>
 
           <section class="v3-block v3-slots" aria-label="반납 시각">
             <h2 class="mk-title-line">반납 시각</h2>
             <div class="mk-choices">
-              <button type="button" class="sn-button mk-choice" aria-pressed="false" disabled aria-label="오전타임 후 12:00 · 오늘은 지나서 고를 수 없음">오전타임 후 12:00</button>
-              <button type="button" class="sn-button mk-choice" aria-pressed="false" disabled aria-label="오후 16:30 · 10분 안이라 고를 수 없음">오후 16:30</button>
+              <button type="button" class="sn-button mk-choice" aria-pressed="false" disabled aria-label="오전타임 후 12:00 · 선택 불가 · 시간 지남">오전타임 후 12:00</button>
+              <button type="button" class="sn-button mk-choice" aria-pressed="false" disabled aria-label="오후 16:30 · 선택 불가 · 10분 이내">오후 16:30</button>
               <button type="button" class="sn-button mk-choice" aria-pressed="true">야간 22:00</button>
               <button type="button" class="sn-button mk-choice" aria-pressed="false">심야 24:00</button>
             </div>
@@ -129,13 +129,13 @@
       <aside class="pos-side" aria-label="접수 내용">
         <div class="mk-panel-title"><span>접수 내용</span></div>
         <ol class="mk-list v3-rows">
-          <li class="mk-list-row"><span class="mk-list-main"><b>수령 · 지금 16:25</b><small>매장 직접</small></span></li>
-          <li class="mk-list-row"><span class="mk-list-main"><b>반납 · 오늘 22:00</b><small>매장 직접 · 손님이 가져옴</small></span></li>
+          <li class="mk-list-row"><span class="mk-list-main"><b>수령 · 즉시 16:25</b><small>매장 직접</small></span></li>
+          <li class="mk-list-row"><span class="mk-list-main"><b>반납 · 오늘 22:00</b><small>매장 직접 반납</small></span></li>
           <li class="mk-list-row"><span class="mk-list-main"><b>장비 225,000원</b><small>스키 4 · 의류 3 · 헬멧 1</small></span></li>
-          <li class="mk-list-row"><span class="mk-list-main"><b>리프트권 140,000원</b><small>야간권 4매 · 보증금 20,000원 따로</small></span></li>
+          <li class="mk-list-row"><span class="mk-list-main"><b>리프트권 140,000원</b><small>야간권 4매 · 보증금 20,000원 별도</small></span></li>
         </ol>
-        <p class="mk-note v3-note">품목마다 다른 약속은 접수 뒤 접수증의 약속 바꾸기에서 합니다.</p>
-        <button type="button" class="sn-primary v3-go" data-primary="true">다음 · 받을 돈 정하기</button>
+        <p class="mk-note v3-note">품목별 일정 · 접수 후 일정 변경</p>
+        <button type="button" class="sn-primary v3-go" data-primary="true">다음 · 결제</button>
       </aside>
     </div>
 
@@ -151,12 +151,12 @@
 
   <!-- 접수 확정 창 -->
   <div class="sn-overlay">
-    <div class="sn-dialog mk-confirm" role="dialog" aria-modal="true" aria-label="접수 확정 · 이민호 팀">
+    <div class="sn-dialog mk-confirm" role="dialog" aria-modal="true" aria-label="결제 · 이민호 팀">
       <header class="sn-dialog-head">
-        <h2 class="sn-dialog-title"><span class="sn-fit">접수 확정 · 이민호 팀</span></h2>
+        <h2 class="sn-dialog-title"><span class="sn-fit">결제 · 이민호 팀</span></h2>
       </header>
       <div class="sn-dialog-body v4-body">
-        <!-- 칸 1 장비: 나중에 → 이정호 팀 결제 예정(금액은 옅은 먹) -->
+        <!-- 칸 1 장비: 후불 → 이정호 팀 결제 예정(금액은 옅은 먹) -->
         <section class="v4-sec" aria-label="장비">
           <div class="v4-top">
             <b class="v4-name">장비</b>
@@ -170,12 +170,12 @@
             <button type="button" class="sn-button pos-method" aria-pressed="false" data-card="true">카드</button>
             <button type="button" class="sn-button pos-method" aria-pressed="false">현금</button>
             <button type="button" class="sn-button pos-method" aria-pressed="false">계좌이체</button>
-            <button type="button" class="sn-button pos-method" aria-pressed="true" data-later="true">나중에</button>
-            <button type="button" class="sn-button pos-method" aria-pressed="false">다른 수단</button>
-            <button type="button" class="sn-button v4-discount" aria-label="장비 할인 고르기">할인 고르기 <span class="mk-more">›</span></button>
+            <button type="button" class="sn-button pos-method" aria-pressed="true" data-later="true">후불</button>
+            <button type="button" class="sn-button pos-method" aria-pressed="false">기타</button>
+            <button type="button" class="sn-button v4-discount" aria-label="장비 할인 적용">할인 적용 <span class="mk-more">›</span></button>
           </div>
         </section>
-        <!-- 칸 2 리프트권: 현장 대여라 선입금 안내 없음 -->
+        <!-- 칸 2 리프트권: 현장 접수라 선입금 안내 없음 -->
         <section class="v4-sec" aria-label="리프트권">
           <div class="v4-top">
             <b class="v4-name">리프트권</b>
@@ -187,32 +187,32 @@
             <button type="button" class="sn-button pos-method" aria-pressed="false">카드</button>
             <button type="button" class="sn-button pos-method" aria-pressed="true">현금</button>
             <button type="button" class="sn-button pos-method" aria-pressed="false">계좌이체</button>
-            <button type="button" class="sn-button pos-method" aria-pressed="false">나중에</button>
-            <button type="button" class="sn-button pos-method" aria-pressed="false">다른 수단</button>
-            <button type="button" class="sn-button v4-discount" aria-label="리프트권 할인 고르기">할인 고르기 <span class="mk-more">›</span></button>
+            <button type="button" class="sn-button pos-method" aria-pressed="false">후불</button>
+            <button type="button" class="sn-button pos-method" aria-pressed="false">기타</button>
+            <button type="button" class="sn-button v4-discount" aria-label="리프트권 할인 적용">할인 적용 <span class="mk-more">›</span></button>
           </div>
         </section>
-        <!-- 칸 3 리프트권 보증금(이 매장 설정: 받음 · 1매 5,000원 · 접수할 때 · 현금으로만). 할인 · 나중에 · 수단 버튼 없음 -->
+        <!-- 칸 3 리프트권 보증금(이 매장 설정: 사용 · 1매 5,000원 · 접수 시 · 현금만). 할인 · 후불 · 수단 버튼 없음 -->
         <section class="v4-deposit" aria-label="리프트권 보증금">
           <b class="v4-name">리프트권 보증금</b>
-          <span class="v4-items">4매 · 이 매장은 1매 5,000원 · 권을 돌려받으면 돌려드림</span>
+          <span class="v4-items">4매 · 매장 기준 1매 5,000원 · 반납 시 반환</span>
           <b class="v4-amount">현금 20,000원</b>
         </section>
-        <!-- 결제할 팀(나중에인 칸이 있을 때만 보이고, 없으면 자리만 남음) -->
+        <!-- 결제 팀(후불인 칸이 있을 때만 보이고, 없으면 자리만 남음) -->
         <div class="v4-payer">
-          <span class="mk-form-label">장비 225,000원 · 결제할 팀</span>
-          <div class="mk-choices" role="group" aria-label="결제할 팀">
+          <span class="mk-form-label">장비 225,000원 · 결제 팀</span>
+          <div class="mk-choices" role="group" aria-label="결제 팀">
             <button type="button" class="sn-button mk-choice" aria-pressed="false">이민호 · 0042</button>
             <button type="button" class="sn-button mk-choice" aria-pressed="true">이정호 · 0032</button>
             <button type="button" class="sn-button mk-choice is-find" aria-pressed="false">
               <svg class="sn-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="4" height="4" rx="1"/><rect x="10" y="3" width="4" height="4" rx="1"/><rect x="16" y="3" width="4" height="4" rx="1"/><rect x="4" y="10" width="4" height="4" rx="1"/><rect x="10" y="10" width="4" height="4" rx="1"/><rect x="16" y="10" width="4" height="4" rx="1"/><rect x="10" y="17" width="4" height="4" rx="1"/></svg>
-              <span>다른 팀 고르기 · 끝 4자리</span>
+              <span>다른 팀 찾기 · 끝 4자리</span>
             </button>
           </div>
         </div>
-        <!-- 지금 받는 돈: 수단마다 합계, 수납과 보증금을 나눠 -->
-        <p class="mk-line mk-rule v4-now" data-show="later"><b>지금 받는 돈</b>&nbsp;<b>현금 160,000원</b>&nbsp;= 리프트권 140,000원 + 보증금 20,000원</p>
-        <p class="mk-line mk-rule v4-now" data-show="card"><b>지금 받는 돈</b>&nbsp;<b>카드 225,000원 · 현금 160,000원</b>&nbsp;(현금에 보증금 20,000원)</p>
+        <!-- 받을 금액: 수단마다 합계, 수납과 보증금을 나눠 -->
+        <p class="mk-line mk-rule v4-now" data-show="later"><b>받을 금액</b>&nbsp;<b>현금 160,000원</b>&nbsp;= 리프트권 140,000원 + 보증금 20,000원</p>
+        <p class="mk-line mk-rule v4-now" data-show="card"><b>받을 금액</b>&nbsp;<b>카드 225,000원 · 현금 160,000원</b>&nbsp;(현금 중 보증금 20,000원)</p>
       </div>
       <footer class="sn-dialog-foot">
         <button type="button" class="sn-button">
@@ -220,15 +220,15 @@
           <span>닫기</span>
         </button>
         <div class="sn-dialog-primary">
-          <button type="button" class="sn-primary" data-primary="true" data-show="later"><span class="sn-fit">돈 받고 접수 확정 · 현금 160,000원</span></button>
-          <button type="button" class="sn-primary" data-primary="true" data-show="card"><span class="sn-fit">돈 받고 접수 확정 · 카드 225,000원 · 현금 160,000원</span></button>
+          <button type="button" class="sn-primary" data-primary="true" data-show="later"><span class="sn-fit">접수 확정 · 현금 160,000원</span></button>
+          <button type="button" class="sn-primary" data-primary="true" data-show="card"><span class="sn-fit">접수 확정 · 카드 225,000원 · 현금 160,000원</span></button>
         </div>
       </footer>
     </div>
   </div>
 </div>
 <script>
-  // 상태 변형: #card = 장비도 지금 카드로 받음(나중에인 칸 없음, spec.md 3-3 상태).
+  // 상태 변형: #card = 장비도 지금 카드로 받음(후불인 칸 없음, spec.md 3-3 상태).
   (function () {
     if (location.hash !== '#card') return;
     document.querySelector('.sn-root').setAttribute('data-state', 'card');

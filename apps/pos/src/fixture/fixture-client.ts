@@ -204,7 +204,7 @@ export class FixtureClient implements DomainClient {
   private enqueue(envelope: AnyCommandEnvelope): CommandOutcome {
     const base = { requestId: envelope.requestId, rev: this.state.rev, asOfRev: envelope.basis.rev, epoch: this.state.epoch, rebased: false, changes: [] };
     if (!OFFLINE_ALLOWED.has(envelope.type)) {
-      return { ...base, outcome: 'rejected', error: { code: 'OFFLINE', message: '연결이 끊겨 있어 지금은 할 수 없습니다. 연결된 뒤에 다시 해 주세요.' } };
+      return { ...base, outcome: 'rejected', error: { code: 'OFFLINE', message: '연결 끊김 · 연결 후 가능' } };
     }
     const queue = this.state.driverDevice.queue;
     if (!queue.some((q) => q.envelope.requestId === envelope.requestId)) {
@@ -216,12 +216,12 @@ export class FixtureClient implements DomainClient {
     return { ...base, outcome: 'queued' };
   }
 
-  /** 보냄 대기 목록의 한 줄('김민수 · 0025 받음 21:42'). */
+  /** 전송 대기 목록의 한 줄('김민수 · 0025 수거 21:42'). */
   private summary(envelope: AnyCommandEnvelope, at: number): string {
     const taskId = 'taskId' in envelope.payload ? envelope.payload.taskId : undefined;
     const o = taskId ? findOrder(this.state, orderIdOfTask(taskId)) : undefined;
     const who = o ? o.teamName + ' · ' + o.last4 + ' ' : '';
-    const what: Partial<Record<CommandType, string>> = { 'stock.collect': '받음', 'task.visit': '못 받음', 'route.move': '순서', 'route.reset': '시간순 되돌리기', 'notification.ack': '빨리 확인 확인' };
+    const what: Partial<Record<CommandType, string>> = { 'stock.collect': '수거', 'task.visit': '수거 실패', 'route.move': '순서 변경', 'route.reset': '시간순 정렬', 'notification.ack': '긴급 확인' };
     return who + (what[envelope.type] ?? envelope.type) + ' ' + hm(at);
   }
 

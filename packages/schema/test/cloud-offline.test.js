@@ -54,7 +54,7 @@ test('offline_allowed on sys_event_types is exactly the union of sys_offline_com
   assert.deepEqual(sorted(flagged), sorted(listed));
 });
 
-test('the counter (pos) may queue exactly the facts of the counter (지급 · 반납 · 적재 · 권 주기 · 바꿔 드림 · 돈), new walk-ins and extra items', () => {
+test('the counter (pos) may queue exactly the facts of the counter (지급 · 반납 · 적재 · 권 지급 · 즉시 교환 · 돈), new walk-ins and extra items', () => {
   assert.deepEqual(sorted(offlineFor('pos')), sorted(COUNTER_OFFLINE));
 });
 
@@ -104,7 +104,7 @@ test('an offline counter can press every stamp it needs: its commands are on the
   }
   // 권 배정(발권 도장)은 결정이라 연결이 필요하다. 끊긴 카운터는 권 주기(배정 + 지급을 한 사실로)를 쓴다.
   assert.ok(!offline.has(get(shop, `SELECT command_key AS c FROM sys_actions WHERE key = 'stamp.ticket_secure'`).c));
-  assert.equal(get(shop, `SELECT label FROM sys_actions WHERE key = 'not_delivered'`).label, '못 전함');
+  assert.equal(get(shop, `SELECT label FROM sys_actions WHERE key = 'not_delivered'`).label, '배달 실패');
   assert.equal(get(shop, `SELECT label FROM sys_actions WHERE key = 'add_ticket'`).label, '리프트권 추가');
 });
 
@@ -194,9 +194,9 @@ test('review kinds for offline counters, revoked devices, lapsed licences, resto
     offline_order_unapplied: 'origin_device/action', device_unsynced: 'dialog_step/blocking', licence_lapsed_record: 'manager/info',
     unverified_sign_in: 'manager/action', command_held: 'manager/info', recomputed_after_restore: 'manager/action',
   });
-  assert.match(get(shop, `SELECT message_template AS m FROM sys_review_kinds WHERE key = 'deposit_over_returned'`).m, /\{drawer\}에서 나간 현금/,
+  assert.match(get(shop, `SELECT message_template AS m FROM sys_review_kinds WHERE key = 'deposit_over_returned'`).m, /\{drawer\} 현금 출금/,
     'a van wallet can pay out too, not only the counter drawer');
-  assert.match(get(shop, `SELECT message_template AS m FROM sys_review_kinds WHERE key = 'revoked_device_record'`).m, /넣지 않고 두었습니다/);
+  assert.match(get(shop, `SELECT message_template AS m FROM sys_review_kinds WHERE key = 'revoked_device_record'`).m, /기록 \{count\}건 보류/);
 });
 
 test('backup and offline settings default to the cloud plan', () => {

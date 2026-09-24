@@ -122,14 +122,15 @@
     <h1>둘째 판 화면 시안</h1>
     <p class="sub">스키노트 · 2026-09-24 · 포스 1024×600 여덟 장, 기사 태블릿 1024×600 한 장</p>
     <p>사장님 답(2026-09-24)을 넣어 구현한 C 화면(오늘 대여 장부 · 대여 접수증 · 야간 수거 목록)에 이어 그린 아홉 장입니다. 그림은 코드 시안(<code>vN-*.html</code>)을 검사기가 찍은 것이고, 앱의 색 · 부품 · 글꼴을 그대로 씁니다. 숫자는 모두 한 날(12월 26일 (토))의 이야기에서 나옵니다(spec.md 2-4).</p>
+    <p>화면 문구는 2026-09-24에 <a href="../wording.md">문구 표</a>대로 짧은 시스템 말로 바꿨습니다(<code>약속 바꾸기</code> → <code>일정 변경</code>, <code>반납 도장 찍기</code> → <code>반납 처리</code> 등, 배치 그대로). 아래 힉스필드 그림은 그 전의 말입니다.</p>
     <table class="answers">
       <thead><tr><th scope="col">사장님 답</th><th scope="col">화면에 넣은 것</th><th scope="col">화면</th></tr></thead>
       <tbody>
-        <tr><td>리프트권은 꼭 돌려받음</td><td>매장이 고름: 꼭 돌려받음 / 주면 끝. 권 보증금은 <b>1매 5,000원(이 매장 값)</b>, 돌아온 매수만큼 돌려드림, 마감에 보관 중 보증금</td><td>V8 · V4 · V1 · V2 · V6</td></tr>
-        <tr><td>자정 넘어도 전날 반납</td><td>전날 장부로 치는 시각 새벽 6시. 27일 00:15 반납 · 00:40 마감도 26일 장부</td><td>V8 · V6</td></tr>
+        <tr><td>리프트권은 꼭 돌려받음</td><td>매장이 선택: 반납 필수 / 반납 선택. 권 보증금은 <b>1매 5,000원(매장 기준)</b>, 반납 매수만큼 반환, 마감에 보관 중 보증금</td><td>V8 · V4 · V1 · V2 · V6</td></tr>
+        <tr><td>자정 넘어도 전날 반납</td><td>영업일 기준 시각 06:00. 27일 00:15 반납 · 00:40 마감도 26일 장부</td><td>V8 · V6</td></tr>
         <tr><td>왼쪽 메뉴 줄 없앰</td><td>어느 화면에도 없음. 머리줄과 종이의 색인 탭만</td><td>아홉 장 모두</td></tr>
         <tr><td>백업은 추천대로</td><td>화면 변화 없음(관리의 <code>백업</code> 카드는 7주차에)</td><td>없음</td></tr>
-        <tr><td>부분 반납도 되나</td><td>된다. 반납 · 약속 · 수납 · 보증금이 품목 줄과 수량 단위(사람 단위가 아님)</td><td>V1 · V9 · V4 · V5</td></tr>
+        <tr><td>부분 반납도 되나</td><td>된다. 반납 · 일정 · 수납 · 보증금이 품목 줄과 수량 단위(사람 단위가 아님)</td><td>V1 · V9 · V4 · V5</td></tr>
       </tbody>
     </table>
     <section class="rule" aria-labelledby="rule-title">
@@ -145,36 +146,37 @@
       <span class="pill is-pass">검사 통과 · 9개 화면 · 어긋남 0</span>
       <span class="pill is-note">상태 변형 · 작은 틀까지 모두 통과</span>
       <span class="pill is-pass">채택 · 아홉 장 모두 코드 시안</span>
+      <span class="pill is-note">문구 표 반영 · 2026-09-24</span>
     </div>
-    <p class="links"><a href="spec.md">명세 spec.md</a><a href="spec.json">힉스필드 요청문 spec.json</a><a href="base.css">공통 모양 base.css</a></p>
+    <p class="links"><a href="../wording.md">문구 표 wording.md</a><a href="spec.md">명세 spec.md</a><a href="spec.json">힉스필드 요청문 spec.json</a><a href="base.css">공통 모양 base.css</a></p>
     <p class="links">다시 재기: <code>node docs/design/screens-v2/measure.mjs</code></p>
   </header>
 
   <nav class="toc" aria-label="차례">
     <a href="#V1">V1 <small>반납</small></a>
-    <a href="#V9">V9 <small>약속 바꾸기</small></a>
+    <a href="#V9">V9 <small>일정 변경</small></a>
     <a href="#V2">V2 <small>새 접수 ①</small></a>
     <a href="#V3">V3 <small>새 접수 ②</small></a>
     <a href="#V4">V4 <small>접수 확정</small></a>
-    <a href="#V5">V5 <small>한 번에 수납</small></a>
+    <a href="#V5">V5 <small>일괄 수납</small></a>
     <a href="#V6">V6 <small>마감</small></a>
     <a href="#V7">V7 <small>기사</small></a>
-    <a href="#V8">V8 <small>가게 규칙</small></a>
+    <a href="#V8">V8 <small>운영 규칙</small></a>
   </nav>
 
-  <!-- ── 1. 반납 · 약속 ───────────────────────────────────────────── -->
+  <!-- ── 1. 반납 · 일정 ───────────────────────────────────────────── -->
   <section class="group" aria-labelledby="g-return">
-    <h2 id="g-return">1. 반납 · 약속</h2>
+    <h2 id="g-return">1. 반납 · 일정</h2>
 
     <article class="screen" id="V1">
       <div class="screen-head"><span class="code">V1</span><h3>반납 확인 창 · 부분 반납</h3><span class="frame">포스 · 창 860 × 440 · 21:30 박준호 팀</span></div>
-      <p class="purpose">손님이 매장에 가져온 것만 번호를 눌러 반납 도장을 찍고, 돌아온 리프트권 매수만큼 보증금을 돌려드린다. 남은 보드 1 · 헬멧 1 · 권 1매는 숙소 수거 약속을 그대로 가진다.</p>
+      <p class="purpose">손님이 매장에 가져온 번호만 남겨 반납 처리하고, 반납된 리프트권 매수만큼 보증금을 반환한다. 미반납 보드 1 · 헬멧 1 · 권 1매는 숙소 수거 일정을 그대로 가진다.</p>
       <p class="adopt"><b>채택 · 코드 시안</b> — 힉스필드 그림에서 품목 이름 22px과 칸 사이 · 옆 여백을 옮김(세로는 창 한도 505 때문에 그대로).</p>
-      <a class="shot" href="v1-partial-return.html"><img src="v1-partial-return.png" alt="V1 반납 확인 창: 스키 2 · 헬멧 2 · 권 2매만 골라 반납, 보증금 10,000원 돌려드림" width="1024" height="600" loading="lazy"></a>
+      <a class="shot" href="v1-partial-return.html"><img src="v1-partial-return.png" alt="V1 반납 확인 창: 스키 2 · 헬멧 2 · 권 2매만 반납 처리, 보증금 10,000원 반환" width="1024" height="600" loading="lazy"></a>
       <div class="actions"><a href="v1-partial-return.html">코드 시안 열기</a><a href="spec.md">명세 3-1</a></div>
       <p class="states-title">다른 상태 · 작은 틀</p>
       <div class="states">
-        <figure class="state"><a href="v1-partial-return.html#all"><img src="v1-partial-return--all.png" alt="" width="1024" height="600" loading="lazy"></a><figcaption><b>#all</b> 처음 연 상태 · 모두 골라짐</figcaption></figure>
+        <figure class="state"><a href="v1-partial-return.html#all"><img src="v1-partial-return--all.png" alt="" width="1024" height="600" loading="lazy"></a><figcaption><b>#all</b> 처음 연 상태 · 전체 선택</figcaption></figure>
         <figure class="state"><a href="v1-partial-return--1024x569.png"><img src="v1-partial-return--1024x569.png" alt="" width="1024" height="569" loading="lazy"></a><figcaption><b>1024×569</b> 설치한 앱 · 창만</figcaption></figure>
         <figure class="state"><a href="v1-partial-return--1024x529.png"><img src="v1-partial-return--1024x529.png" alt="" width="1024" height="529" loading="lazy"></a><figcaption><b>1024×529</b> 설치한 앱 · 창만</figcaption></figure>
       </div>
@@ -183,14 +185,14 @@
     </article>
 
     <article class="screen" id="V9">
-      <div class="screen-head"><span class="code">V9</span><h3>약속 바꾸기 · 일부 품목</h3><span class="frame">포스 · 창 860 × 약 503 · 19:40 박준호 팀</span></div>
+      <div class="screen-head"><span class="code">V9</span><h3>일정 변경 · 부분 품목</h3><span class="frame">포스 · 창 860 × 약 503 · 19:40 박준호 팀</span></div>
       <p class="purpose">한 팀 품목 중 일부 수량만 반납 시각 · 장소 · 수거 차량을 바꾼다. 보드 1 · 헬멧 1 · 권 1매만 22:00 솔마을 두솔동으로 옮기고 나머지는 설천 주차장 그대로.</p>
       <p class="adopt"><b>채택 · 코드 시안</b> — 옮긴 것 없음: 창이 505 중 503을 쓰고, 그림의 '받는 사람' 줄은 검토에서 없앤 모양.</p>
-      <a class="shot" href="v9-change-promise.html"><img src="v9-change-promise.png" alt="V9 약속 바꾸기 창: 보드 1 · 헬멧 1 · 권 1매를 솔마을 두솔동으로" width="1024" height="600" loading="lazy"></a>
+      <a class="shot" href="v9-change-promise.html"><img src="v9-change-promise.png" alt="V9 일정 변경 창: 보드 1 · 헬멧 1 · 권 1매를 솔마을 두솔동으로" width="1024" height="600" loading="lazy"></a>
       <div class="actions"><a href="v9-change-promise.html">코드 시안 열기</a><a href="spec.md">명세 3-2</a></div>
       <p class="states-title">다른 상태 · 작은 틀</p>
       <div class="states">
-        <figure class="state"><a href="v9-change-promise.html#store"><img src="v9-change-promise--store.png" alt="" width="1024" height="600" loading="lazy"></a><figcaption><b>#store</b> 매장 직접을 고름 · 창 높이 그대로</figcaption></figure>
+        <figure class="state"><a href="v9-change-promise.html#store"><img src="v9-change-promise--store.png" alt="" width="1024" height="600" loading="lazy"></a><figcaption><b>#store</b> 매장 직접 선택 · 창 높이 그대로</figcaption></figure>
         <figure class="state"><a href="v9-change-promise--1024x569.png"><img src="v9-change-promise--1024x569.png" alt="" width="1024" height="569" loading="lazy"></a><figcaption><b>1024×569</b> 설치한 앱 · 창만</figcaption></figure>
         <figure class="state"><a href="v9-change-promise--1024x529.png"><img src="v9-change-promise--1024x529.png" alt="" width="1024" height="529" loading="lazy"></a><figcaption><b>1024×529</b> 설치한 앱 · 창만</figcaption></figure>
       </div>
@@ -204,20 +206,20 @@
     <h2 id="g-new">2. 새 접수</h2>
 
     <article class="screen" id="V2">
-      <div class="screen-head"><span class="code">V2</span><h3>새 접수 ① 품목 고르기</h3><span class="frame">포스 · 16:25 이민호 팀</span></div>
-      <p class="purpose">대표자 한 사람만 적고 품목 종류를 눌러 규격과 수량을 고른다. 합계는 장비 + 리프트권이고, 권 보증금은 합계 밖에 <b>따로 받음</b>으로 보인다.</p>
+      <div class="screen-head"><span class="code">V2</span><h3>새 접수 ① 품목</h3><span class="frame">포스 · 16:25 이민호 팀</span></div>
+      <p class="purpose">대표자 한 사람만 적고 품목 종류를 눌러 규격과 수량을 고른다. 합계는 장비 + 리프트권이고, 권 보증금은 합계 밖에 <b>별도</b>로 보인다.</p>
       <p class="adopt"><b>채택 · 코드 시안</b> — 힉스필드 그림처럼 고른 수 표시를 크게, 지금 연 종류는 굵은 테두리 + 아래 갈매기(남색 바탕은 '고름'이라 쓰지 않음).</p>
-      <a class="shot" href="v2-new-order-items.html"><img src="v2-new-order-items.png" alt="V2 새 접수 품목 고르기: 스키 4 · 의류 3 · 헬멧 1 · 야간권 4매" width="1024" height="600" loading="lazy"></a>
+      <a class="shot" href="v2-new-order-items.html"><img src="v2-new-order-items.png" alt="V2 새 접수 ① 품목: 스키 4 · 의류 3 · 헬멧 1 · 야간권 4매" width="1024" height="600" loading="lazy"></a>
       <div class="actions"><a href="v2-new-order-items.html">코드 시안 열기</a><a href="spec.md">명세 3-4</a></div>
       <p class="hf-title">힉스필드 그림</p>
       <div class="hf" id="hf-V2"><figure class="hf-fig"><a href="higgsfield/v2-new-order-items.jpg"><img src="higgsfield/v2-new-order-items.jpg" alt="V2 힉스필드 그림(첫 설명서 기준, 채택하지 않음)" width="1296" height="768" loading="lazy"></a><figcaption>힉스필드 그림 · 첫 설명서 기준(검토 전)</figcaption></figure></div>
     </article>
 
     <article class="screen" id="V3">
-      <div class="screen-head"><span class="code">V3</span><h3>새 접수 ② 약속 정하기</h3><span class="frame">포스 · 16:25 이민호 팀</span></div>
-      <p class="purpose">수령 방법 · 반납 날 · 반납 시각 · 반납 장소를 한 화면에서 고른다. 오늘 이미 지난 반납 타임은 자리를 지킨 채 누를 수 없다.</p>
+      <div class="screen-head"><span class="code">V3</span><h3>새 접수 ② 일정</h3><span class="frame">포스 · 16:25 이민호 팀</span></div>
+      <p class="purpose">수령 방법 · 반납일 · 반납 시각 · 반납 장소를 한 화면에서 고른다. 오늘 이미 지난 반납 타임은 자리를 지킨 채 누를 수 없다.</p>
       <p class="adopt"><b>채택 · 코드 시안</b> — 옮긴 것 없음: 그림의 권종 줄 · '받는 방법' · '다음 · 확인'은 검토에서 바꾼 것.</p>
-      <a class="shot" href="v3-new-order-promise.html"><img src="v3-new-order-promise.png" alt="V3 새 접수 약속 정하기: 매장 직접 · 오늘 야간 22:00 반납" width="1024" height="600" loading="lazy"></a>
+      <a class="shot" href="v3-new-order-promise.html"><img src="v3-new-order-promise.png" alt="V3 새 접수 ② 일정: 매장 직접 · 오늘 야간 22:00 반납" width="1024" height="600" loading="lazy"></a>
       <div class="actions"><a href="v3-new-order-promise.html">코드 시안 열기</a><a href="spec.md">명세 3-5</a></div>
       <p class="hf-title">힉스필드 그림</p>
       <div class="hf" id="hf-V3"><figure class="hf-fig"><a href="higgsfield/v3-new-order-promise.jpg"><img src="higgsfield/v3-new-order-promise.jpg" alt="V3 힉스필드 그림(첫 설명서 기준, 채택하지 않음)" width="1296" height="768" loading="lazy"></a><figcaption>힉스필드 그림 · 첫 설명서 기준(검토 전)</figcaption></figure></div>
@@ -225,9 +227,9 @@
 
     <article class="screen" id="V4">
       <div class="screen-head"><span class="code">V4</span><h3>접수 확정 창 · 칸별 수납</h3><span class="frame">포스 · 창 860 × 504 · 16:26 이민호 팀</span></div>
-      <p class="purpose">결제 칸(장비 · 리프트권 · 리프트권 보증금)마다 수단을 정하고 지금 받는 돈을 수단별로 보인 뒤 한 번에 접수를 확정한다. 장비 값은 가족 대표 이정호 팀이 나중에 낸다.</p>
+      <p class="purpose">결제 칸(장비 · 리프트권 · 리프트권 보증금)마다 수단을 정하고 받을 금액을 수단별로 보인 뒤 한 번에 접수를 확정한다. 장비 값은 후불로 가족 대표 이정호 팀이 결제한다.</p>
       <p class="adopt"><b>채택 · 코드 시안</b> — 옮긴 것 없음: 그림의 창 폭이 860이 아니고 '수납하고'는 보증금과 맞지 않는 말.</p>
-      <a class="shot" href="v4-confirm-payment.html"><img src="v4-confirm-payment.png" alt="V4 접수 확정 창: 지금 받는 돈 현금 160,000원 = 리프트권 140,000원 + 보증금 20,000원" width="1024" height="600" loading="lazy"></a>
+      <a class="shot" href="v4-confirm-payment.html"><img src="v4-confirm-payment.png" alt="V4 접수 확정 창: 받을 금액 현금 160,000원 = 리프트권 140,000원 + 보증금 20,000원" width="1024" height="600" loading="lazy"></a>
       <div class="actions"><a href="v4-confirm-payment.html">코드 시안 열기</a><a href="spec.md">명세 3-3</a></div>
       <p class="states-title">다른 상태 · 작은 틀</p>
       <div class="states">
@@ -245,10 +247,10 @@
     <h2 id="g-pay">3. 수납</h2>
 
     <article class="screen" id="V5">
-      <div class="screen-head"><span class="code">V5</span><h3>한 번에 수납 · 여러 팀</h3><span class="frame">포스 · 16:40 이정호 팀</span></div>
-      <p class="purpose">가족 여섯 팀 몫을 카드 한 번으로 받는다. 팀 안에서 일부만 낼 때는 사람이 아니라 품목으로 고른다.</p>
+      <div class="screen-head"><span class="code">V5</span><h3>일괄 수납 · 여러 팀</h3><span class="frame">포스 · 16:40 이정호 팀</span></div>
+      <p class="purpose">가족 여섯 팀 몫을 카드 한 번으로 받는다. 팀 안의 부분 결제는 사람이 아니라 품목으로 선택한다.</p>
       <p class="adopt"><b>채택 · 코드 시안</b> — 옮긴 것 없음: 줄 52는 장부 미수 탭과 같은 줄이고 그림의 '미수' 열 · '전부 ›'는 검토에서 없앤 것.</p>
-      <a class="shot" href="v5-pay-many-teams.html"><img src="v5-pay-many-teams.png" alt="V5 한 번에 수납: 6팀 485,000원" width="1024" height="600" loading="lazy"></a>
+      <a class="shot" href="v5-pay-many-teams.html"><img src="v5-pay-many-teams.png" alt="V5 일괄 수납: 6팀 485,000원" width="1024" height="600" loading="lazy"></a>
       <div class="actions"><a href="v5-pay-many-teams.html">코드 시안 열기</a><a href="spec.md">명세 3-6</a></div>
       <p class="states-title">다른 상태</p>
       <div class="states">
@@ -265,14 +267,14 @@
 
     <article class="screen" id="V6">
       <div class="screen-head"><span class="code">V6</span><h3>하루 마감</h3><span class="frame">포스 · 27일 00:40</span></div>
-      <p class="purpose">새벽 6시 전이라 자정을 넘겨도 26일 장부를 닫는다. 차량 현금 → 돈통 → 마감 차례로 세고, 보관 중 보증금과 안 돌아온 권까지 27일로 넘길 일을 본다.</p>
+      <p class="purpose">영업일 기준 06:00 전이라 자정을 넘겨도 26일 장부를 닫는다. 차량 현금 → 돈통 → 마감 차례로 점검하고, 보관 중 보증금과 미반납 권까지 이월 항목을 본다.</p>
       <p class="adopt"><b>채택 · 코드 시안</b> — 힉스필드 그림처럼 종이 아래까지 차게, 줄이 남는 높이를 나눠 씀(계좌이체 0원 줄은 규칙대로 없음).</p>
-      <a class="shot" href="v6-day-close.html"><img src="v6-day-close.png" alt="V6 하루 마감: 받은 돈 1,965,000원, 돈통 차이 0원" width="1024" height="600" loading="lazy"></a>
+      <a class="shot" href="v6-day-close.html"><img src="v6-day-close.png" alt="V6 하루 마감: 수납 합계 1,965,000원, 돈통 차액 0원" width="1024" height="600" loading="lazy"></a>
       <div class="actions"><a href="v6-day-close.html">코드 시안 열기</a><a href="spec.md">명세 3-7</a></div>
       <p class="states-title">다른 상태 · 작은 틀</p>
       <div class="states">
-        <figure class="state"><a href="v6-day-close.html#before"><img src="v6-day-close--before.png" alt="" width="1024" height="600" loading="lazy"></a><figcaption><b>#before</b> 세기 전 · 차량 현금부터</figcaption></figure>
-        <figure class="state"><a href="v6-day-close.html#drawer"><img src="v6-day-close--drawer.png" alt="" width="1024" height="600" loading="lazy"></a><figcaption><b>#drawer</b> 차량 현금을 센 뒤 · 돈통 차례</figcaption></figure>
+        <figure class="state"><a href="v6-day-close.html#before"><img src="v6-day-close--before.png" alt="" width="1024" height="600" loading="lazy"></a><figcaption><b>#before</b> 점검 전 · 차량 현금부터</figcaption></figure>
+        <figure class="state"><a href="v6-day-close.html#drawer"><img src="v6-day-close--drawer.png" alt="" width="1024" height="600" loading="lazy"></a><figcaption><b>#drawer</b> 차량 현금 점검 후 · 돈통 차례</figcaption></figure>
         <figure class="state"><a href="v6-day-close--1024x569.png"><img src="v6-day-close--1024x569.png" alt="" width="1024" height="569" loading="lazy"></a><figcaption><b>1024×569</b> 설치한 앱</figcaption></figure>
         <figure class="state"><a href="v6-day-close--1024x529.png"><img src="v6-day-close--1024x529.png" alt="" width="1024" height="529" loading="lazy"></a><figcaption><b>1024×529</b> 설치한 앱</figcaption></figure>
       </div>
@@ -287,7 +289,7 @@
 
     <article class="screen" id="V7">
       <div class="screen-head"><span class="code is-driver">V7</span><h3>기사 업무 판 · 한 팀</h3><span class="frame">기사 태블릿 · 16:55 최하은 팀 배달</span></div>
-      <p class="purpose">기사가 목록의 한 줄을 눌러 그 팀 일을 크게 본다: 품목과 도장, 미수, 돌려주기 약속. 현장 수납 · 리프트권 추가 · 못 전함 · 전화를 장갑 낀 손으로 누른다.</p>
+      <p class="purpose">기사가 목록의 한 줄을 눌러 그 팀 일을 크게 본다: 품목과 도장, 미수, 반납 일정. 현장 수납 · 리프트권 추가 · 배달 실패 · 전화를 장갑 낀 손으로 누른다.</p>
       <p class="adopt"><b>채택 · 코드 시안</b> — 힉스필드 그림처럼 선 그림 + 글의 큰 옆 버튼 넷이 판을 채우고, 왼쪽 줄 · 도장 · 이름을 키움(연결이 끊겨도 크기 그대로).</p>
       <a class="shot" href="v7-driver-task-sheet.html"><img src="v7-driver-task-sheet.png" alt="V7 기사 업무 판: 배달 17:00 만선 광장, 최하은 · 0026" width="1024" height="600" loading="lazy"></a>
       <div class="actions"><a href="v7-driver-task-sheet.html">코드 시안 열기</a><a href="spec.md">명세 3-8</a></div>
@@ -307,10 +309,10 @@
     <h2 id="g-settings">6. 설정</h2>
 
     <article class="screen" id="V8">
-      <div class="screen-head"><span class="code">V8</span><h3>매장 설정 · 가게 규칙</h3><span class="frame">포스 · 관리 → 매장 설정</span></div>
-      <p class="purpose">리프트권을 꼭 돌려받는지, 권 보증금(이 매장 1매 5,000원 · 받는 때 · 안 돌아오면), 전날 장부로 치는 시각(새벽 6시)을 매장마다 고른다. 다른 스키장은 다르게 고를 수 있다.</p>
+      <div class="screen-head"><span class="code">V8</span><h3>매장 설정 · 운영 규칙</h3><span class="frame">포스 · 관리 → 매장 설정</span></div>
+      <p class="purpose">리프트권 반납 필수 여부, 권 보증금(매장 기준 1매 5,000원 · 입금 시점 · 미반납 시), 영업일 기준 시각(06:00)을 매장마다 선택한다. 다른 스키장은 다르게 고를 수 있다.</p>
       <p class="adopt"><b>채택 · 코드 시안</b> — 힉스필드 그림처럼 고르기 버튼이 카드 폭을 나눠 채움(값 버튼만 제 폭).</p>
-      <a class="shot" href="v8-shop-rules.html"><img src="v8-shop-rules.png" alt="V8 매장 설정 가게 규칙: 리프트권 반납 · 리프트권 보증금 · 전날 장부로 치는 시각" width="1024" height="600" loading="lazy"></a>
+      <a class="shot" href="v8-shop-rules.html"><img src="v8-shop-rules.png" alt="V8 매장 설정 운영 규칙: 리프트권 반납 · 리프트권 보증금 · 영업일 기준 시각" width="1024" height="600" loading="lazy"></a>
       <div class="actions"><a href="v8-shop-rules.html">코드 시안 열기</a><a href="spec.md">명세 3-9</a></div>
       <p class="states-title">작은 틀(카드를 통째로 쪽 넘김)</p>
       <div class="states">
@@ -322,7 +324,7 @@
     </article>
   </section>
 
-  <p class="foot">힉스필드 그림(<code>id="hf-V1"</code> … <code>id="hf-V9"</code>)은 <code>higgsfield/</code>의 미리 보기이고, 검토 전의 첫 설명서로 뽑은 것이라 문구와 구조가 지금 화면과 다릅니다. 채택은 아홉 장 모두 코드 시안이고, 화면마다 옮긴 모양과 두 그림의 차이는 <a href="adoption.md">adoption.md</a>에 있습니다.</p>
+  <p class="foot">힉스필드 그림(<code>id="hf-V1"</code> … <code>id="hf-V9"</code>)은 <code>higgsfield/</code>의 미리 보기이고, 검토 전의 첫 설명서로 뽑은 것이라 문구(2026-09-24 문구 표 이전의 말)와 구조가 지금 화면과 다릅니다. 채택은 아홉 장 모두 코드 시안이고, 화면마다 옮긴 모양과 두 그림의 차이는 <a href="adoption.md">adoption.md</a>에 있습니다.</p>
 </div>
 </body>
 </html>

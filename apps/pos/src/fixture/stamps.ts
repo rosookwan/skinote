@@ -21,11 +21,14 @@ function stepOfRule(steps: Steps, rule: StampRuleKey): StampStepRow | undefined 
   return undefined;
 }
 
-/** 차량이 할 도장을 카운터에서 눌렀을 때: 누가 · 언제 한다는 한 문장과 '매장에서 …'(손님이 매장에 왔을 때). */
-function delegatedNote(step: StampStepRow, vehicle: string, at: number, verb: string): PressNote {
+/**
+ * 차량이 할 도장을 카운터에서 눌렀을 때: 누가 · 언제 한다는 한 줄('1호 차량 수거 예정 · 22:00')과 '매장 반납 처리'(손님이 매장에
+ * 왔을 때). 이름 뒤에 조사를 붙이지 않는다(작업 이름 work는 '배달' · '수거').
+ */
+function delegatedNote(step: StampStepRow, vehicle: string, at: number, work: string): PressNote {
   return {
-    lines: [vehicle + '이 ' + hm(at) + '에 ' + verb, '손님이 매장에 오셨으면 매장에서 도장을 찍습니다.'],
-    action: { actionKey: step.action_key, label: '매장에서 ' + step.label },
+    lines: [vehicle + ' ' + work + ' 예정 · ' + hm(at)],
+    action: { actionKey: step.action_key, label: '매장 ' + step.label + ' 처리' },
   };
 }
 
@@ -43,9 +46,16 @@ function countState(stepKey: string, have: number, need: number, at: number | un
   return { stepKey, state: 'todo' };
 }
 
-function blocked(step: StampStepRow, by: StampStepRow | undefined, message: string): StampCell {
-  return { stepKey: step.key, state: 'blocked', blockedBy: { stepKey: by?.key ?? step.key, message } };
+/**
+ * 막힌 도장: 누른 단계와 기다리는 단계를 한 줄에('반납 불가 · 지급 대기', '지급 불가 · 적재 대기'). 창은 기다리는 단계의 것이
+ * 열리므로(지급 처리), 첫 줄이 왜 그 창인지 말한다. 이름은 도장 단계 설정에서 온다.
+ */
+function blocked(step: StampStepRow, by: StampStepRow | undefined): StampCell {
+  return { stepKey: step.key, state: 'blocked', blockedBy: { stepKey: by?.key ?? step.key, message: blockedMessage(step, by) } };
 }
+
+export const blockedMessage = (step: Pick<StampStepRow, 'label'>, by: Pick<StampStepRow, 'label'> | undefined) =>
+  step.label + ' 불가 · ' + (by ? by.label + ' 대기' : '이전 단계 대기');
 
 /** 줄 하나의 도장(줄 단위 규칙). null이면 그 단계가 이 줄에 해당 없음(na). */
 export function lineStamp(o: FxOrder, l: FxLine, step: StampStepRow, steps: Steps, today: string): StampCell | null {
@@ -57,10 +67,10 @@ export function lineStamp(o: FxOrder, l: FxLine, step: StampStepRow, steps: Step
     case 'qty_issued': {
       if (isVehiclePickup(o) && l.issued < l.qty) {
         const load = stepOfRule(steps, 'qty_loaded');
-        if (Math.max(l.loaded, l.issued) < l.qty) return blocked(step, load, '차량에 먼저 실어야 지급할 수 있습니다');
+        if (Math.max(l.loaded, l.issued) < l.qty) return blocked(step, load);
         // 실은 뒤의 지급(전달)은 기사가 한다: 카운터 칸은 보라 '차량 17:00'(N1 · N6).
         const vehicle = vehicleLabel(o.pickup.vehicleId);
-        return { stepKey: step.key, state: 'delegated', at: iso(o.pickup.at), delegatedTo: vehicle, pressNote: delegatedNote(step, vehicle, o.pickup.at, '손님께 전합니다.') };
+        return { stepKey: step.key, state: 'delegated', at: iso(o.pickup.at), delegatedTo: vehicle, pressNote: delegatedNote(step, vehicle, o.pickup.at, '배달') };
       }
       return countState(step.key, l.issued, l.qty, l.issuedAt, today);
     }
@@ -68,17 +78,17 @@ export function lineStamp(o: FxOrder, l: FxLine, step: StampStepRow, steps: Step
       if (!l.returnable) return null;
       const back = backCount(l);
       if (back >= l.qty) return { stepKey: step.key, state: 'done', ...stampAt(latest(l.returnedAt, l.collectedAt), today) };
-      if (l.issued === 0) return blocked(step, stepOfRule(steps, 'qty_issued'), '지급을 먼저 해야 반납할 수 있습니다');
+      if (l.issued === 0) return blocked(step, stepOfRule(steps, 'qty_issued'));
       if (isVehicleReturn(o)) {
         const vehicle = vehicleLabel(o.giveBack.vehicleId);
-        return { stepKey: step.key, state: 'delegated', at: iso(o.giveBack.at), delegatedTo: vehicle, pressNote: delegatedNote(step, vehicle, o.giveBack.at, '받습니다.') };
+        return { stepKey: step.key, state: 'delegated', at: iso(o.giveBack.at), delegatedTo: vehicle, pressNote: delegatedNote(step, vehicle, o.giveBack.at, '수거') };
       }
       return countState(step.key, back, l.qty, latest(l.returnedAt, l.collectedAt), today);
     }
     case 'qty_collected': {
       // 차량 수거(받음): 내준 것 중 돌아온 수(차량이 받았거나 손님이 매장에 가져옴).
       if (!l.returnable || !isVehicleReturn(o)) return null;
-      if (l.issued === 0) return blocked(step, stepOfRule(steps, 'qty_issued'), '지급을 먼저 해야 받을 수 있습니다');
+      if (l.issued === 0) return blocked(step, stepOfRule(steps, 'qty_issued'));
       return countState(step.key, backCount(l), l.issued, l.collectedAt, today);
     }
     case 'task_received': {
@@ -96,8 +106,12 @@ export function lineStamp(o: FxOrder, l: FxLine, step: StampStepRow, steps: Step
   }
 }
 
-/** 수납 도장(접수 단위, order_due_zero). 다른 팀이 낼 몫만 남으면 '예정', 이 팀이 대신 낼 몫이 남으면 끝이 아니다. */
-export function payStamp(state: FxState, o: FxOrder, stepKey = 'pay'): StampCell {
+/**
+ * 수납 도장(접수 단위, order_due_zero). 다른 팀이 낼 몫만 남으면 '예정', 이 팀이 대신 낼 몫이 남으면 끝이 아니다.
+ * 예정 도장을 누르면 창 대신 한 줄('이정호 팀 결제 예정')과 '직접 수납 · 60,000원'(이 팀이 지금 직접 낼 때).
+ */
+export function payStamp(state: FxState, o: FxOrder, step: Pick<StampStepRow, 'key' | 'action_key'> = { key: 'pay', action_key: 'stamp.pay' }): StampCell {
+  const stepKey = step.key;
   const due = ownDue(o);
   const others = othersDue(state, o);
   if (charged(o) === 0 && others === 0) return { stepKey, state: 'na' };
@@ -106,8 +120,11 @@ export function payStamp(state: FxState, o: FxOrder, stepKey = 'pay'): StampCell
     return { stepKey, state: 'done', ...stampAt(last, state.businessDate) };
   }
   const payer = findOrder(state, o.payerOrderId);
-  if (due > 0 && payer && others === 0) return { stepKey, state: 'scheduled', scheduledNote: payer.teamName + ' 팀 결제 예정' };
-  // 돈은 개수로 세지 않는다: 일부만 받았으면 '일부'.
+  if (due > 0 && payer && others === 0) {
+    const note = payer.teamName + ' 팀 결제 예정';
+    return { stepKey, state: 'scheduled', scheduledNote: note, pressNote: { lines: [note], action: { actionKey: step.action_key, label: '직접 수납 · ' + won(due) } } };
+  }
+  // 돈은 개수로 세지 않는다: 일부만 받았으면 '부분'.
   if (paidTotal(o) > 0) return { stepKey, state: 'partial' };
   return { stepKey, state: 'todo' };
 }
@@ -146,7 +163,7 @@ export function rollupStep(o: FxOrder, step: StampStepRow, steps: Steps, today: 
 /** 단계 하나의 접수 단위 도장: 줄 단위 규칙은 줄들을 모으고, 접수 단위 규칙(order_due_zero)은 접수에서. */
 export function stepStamp(state: FxState, o: FxOrder, step: StampStepRow, steps: Steps): StampCell {
   // 접수 단위 규칙은 지금 order_due_zero 하나다(다른 접수 단위 규칙이 생기면 여기에 더한다).
-  if (step.rule_key === 'order_due_zero') return payStamp(state, o, step.key);
+  if (step.rule_key === 'order_due_zero') return payStamp(state, o, step);
   return rollupStep(o, step, steps, state.businessDate);
 }
 
@@ -166,7 +183,7 @@ export function columnStamp(state: FxState, o: FxOrder, stepKeys: readonly strin
 
 // ── 남은 일 목록(B2)과 다음 할 일 ─────────────────────────────────────────
 
-const CHANNEL_LABEL = { phone: '전화 예약', walk_in: '현장 방문' } as const;
+const CHANNEL_LABEL = { phone: '전화 예약', walk_in: '현장 접수' } as const;
 
 /** 줄 단위 규칙마다 '남은 수'(이 단계에서 아직 할 수): 품목 요약과 주 버튼의 수. */
 const LEFT: Partial<Record<StampRuleKey, (l: FxLine) => number>> = {
@@ -211,7 +228,7 @@ export function checklist(state: FxState, o: FxOrder, steps: Steps, slipStepKeys
   const prepaid = o.payments.filter((p) => p.section === 'lift' && p.at < o.pickup.at).reduce((sum, p) => sum + p.amount, 0);
   drafts.push({
     stepKey: 'order', actionKey: 'next_step', status: 'done', order: 0,
-    parts: [{ text: '접수', drop: 0 }, { text: CHANNEL_LABEL[o.channel], drop: 1 }, ...(prepaid > 0 ? [{ text: '리프트권 ' + won(prepaid) + ' 받음', drop: 2 }] : [])],
+    parts: [{ text: '접수', drop: 0 }, { text: CHANNEL_LABEL[o.channel], drop: 1 }, ...(prepaid > 0 ? [{ text: '리프트권 ' + won(prepaid) + ' 수납', drop: 2 }] : [])],
   });
   const orderScope = [...steps.values()].filter((s) => STAMP_RULE_SCOPE[s.rule_key] === 'order').map((s) => s.key);
   const keys = [...new Set([...slipStepKeys, ...orderScope])];
@@ -239,7 +256,7 @@ export function checklist(state: FxState, o: FxOrder, steps: Steps, slipStepKeys
         lateAt = deliverLateAt(o);
         break;
       case 'qty_issued':
-        if (cell.state === 'delegated') parts.push({ text: '차량이 전함', drop: 7 }, { text: hm(o.pickup.at) + ' ' + placeLabel(o.pickup.placeId), drop: 8 });
+        if (cell.state === 'delegated') parts.push({ text: '차량 배달', drop: 7 }, { text: hm(o.pickup.at) + ' ' + placeLabel(o.pickup.placeId), drop: 8 });
         lateAt = deliverLateAt(o);
         break;
       case 'qty_returned': {
@@ -247,7 +264,7 @@ export function checklist(state: FxState, o: FxOrder, steps: Steps, slipStepKeys
         parts.push(
           { text: dayWord(giveBack.at, today) + ' ' + hm(giveBack.at), drop: 1 },
           { text: giveBack.mode === 'store' ? '매장' : placeLabel(giveBack.placeId), drop: 2 },
-          ...(giveBack.mode === 'vehicle' ? [{ text: '차량이 받음', drop: 3 }] : []),
+          ...(giveBack.mode === 'vehicle' ? [{ text: '차량 수거', drop: 3 }] : []),
           ...(giveBack.note ? [{ text: giveBack.note, drop: 4 }] : []),
         );
         // 반납은 품목을 둘째 줄에 적지 않는다(반납 약속이 한 줄을 채운다).
@@ -261,7 +278,7 @@ export function checklist(state: FxState, o: FxOrder, steps: Steps, slipStepKeys
         const payer = findOrder(state, o.payerOrderId);
         if (cell.state === 'done') parts.push({ text: won(paidTotal(o)), drop: 1 });
         else if (cell.state === 'scheduled' && payer) parts.push({ text: payer.teamName + ' 팀 결제 예정', drop: 1 }, { text: won(due), drop: 2 });
-        else parts.push({ text: won(due + others), drop: 1 }, ...coveredOrders(state, o).map((other, i) => ({ text: other.teamName + ' 팀 몫 포함', drop: 2 + i })));
+        else parts.push({ text: won(due + others), drop: 1 }, ...coveredOrders(state, o).map((other, i) => ({ text: other.teamName + ' 팀분 대납', drop: 2 + i })));
         figure = { amount: due + others };
         // 돌려줄 때 받기로 한 돈은 반납 뒤에(결제 시점).
         if (o.payWhen === 'return') order = 1000 + step.urgency_out;

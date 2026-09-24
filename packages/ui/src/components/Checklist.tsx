@@ -1,7 +1,7 @@
-// 남은 일 목록(ui 5 Checklist, B2). 끝난 일은 한 줄('끝난 일 3')로 접고, 지금 할 일은 주황 테두리 · 바탕, 나머지는 회색.
+// 처리 현황(ui 5 Checklist, B2). 끝난 일은 한 줄('완료 3건')로 접고, 지금 할 일은 주황 테두리 · 바탕, 나머지는 회색.
 // '지금'이라는 글자는 붙이지 않는다: 바로 옆 '지급'과 한눈에 헷갈린다(색과 aria-current로 알린다).
 // 순서와 '지금'은 읽기 모델이 정했다(urgency_out · urgency_back). 큰 버튼(주 버튼)은 지금 할 일 하나다.
-// 품목이 있는 일은 둘째 줄에 품목 요약('스키 2 · 보드 1 · 헬멧 3 · 야간권 3매', 넘치면 '외 N종'). 늦은 일은 '늦음'과 늦음 색.
+// 품목이 있는 일은 둘째 줄에 품목 요약('스키 2 · 보드 1 · 헬멧 3 · 야간권 3매', 넘치면 '외 N종'). 지연된 일은 '반납 지연'과 지연 색.
 import type { ChecklistItem } from '@skinote/contract';
 import type { TextPart } from '@skinote/layout';
 import { useRef, type ReactNode } from 'react';
@@ -20,10 +20,11 @@ export interface ChecklistProps {
   primary?: ReactNode;
 }
 
-/** 늦은 일: 첫 요약 조각(시각) 뒤에 '늦음'(빠지지 않음). */
+/** 지연된 일: 첫 조각(단계 이름)에 '지연'을 붙인다('반납 지연 · 오늘 12:00 · 매장'). 첫 조각은 빠지지 않는다. */
 function withLate(parts: readonly TextPart[]): TextPart[] {
-  const at = Math.min(2, parts.length);
-  return [...parts.slice(0, at), { text: t('late'), drop: 0 }, ...parts.slice(at)];
+  const [first, ...rest] = parts;
+  if (!first) return [{ text: t('late'), drop: 0 }];
+  return [{ ...first, text: t('lateKind', { label: first.text }), drop: 0 }, ...rest];
 }
 
 export function Checklist({ items, nowMs, primary }: ChecklistProps) {

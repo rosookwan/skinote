@@ -5,6 +5,7 @@
   "styleReferenceDir": "work/screens/final",
   "sampleScenario": "12월 26일 (토) 체험 자료(apps/pos/src/fixture/seed.ts, 15:40까지)에 spec.md 2-4의 뒷이야기를 이었다. V7 16:55 · V2 · V3 16:25 · V4 16:26 · V5 16:40 · V9 19:40 · V1 21:30 · V6 27일 00:40. 박준호 팀(0022)이 V9 → V1로 이어지고, 이민호 팀(0042)이 V2 → V3 → V4 → V5로 이어진다. 전화번호는 모두 010-0000-xxxx.",
   "promptAssembly": "prompt = common + '\\n' + screen.prompt. 이미지 참조로 styleReferenceDir/styleReference를 넘긴다(alsoReference는 필요할 때만). 틀 1024×600에 가장 가까운 비율(27:16)로 뽑는다.",
+  "wording": "2026-09-24 사용자 요청으로 화면 문구를 docs/design/wording.md(문구 표)대로 바꿨다: 대화형 말(~하기 · ~드림 · ~주세요 · 약속)을 짧은 시스템 말로. 배치 · 크기는 그대로다. title · primary · mustShow와 prompt의 따옴표 안 화면 글이 모두 새 말이다. higgsfield/의 그림(results.json)은 이 문구 변경 전의 첫 설명서로 뽑은 것이라 그림 속 글은 옛 말이고, 다시 뽑지 않았다(크레딧 0). 다시 뽑을 일이 생기면 지금의 prompt를 쓴다.",
   "common": "High-fidelity UI mockup of ONE screen of 스키노트, the touch-screen POS web app of a Korean ski rental shop, drawn flat and straight-on and filling the whole canvas edge to edge: no device bezel, no browser chrome, no hands, no perspective, no annotations, no extra screens. Match the IMPLEMENTED app shown in the attached screenshot exactly. Visual system: a warm beige desk background #E9E3D6; cream paper sheets #FFFDF7 with a 4px radius and a soft navy shadow; navy ink text #1B2A4A, secondary #34425F, muted gray-blue #56627A; thin ruled lines #C9D3E0 between rows and faint column rules #E3E8EF; page and slip titles in a Korean Myeongjo-like serif at 24px with a 2px navy rule under the title row; everything else in the Pretendard sans-serif, bold 700 to 900. The header is 60px high directly on the beige desk (no colored band, no logo wordmark): at the left a navy filled button with a small book icon and cream text \"장부\", then gray bold \"우리 스키샵\"; at the right cream outlined buttons 52px tall with a 2px navy border and a 10px radius: \"끝 4자리\" with a small keypad icon, \"수거 목록\", \"리프트권\", \"확인 필요\", a bell icon button with a small navy round badge \"2\", \"관리\", and \"나가기\" with an exit icon. There is NO left sidebar and NO vertical menu rail anywhere. Paper index tabs stand on the title rule: the active tab is cream, outlined in 2px navy and joined to the paper; inactive tabs are beige #F6F0E3 with gray text and a light border. Progress is shown with ink stamps: a step not done yet is an empty dashed gray-navy circle about 48px; a finished step is a vermilion #CC3D14 ink ring (3px) on a pale vermilion wash #FCEFEA with the Korean word and time inside (for example 지급 / 16:05), slightly rotated like a real hand stamp; a partly done step has an orange #E8540F ring; a step the delivery van will do is a light-purple rounded box with purple text (for example 차량 / 22:00); a step another team will pay is a light-blue rounded box \"예정\". The vermilion stamp color is NOT a warning. Crimson #B01030 appears ONLY on late things (text plus a 3px left bar), never elsewhere. Selected choice buttons are filled navy with cream text; unselected buttons are cream with a 2px navy border and navy bold text. On POS screens there is exactly ONE primary button, solid orange #E8540F with heavy white 20px text, 56px tall, 10px radius; everything else is outlined. On driver screens the single primary is solid purple #5F33E1, 72px tall. Dialogs are cream cards 860px wide with a 10px radius over a 45% navy scrim; the dialog title row is 56px with heavy 24px navy text and a 2px navy rule under it; the dialog bottom row is 72px with an outlined button showing a left chevron and \"닫기\" at the left and the orange primary at the right. Frame exactly 1024×600 px. Text is at least 16px everywhere (body 17px, titles 24px, key amounts 20–28px bold), every touch target is at least 52px tall (56px on driver screens), no ellipsis, no clipped text, no half-cut rows, no scrollbars; long lists are paged with \"‹ 1 / 2쪽 ›\". All UI text is Korean, crisp and spelled EXACTLY as written in quotes below; no English words anywhere, no lorem ipsum, no watermark. Money is written with commas and 원 (120,000원); phone numbers are 010-0000-xxxx.",
   "screens": [
     {
@@ -23,10 +24,10 @@
       "alsoReference": [
         "06-ledger-stamp-confirm-1024x600.png"
       ],
-      "primary": "반납 도장 찍기 · 스키 2 · 헬멧 2 · 권 2매 · 보증금 10,000원",
+      "primary": "반납 처리 · 스키 2 · 헬멧 2 · 권 2매 · 보증금 10,000원",
       "mustShow": [
-        "반납 도장 · 박준호 팀",
-        "처음에는 모두 골라져 있습니다. 안 가져온 번호만 눌러서 빼고 도장을 찍습니다.",
+        "반납 처리 · 박준호 팀",
+        "전체 선택 · 미반납 번호 해제",
         "설천 2대",
         "두솔동 1대",
         "설천 2 · 두솔동 1",
@@ -39,30 +40,33 @@
         "31번",
         "32번",
         "33번",
-        "남는 것: 보드 1 · 헬멧 1 · 권 1매 → 22:00 솔마을 두솔동 · 설천 주차장 수거는 끝남",
-        "권 2매 보증금 10,000원 돌려드림 · 이 매장은 1매 5,000원 · 남은 보증금 5,000원(권 1매)",
-        "돌려드리는 방법",
+        "미반납: 보드 1 · 헬멧 1 · 권 1매 → 22:00 솔마을 두솔동 수거 예정 · 설천 주차장 수거 취소",
+        "권 2매 보증금 10,000원 반환 · 매장 기준 1매 5,000원 · 잔여 보증금 5,000원(권 1매)",
+        "반환 방법",
         "현금",
-        "미수에서 빼기 · 120,000원 → 110,000원",
+        "미수 차감 · 120,000원 → 110,000원",
         "닫기",
         "대여 접수증",
-        "끝난 일 2",
+        "수령 16:00 · 매장 · 반납 일정 2건 ›",
+        "부분 수납",
+        "완료 2건",
+        "일정 변경",
         "박준호 팀 · 끝 4자리 0022"
       ],
       "variants": [
         {
           "key": "all",
           "hash": "#all",
-          "note": "처음 연 상태(이 팀이 가진 번호가 모두 골라짐)",
-          "primary": "반납 도장 찍기 · 6개 · 3매 · 보증금 15,000원",
+          "note": "처음 연 상태(이 팀이 가진 번호가 모두 선택됨)",
+          "primary": "반납 처리 · 6개 · 3매 · 보증금 15,000원",
           "mustShow": [
-            "남는 것 없음 · 설천 주차장 · 솔마을 두솔동 수거가 모두 끝남",
-            "권 3매 보증금 15,000원 돌려드림 · 이 매장은 1매 5,000원 · 남은 보증금 없음",
-            "미수에서 빼기 · 120,000원 → 105,000원"
+            "미반납 없음 · 설천 주차장 · 솔마을 두솔동 수거 취소",
+            "권 3매 보증금 15,000원 반환 · 매장 기준 1매 5,000원 · 잔여 보증금 없음",
+            "미수 차감 · 120,000원 → 105,000원"
           ]
         }
       ],
-      "prompt": "Screen V1 · 반납 확인 창 · 부분 반납 (POS, 1024×600). A confirm dialog is open over the rental slip of 박준호 팀 at 21:30; everything behind it is dimmed by the navy scrim.\nBehind the scrim (dimmed, same layout as the attached slip screenshot): the paper slip \"대여 접수증\" with \"접수 번호 261226-017\"; the field row \"날짜 12월 26일 (토)\", \"구분 전화 예약\", \"대표자 박준호\", \"연락처 010-0000-0022\", \"인원 3명\"; item rows \"스키 2 80,000원\", \"보드 1 25,000원\", \"헬멧 3 15,000원\", \"야간권 성인 3매 105,000원\", each with a vermilion oval stamp \"지급 16:05\" in the 지급 column and a light-purple box \"차량 22:00\" in the 반납 column; the promise line \"받기 16:00 · 매장 · 돌려주기 약속 2가지 ›\"; the money line \"청구 225,000원 · 수납 105,000원 · 보증금 15,000원\", bold \"미수 120,000원\" and an orange word stamp \"수납 일부\". Right panel, top to bottom: \"끝난 일 2\" with a green check, a gray two-line row \"반납 · 오늘 22:00\" / \"설천 주차장 · 솔마을 두솔동\", an orange-tinted current row \"수납 · 120,000원\", the orange button \"수납 · 120,000원\", outlined buttons \"약속 바꾸기\", \"인쇄\", \"전화\", \"더 보기\". Footer: outlined \"‹ 장부\" and bold \"박준호 팀 · 끝 4자리 0022\".\nThe dialog: a cream card 860px wide and about 448px tall, centered. Title row 56px: \"반납 도장 · 박준호 팀\". There is NO \"모두 반납 / 일부만\" toggle.\nBody, 24px side padding, 8px between rows:\n1) A gray 16px line: \"처음에는 모두 골라져 있습니다. 안 가져온 번호만 눌러서 빼고 도장을 찍습니다.\"\n2) Four item boxes in a 2×2 grid (two rows of 52px, 8px apart), each box a pale beige #F6F0E3 rounded panel: at the left a bold 20px item name with a gray 16px second line, at the right small square number buttons 52px tall (about 60px wide). A selected number is filled navy with cream text (brought back); an unselected number is cream with a navy outline (not brought). Box 1: \"스키\" / \"설천 2대\", numbers \"17번\" and \"18번\" both selected. Box 2: \"보드\" / \"두솔동 1대\" with the name in muted gray, one number \"5번\" unselected. Box 3: \"헬멧\" / \"설천 2 · 두솔동 1\", numbers \"12번\" and \"14번\" selected, \"15번\" unselected. Box 4: \"야간권 성인\" / \"설천 2 · 두솔동 1\", numbers \"31번\" and \"32번\" selected, \"33번\" unselected.\n3) Above a thin rule, one bold line: \"남는 것: 보드 1 · 헬멧 1 · 권 1매 → 22:00 솔마을 두솔동 · 설천 주차장 수거는 끝남\".\n4) One line: \"권 2매 보증금 10,000원 돌려드림 · 이 매장은 1매 5,000원 · 남은 보증금 5,000원(권 1매)\" with \"10,000원 돌려드림\" in heavier weight.\n5) A row 52px: gray bold 16px label \"돌려드리는 방법\", then two choice buttons \"현금\" (selected, navy fill, about 110px wide) and \"미수에서 빼기 · 120,000원 → 110,000원\" (outlined).\nBottom row 72px: at the left the outlined button with a left chevron and \"닫기\"; at the right the only orange primary button \"반납 도장 찍기 · 스키 2 · 헬멧 2 · 권 2매 · 보증금 10,000원\".",
+      "prompt": "Screen V1 · 반납 확인 창 · 부분 반납 (POS, 1024×600). A confirm dialog is open over the rental slip of 박준호 팀 at 21:30; everything behind it is dimmed by the navy scrim.\nBehind the scrim (dimmed, same layout as the attached slip screenshot): the paper slip \"대여 접수증\" with \"접수 번호 261226-017\"; the field row \"날짜 12월 26일 (토)\", \"구분 전화 예약\", \"대표자 박준호\", \"연락처 010-0000-0022\", \"인원 3명\"; item rows \"스키 2 80,000원\", \"보드 1 25,000원\", \"헬멧 3 15,000원\", \"야간권 성인 3매 105,000원\", each with a vermilion oval stamp \"지급 16:05\" in the 지급 column and a light-purple box \"차량 22:00\" in the 반납 column; the schedule line \"수령 16:00 · 매장 · 반납 일정 2건 ›\"; the money line \"청구 225,000원 · 수납 105,000원 · 보증금 15,000원\", bold \"미수 120,000원\" and an orange word stamp \"부분 수납\". Right panel, top to bottom: \"완료 2건\" with a green check, a gray two-line row \"반납 · 오늘 22:00\" / \"설천 주차장 · 솔마을 두솔동\", an orange-tinted current row \"수납 · 120,000원\", the orange button \"수납 처리 · 120,000원\", outlined buttons \"일정 변경\", \"인쇄\", \"전화\", \"더 보기\". Footer: outlined \"‹ 장부\" and bold \"박준호 팀 · 끝 4자리 0022\".\nThe dialog: a cream card 860px wide and about 448px tall, centered. Title row 56px: \"반납 처리 · 박준호 팀\". There is NO \"모두 반납 / 일부만\" toggle.\nBody, 24px side padding, 8px between rows:\n1) A gray 16px line: \"전체 선택 · 미반납 번호 해제\"\n2) Four item boxes in a 2×2 grid (two rows of 52px, 8px apart), each box a pale beige #F6F0E3 rounded panel: at the left a bold 20px item name with a gray 16px second line, at the right small square number buttons 52px tall (about 60px wide). A selected number is filled navy with cream text (brought back); an unselected number is cream with a navy outline (not brought). Box 1: \"스키\" / \"설천 2대\", numbers \"17번\" and \"18번\" both selected. Box 2: \"보드\" / \"두솔동 1대\" with the name in muted gray, one number \"5번\" unselected. Box 3: \"헬멧\" / \"설천 2 · 두솔동 1\", numbers \"12번\" and \"14번\" selected, \"15번\" unselected. Box 4: \"야간권 성인\" / \"설천 2 · 두솔동 1\", numbers \"31번\" and \"32번\" selected, \"33번\" unselected.\n3) Above a thin rule, one bold line: \"미반납: 보드 1 · 헬멧 1 · 권 1매 → 22:00 솔마을 두솔동 수거 예정 · 설천 주차장 수거 취소\".\n4) One line: \"권 2매 보증금 10,000원 반환 · 매장 기준 1매 5,000원 · 잔여 보증금 5,000원(권 1매)\" with \"10,000원 반환\" in heavier weight.\n5) A row 52px: gray bold 16px label \"반환 방법\", then two choice buttons \"현금\" (selected, navy fill, about 110px wide) and \"미수 차감 · 120,000원 → 110,000원\" (outlined).\nBottom row 72px: at the left the outlined button with a left chevron and \"닫기\"; at the right the only orange primary button \"반납 처리 · 스키 2 · 헬멧 2 · 권 2매 · 보증금 10,000원\".",
       "checkFrames": [
         {
           "w": 1024,
@@ -79,7 +83,7 @@
     {
       "code": "V9",
       "group": "A",
-      "title": "약속 바꾸기 · 일부 품목",
+      "title": "일정 변경 · 부분 품목",
       "frame": {
         "w": 1024,
         "h": 600
@@ -92,14 +96,14 @@
       "alsoReference": [
         "06-ledger-stamp-confirm-1024x600.png"
       ],
-      "primary": "약속 바꾸기 · 보드 1 · 헬멧 1 · 권 1매",
+      "primary": "일정 변경 · 보드 1 · 헬멧 1 · 권 1매",
       "mustShow": [
-        "약속 바꾸기 · 박준호 팀",
-        "바꿀 품목",
-        "빌린 2대",
-        "빌린 1대",
-        "빌린 3개",
-        "빌린 3매",
+        "일정 변경 · 박준호 팀",
+        "변경 품목",
+        "대여 2대",
+        "대여 1대",
+        "대여 3개",
+        "대여 3매",
         "반납 시각",
         "오전타임 후 12:00",
         "오후 16:30",
@@ -116,14 +120,16 @@
         "수거 차량",
         "1호 차량",
         "2호 차량",
-        "옮김",
+        "변경",
         "보드 1 · 헬멧 1 · 권 1매: 22:00 설천 주차장 → 22:00 솔마을 두솔동 · 1호 차량",
-        "그대로",
+        "유지",
         "스키 2 · 헬멧 2 · 권 2매: 22:00 설천 주차장 · 1호 차량",
         "닫기",
-        "끝난 일 2"
+        "수령 16:00 · 매장 · 반납 22:00 · 설천 주차장 · 1호 차량",
+        "설천 주차장 · 차량 수거",
+        "완료 2건"
       ],
-      "prompt": "Screen V9 · 약속 바꾸기 · 일부 품목 (POS, 1024×600). A dialog for changing the return promise of only some items is open over the rental slip of 박준호 팀 at 19:40; the slip behind is dimmed by the navy scrim.\nBehind the scrim (dimmed, same layout as the attached slip screenshot): the paper slip \"대여 접수증\" with \"접수 번호 261226-017\"; the field row \"날짜 12월 26일 (토)\", \"구분 전화 예약\", \"대표자 박준호\", \"연락처 010-0000-0022\", \"인원 3명\"; item rows \"스키 2 80,000원\", \"보드 1 25,000원\", \"헬멧 3 15,000원\", \"야간권 성인 3매 105,000원\", each with a vermilion oval stamp \"지급 16:05\" in the 지급 column and a light-purple box \"차량 22:00\" in the 반납 column; the promise line \"받기 16:00 · 매장 · 돌려주기 22:00 · 설천 주차장 · 1호 차량\"; the money line \"청구 225,000원 · 수납 105,000원 · 보증금 15,000원\", bold \"미수 120,000원\" and an orange word stamp \"수납 일부\". Right panel, top to bottom: \"끝난 일 2\" with a green check, a gray two-line row \"반납 · 오늘 22:00\" / \"설천 주차장 · 차량이 받음\", an orange-tinted current row \"수납 · 120,000원\", the orange button \"수납 · 120,000원\", outlined buttons \"약속 바꾸기\", \"인쇄\", \"전화\", \"더 보기\". Footer: outlined \"‹ 장부\" and bold \"박준호 팀 · 끝 4자리 0022\".\nThe dialog: a cream card 860px wide and about 503px tall, centered. Title row 56px: \"약속 바꾸기 · 박준호 팀\".\nBody: every row has a gray bold 16px label in a 100px column at the left and 52px-tall controls, 8px between rows:\n1) Label \"바꿀 품목\": four quantity steppers in a 2×2 grid on pale beige panels. Each stepper: bold item name with a gray second line, a 52px square \"−\", the value in bold 24px, a 52px square \"+\". \"스키\" / \"빌린 2대\" value \"0대\" in muted gray (− grayed); \"보드\" / \"빌린 1대\" value \"1대\" (+ grayed); \"헬멧\" / \"빌린 3개\" value \"1개\"; \"야간권 성인\" / \"빌린 3매\" value \"1매\".\n2) Label \"반납 시각\": six choice buttons \"오전타임 후 12:00\" and \"오후 16:30\" (both disabled: dashed gray border, gray text, because those times have passed today), \"야간 22:00\" (selected, navy fill), \"심야 24:00\", \"내일\", \"다른 날 ›\".\n3) Label \"반납 장소\": \"매장 직접\", \"설천 ›\", \"만선 ›\", a selected navy two-line button \"솔마을\" over \"두솔동\", \"꽃마을 ›\".\n4) Label \"수거 차량\": \"1호 차량\" (selected, navy fill) and \"2호 차량\".\n5) Above a thin rule, two bold 17px lines with a bold lead word: \"옮김  보드 1 · 헬멧 1 · 권 1매: 22:00 설천 주차장 → 22:00 솔마을 두솔동 · 1호 차량\" and \"그대로  스키 2 · 헬멧 2 · 권 2매: 22:00 설천 주차장 · 1호 차량\".\nBottom row 72px: outlined button with a left chevron and \"닫기\" at the left; the only orange primary \"약속 바꾸기 · 보드 1 · 헬멧 1 · 권 1매\" at the right.",
+      "prompt": "Screen V9 · 일정 변경 · 부분 품목 (POS, 1024×600). A dialog for changing the return schedule of only some items is open over the rental slip of 박준호 팀 at 19:40; the slip behind is dimmed by the navy scrim.\nBehind the scrim (dimmed, same layout as the attached slip screenshot): the paper slip \"대여 접수증\" with \"접수 번호 261226-017\"; the field row \"날짜 12월 26일 (토)\", \"구분 전화 예약\", \"대표자 박준호\", \"연락처 010-0000-0022\", \"인원 3명\"; item rows \"스키 2 80,000원\", \"보드 1 25,000원\", \"헬멧 3 15,000원\", \"야간권 성인 3매 105,000원\", each with a vermilion oval stamp \"지급 16:05\" in the 지급 column and a light-purple box \"차량 22:00\" in the 반납 column; the schedule line \"수령 16:00 · 매장 · 반납 22:00 · 설천 주차장 · 1호 차량\"; the money line \"청구 225,000원 · 수납 105,000원 · 보증금 15,000원\", bold \"미수 120,000원\" and an orange word stamp \"부분 수납\". Right panel, top to bottom: \"완료 2건\" with a green check, a gray two-line row \"반납 · 오늘 22:00\" / \"설천 주차장 · 차량 수거\", an orange-tinted current row \"수납 · 120,000원\", the orange button \"수납 처리 · 120,000원\", outlined buttons \"일정 변경\", \"인쇄\", \"전화\", \"더 보기\". Footer: outlined \"‹ 장부\" and bold \"박준호 팀 · 끝 4자리 0022\".\nThe dialog: a cream card 860px wide and about 503px tall, centered. Title row 56px: \"일정 변경 · 박준호 팀\".\nBody: every row has a gray bold 16px label in a 100px column at the left and 52px-tall controls, 8px between rows:\n1) Label \"변경 품목\": four quantity steppers in a 2×2 grid on pale beige panels. Each stepper: bold item name with a gray second line, a 52px square \"−\", the value in bold 24px, a 52px square \"+\". \"스키\" / \"대여 2대\" value \"0대\" in muted gray (− grayed); \"보드\" / \"대여 1대\" value \"1대\" (+ grayed); \"헬멧\" / \"대여 3개\" value \"1개\"; \"야간권 성인\" / \"대여 3매\" value \"1매\".\n2) Label \"반납 시각\": six choice buttons \"오전타임 후 12:00\" and \"오후 16:30\" (both disabled: dashed gray border, gray text, because those times have passed today), \"야간 22:00\" (selected, navy fill), \"심야 24:00\", \"내일\", \"다른 날 ›\".\n3) Label \"반납 장소\": \"매장 직접\", \"설천 ›\", \"만선 ›\", a selected navy two-line button \"솔마을\" over \"두솔동\", \"꽃마을 ›\".\n4) Label \"수거 차량\": \"1호 차량\" (selected, navy fill) and \"2호 차량\".\n5) Above a thin rule, two bold 17px lines with a bold lead word: \"변경  보드 1 · 헬멧 1 · 권 1매: 22:00 설천 주차장 → 22:00 솔마을 두솔동 · 1호 차량\" and \"유지  스키 2 · 헬멧 2 · 권 2매: 22:00 설천 주차장 · 1호 차량\".\nBottom row 72px: outlined button with a left chevron and \"닫기\" at the left; the only orange primary \"일정 변경 · 보드 1 · 헬멧 1 · 권 1매\" at the right.",
       "checkFrames": [
         {
           "w": 1024,
@@ -140,9 +146,9 @@
         {
           "key": "store",
           "hash": "#store",
-          "note": "매장 직접을 고름(수거 차량 줄은 자리만, 창 높이 그대로)",
+          "note": "매장 직접을 선택(수거 차량 줄은 자리만, 창 높이 그대로)",
           "mustShow": [
-            "보드 1 · 헬멧 1 · 권 1매: 22:00 설천 주차장 → 22:00 매장 직접 · 손님이 가져옴",
+            "보드 1 · 헬멧 1 · 권 1매: 22:00 설천 주차장 → 22:00 매장 직접 반납",
             "솔마을 ›"
           ]
         }
@@ -164,34 +170,37 @@
       "alsoReference": [
         "04-slip-o22-1024x600.png"
       ],
-      "primary": "돈 받고 접수 확정 · 현금 160,000원",
+      "primary": "접수 확정 · 현금 160,000원",
       "mustShow": [
-        "접수 확정 · 이민호 팀",
+        "결제 · 이민호 팀",
         "장비",
         "스키 4 · 의류 3 · 헬멧 1",
         "이정호 팀 결제 예정",
         "225,000원",
         "할인 없음",
-        "할인 고르기 ›",
+        "할인 적용 ›",
         "리프트권",
         "야간권 성인 4매",
         "140,000원",
         "리프트권 보증금",
-        "4매 · 이 매장은 1매 5,000원 · 권을 돌려받으면 돌려드림",
+        "4매 · 매장 기준 1매 5,000원 · 반납 시 반환",
         "현금 20,000원",
         "카드",
         "현금",
         "계좌이체",
-        "나중에",
-        "다른 수단",
-        "장비 225,000원 · 결제할 팀",
+        "후불",
+        "기타",
+        "장비 225,000원 · 결제 팀",
         "이민호 · 0042",
         "이정호 · 0032",
-        "다른 팀 고르기 · 끝 4자리",
-        "지금 받는 돈 현금 160,000원 = 리프트권 140,000원 + 보증금 20,000원",
-        "닫기"
+        "다른 팀 찾기 · 끝 4자리",
+        "받을 금액 현금 160,000원 = 리프트권 140,000원 + 보증금 20,000원",
+        "닫기",
+        "② 일정",
+        "③ 결제",
+        "다음 · 결제"
       ],
-      "prompt": "Screen V4 · 접수 확정 창 · 칸별 수납 (POS, 1024×600). The confirm window at the end of a new walk-in order for 이민호 팀 at 16:26. It is open over the new-order screen, which is dimmed by the navy scrim.\nBehind the scrim (dimmed, the V3 screen): the header; a paper slip with a 2px navy border titled in serif \"새 접수\" with three index tabs \"① 품목\", \"② 약속\" (active), \"③ 확정\"; inside it four groups of choice buttons (수령 방법, 반납 날, 반납 시각, 반납 장소); a right cream panel titled \"접수 내용\" ending with the orange button \"다음 · 받을 돈 정하기\"; footer \"‹ 장부\" and \"새 접수 · 이민호 팀 · 4명\".\nThe window: a cream card 860px wide and 504px tall, centered. Title row 56px: \"접수 확정 · 이민호 팀\".\nSection 1 (104px: a 40px text line, a 52px button line, then a 12px gap and a thin rule): text line bold 20px \"장비\", gray \"스키 4 · 의류 3 · 헬멧 1\", and at the right gray \"할인 없음\", blue bold \"이정호 팀 결제 예정\" and the amount \"225,000원\" in muted gray (not taken now). Button line: five method buttons 52px tall and at least 110px wide: \"카드\", \"현금\", \"계좌이체\", \"나중에\" (selected, navy fill), \"다른 수단\"; at the far right end an outlined button \"할인 고르기 ›\".\nSection 2 (same shape): bold \"리프트권\", gray \"야간권 성인 4매\", at the right gray \"할인 없음\" and bold navy \"140,000원\". Buttons \"카드\", \"현금\" (selected, navy fill), \"계좌이체\", \"나중에\", \"다른 수단\", and at the far right \"할인 고르기 ›\".\nSection 3, one 52px line with a thin rule under it and NO buttons: bold \"리프트권 보증금\", gray \"4매 · 이 매장은 1매 5,000원 · 권을 돌려받으면 돌려드림\", right-aligned bold \"현금 20,000원\".\nPayer row 64px: gray bold label \"장비 225,000원 · 결제할 팀\" and three choice buttons 52px: \"이민호 · 0042\", \"이정호 · 0032\" (selected, navy fill), \"다른 팀 고르기 · 끝 4자리\" with a small keypad icon.\nAbove a thin rule, one 40px line: bold \"지금 받는 돈\", bold \"현금 160,000원\", then \"= 리프트권 140,000원 + 보증금 20,000원\".\nBottom row 72px: outlined button with a left chevron and \"닫기\" at the left; the only orange primary \"돈 받고 접수 확정 · 현금 160,000원\" at the right.",
+      "prompt": "Screen V4 · 접수 확정 창 · 칸별 수납 (POS, 1024×600). The confirm window at the end of a new walk-in order for 이민호 팀 at 16:26. It is open over the new-order screen, which is dimmed by the navy scrim.\nBehind the scrim (dimmed, the V3 screen): the header; a paper slip with a 2px navy border titled in serif \"새 접수\" with three index tabs \"① 품목\", \"② 일정\" (active), \"③ 결제\"; inside it four groups of choice buttons (수령 방법, 반납일, 반납 시각, 반납 장소); a right cream panel titled \"접수 내용\" ending with the orange button \"다음 · 결제\"; footer \"‹ 장부\" and \"새 접수 · 이민호 팀 · 4명\".\nThe window: a cream card 860px wide and 504px tall, centered. Title row 56px: \"결제 · 이민호 팀\".\nSection 1 (104px: a 40px text line, a 52px button line, then a 12px gap and a thin rule): text line bold 20px \"장비\", gray \"스키 4 · 의류 3 · 헬멧 1\", and at the right gray \"할인 없음\", blue bold \"이정호 팀 결제 예정\" and the amount \"225,000원\" in muted gray (not taken now). Button line: five method buttons 52px tall and at least 110px wide: \"카드\", \"현금\", \"계좌이체\", \"후불\" (selected, navy fill), \"기타\"; at the far right end an outlined button \"할인 적용 ›\".\nSection 2 (same shape): bold \"리프트권\", gray \"야간권 성인 4매\", at the right gray \"할인 없음\" and bold navy \"140,000원\". Buttons \"카드\", \"현금\" (selected, navy fill), \"계좌이체\", \"후불\", \"기타\", and at the far right \"할인 적용 ›\".\nSection 3, one 52px line with a thin rule under it and NO buttons: bold \"리프트권 보증금\", gray \"4매 · 매장 기준 1매 5,000원 · 반납 시 반환\", right-aligned bold \"현금 20,000원\".\nPayer row 64px: gray bold label \"장비 225,000원 · 결제 팀\" and three choice buttons 52px: \"이민호 · 0042\", \"이정호 · 0032\" (selected, navy fill), \"다른 팀 찾기 · 끝 4자리\" with a small keypad icon.\nAbove a thin rule, one 40px line: bold \"받을 금액\", bold \"현금 160,000원\", then \"= 리프트권 140,000원 + 보증금 20,000원\".\nBottom row 72px: outlined button with a left chevron and \"닫기\" at the left; the only orange primary \"접수 확정 · 현금 160,000원\" at the right.",
       "checkFrames": [
         {
           "w": 1024,
@@ -208,10 +217,10 @@
         {
           "key": "card",
           "hash": "#card",
-          "note": "장비도 지금 카드로(나중에인 칸 없음 · 결제할 팀 줄은 자리만, 창 높이 그대로)",
-          "primary": "돈 받고 접수 확정 · 카드 225,000원 · 현금 160,000원",
+          "note": "장비도 지금 카드로(후불인 칸 없음 · 결제 팀 줄은 자리만, 창 높이 그대로)",
+          "primary": "접수 확정 · 카드 225,000원 · 현금 160,000원",
           "mustShow": [
-            "지금 받는 돈 카드 225,000원 · 현금 160,000원 (현금에 보증금 20,000원)"
+            "받을 금액 카드 225,000원 · 현금 160,000원 (현금 중 보증금 20,000원)"
           ]
         }
       ]
@@ -219,7 +228,7 @@
     {
       "code": "V2",
       "group": "B",
-      "title": "새 접수 ① 품목 고르기",
+      "title": "새 접수 ① 품목",
       "frame": {
         "w": 1024,
         "h": 600
@@ -228,12 +237,12 @@
       "file": "v2-new-order-items.html",
       "png": "v2-new-order-items.png",
       "styleReference": "04-slip-o22-1024x600.png",
-      "primary": "다음 · 약속 정하기",
+      "primary": "다음 · 일정",
       "mustShow": [
         "새 접수",
         "① 품목",
-        "② 약속",
-        "③ 확정",
+        "② 일정",
+        "③ 결제",
         "대표자",
         "이민호",
         "연락처",
@@ -255,8 +264,8 @@
         "110",
         "사이즈 100",
         "1벌",
-        "의류 모두 3벌",
-        "고른 것",
+        "의류 합계 3벌",
+        "선택 품목",
         "스키 4대",
         "부츠 · 폴 포함",
         "160,000원",
@@ -264,23 +273,23 @@
         "95 2벌 · 100 1벌",
         "60,000원",
         "헬멧 1개",
-        "사이즈 중",
+        "중 사이즈",
         "5,000원",
         "야간권 성인 4매",
-        "보증금 · 이 매장은 1매 5,000원",
+        "보증금 · 매장 기준 1매 5,000원",
         "140,000원",
         "장비 225,000원",
         "리프트권 140,000원",
         "합계 365,000원",
-        "보증금 · 따로 받음 20,000원",
+        "보증금 · 별도 20,000원",
         "새 접수 · 이민호 팀 · 4명"
       ],
-      "prompt": "Screen V2 · 새 접수 ① 품목 고르기 (POS, 1024×600, full screen). A walk-in team at 16:25; step 1 of 3.\nHeader 60px as in the common description.\nLeft, from x 12 to 716 and y 72 to 528: a paper slip with a 2px navy border (the same paper as the attached slip screenshot). Slip head 60px: serif \"새 접수\" at the left; at the right three paper index tabs 52px tall standing on the head rule: \"① 품목\" (active), \"② 약속\", \"③ 확정\".\nRow 1, 52px: three field boxes with a 2px light border and 10px radius: small gray \"대표자\" then bold \"이민호\"; small gray \"연락처\" then bold \"010-0000-0042\" with a small keypad icon; small gray \"인원\" then a 52px \"−\" button, bold \"4명\", a 52px \"+\" button.\nRow 2: a grid of seven big item-kind buttons in three columns (3 + 3 + 1), each 56px tall, cream with a 2px navy border and 10px radius; first line bold 20px name, second line gray 16px; a chosen kind shows a navy round count badge with a cream number at its right edge. No kind button is filled navy. \"스키\" / \"1일 40,000원\" badge \"4\"; \"보드\" / \"1일 25,000원\"; \"부츠\" / \"1일 10,000원\"; \"의류\" / \"1일 20,000원\" badge \"3\" (this one is open: pale beige #F6F0E3 fill like the band below, a 3px navy border with a thick 4px navy bar along its bottom edge, navy text); \"헬멧\" / \"1일 5,000원\" badge \"1\"; \"고글\" / \"1일 5,000원\"; \"리프트권\" / \"야간권 35,000원\" badge \"4\".\nRows 3 and 4, 52px each, inside one pale beige #F6F0E3 band with a 10px radius: the open kind's lines. Row 3: bold \"의류 사이즈\", then size buttons \"90\", \"95 · 2벌\", \"100 · 1벌\" (selected, navy fill), \"105\", \"110\". Row 4: bold \"사이즈 100\", a 52px \"−\", bold 24px \"1벌\", a 52px \"+\", and gray \"의류 모두 3벌\".\nRight panel, from x 732 to 1012: a cream panel with a soft shadow. Title \"고른 것\" with a 2px navy rule. Four two-line rows 52px, amount right-aligned: \"스키 4대\" / \"부츠 · 폴 포함\" and \"160,000원\"; \"의류 3벌\" / \"95 2벌 · 100 1벌\" and \"60,000원\"; \"헬멧 1개\" / \"사이즈 중\" and \"5,000원\"; \"야간권 성인 4매\" / \"보증금 · 이 매장은 1매 5,000원\" and \"140,000원\". Under a thin rule four lines, each with the name at the left and the amount right-aligned in the same column as the amounts above, 4px apart: \"장비\" and \"225,000원\"; \"리프트권\" and \"140,000원\"; bold 20px \"합계\" and \"365,000원\"; gray \"보증금 · 따로 받음\" and \"20,000원\". At the bottom of the panel the only orange primary, 56px tall and as wide as the panel: \"다음 · 약속 정하기\".\nFooter 72px on cream: outlined button with a left chevron and \"장부\", then bold \"새 접수 · 이민호 팀 · 4명\"."
+      "prompt": "Screen V2 · 새 접수 ① 품목 (POS, 1024×600, full screen). A walk-in team at 16:25; step 1 of 3.\nHeader 60px as in the common description.\nLeft, from x 12 to 716 and y 72 to 528: a paper slip with a 2px navy border (the same paper as the attached slip screenshot). Slip head 60px: serif \"새 접수\" at the left; at the right three paper index tabs 52px tall standing on the head rule: \"① 품목\" (active), \"② 일정\", \"③ 결제\".\nRow 1, 52px: three field boxes with a 2px light border and 10px radius: small gray \"대표자\" then bold \"이민호\"; small gray \"연락처\" then bold \"010-0000-0042\" with a small keypad icon; small gray \"인원\" then a 52px \"−\" button, bold \"4명\", a 52px \"+\" button.\nRow 2: a grid of seven big item-kind buttons in three columns (3 + 3 + 1), each 56px tall, cream with a 2px navy border and 10px radius; first line bold 20px name, second line gray 16px; a chosen kind shows a navy round count badge with a cream number at its right edge. No kind button is filled navy. \"스키\" / \"1일 40,000원\" badge \"4\"; \"보드\" / \"1일 25,000원\"; \"부츠\" / \"1일 10,000원\"; \"의류\" / \"1일 20,000원\" badge \"3\" (this one is open: pale beige #F6F0E3 fill like the band below, a 3px navy border with a thick 4px navy bar along its bottom edge, navy text); \"헬멧\" / \"1일 5,000원\" badge \"1\"; \"고글\" / \"1일 5,000원\"; \"리프트권\" / \"야간권 35,000원\" badge \"4\".\nRows 3 and 4, 52px each, inside one pale beige #F6F0E3 band with a 10px radius: the open kind's lines. Row 3: bold \"의류 사이즈\", then size buttons \"90\", \"95 · 2벌\", \"100 · 1벌\" (selected, navy fill), \"105\", \"110\". Row 4: bold \"사이즈 100\", a 52px \"−\", bold 24px \"1벌\", a 52px \"+\", and gray \"의류 합계 3벌\".\nRight panel, from x 732 to 1012: a cream panel with a soft shadow. Title \"선택 품목\" with a 2px navy rule. Four two-line rows 52px, amount right-aligned: \"스키 4대\" / \"부츠 · 폴 포함\" and \"160,000원\"; \"의류 3벌\" / \"95 2벌 · 100 1벌\" and \"60,000원\"; \"헬멧 1개\" / \"중 사이즈\" and \"5,000원\"; \"야간권 성인 4매\" / \"보증금 · 매장 기준 1매 5,000원\" and \"140,000원\". Under a thin rule four lines, each with the name at the left and the amount right-aligned in the same column as the amounts above, 4px apart: \"장비\" and \"225,000원\"; \"리프트권\" and \"140,000원\"; bold 20px \"합계\" and \"365,000원\"; gray \"보증금 · 별도\" and \"20,000원\". At the bottom of the panel the only orange primary, 56px tall and as wide as the panel: \"다음 · 일정\".\nFooter 72px on cream: outlined button with a left chevron and \"장부\", then bold \"새 접수 · 이민호 팀 · 4명\"."
     },
     {
       "code": "V3",
       "group": "B",
-      "title": "새 접수 ② 약속 정하기",
+      "title": "새 접수 ② 일정",
       "frame": {
         "w": 1024,
         "h": 600
@@ -289,16 +298,16 @@
       "file": "v3-new-order-promise.html",
       "png": "v3-new-order-promise.png",
       "styleReference": "04-slip-o22-1024x600.png",
-      "primary": "다음 · 받을 돈 정하기",
+      "primary": "다음 · 결제",
       "mustShow": [
         "새 접수",
-        "② 약속",
-        "③ 확정",
+        "② 일정",
+        "③ 결제",
         "수령 방법",
-        "매장 직접 · 지금",
+        "매장 직접 · 즉시",
         "예약 · 수령일 ›",
         "차량 배달 ›",
-        "반납 날",
+        "반납일",
         "오늘",
         "내일",
         "다른 날 ›",
@@ -314,22 +323,22 @@
         "솔마을 ›",
         "꽃마을 ›",
         "접수 내용",
-        "수령 · 지금 16:25",
+        "수령 · 즉시 16:25",
         "반납 · 오늘 22:00",
-        "매장 직접 · 손님이 가져옴",
+        "매장 직접 반납",
         "장비 225,000원",
         "스키 4 · 의류 3 · 헬멧 1",
         "리프트권 140,000원",
-        "야간권 4매 · 보증금 20,000원 따로",
-        "품목마다 다른 약속은 접수 뒤 접수증의 약속 바꾸기에서 합니다.",
+        "야간권 4매 · 보증금 20,000원 별도",
+        "품목별 일정 · 접수 후 일정 변경",
         "새 접수 · 이민호 팀 · 4명"
       ],
-      "prompt": "Screen V3 · 새 접수 ② 약속 정하기 (POS, 1024×600, full screen). The same walk-in team at 16:25; step 2 of 3.\nHeader 60px as in the common description.\nLeft, from x 12 to 716 and y 72 to 528: the same paper slip with a 2px navy border. Slip head 60px: serif \"새 접수\"; index tabs \"① 품목\", \"② 약속\" (active), \"③ 확정\".\nFour blocks, each a small gray bold 16px title line (28px) above one row of 52px choice buttons at least 104px wide, 8px between blocks:\n1) Title \"수령 방법\": \"매장 직접 · 지금\" (selected, navy fill), \"예약 · 수령일 ›\", \"차량 배달 ›\".\n2) Title \"반납 날\": \"오늘\" (selected, navy fill), \"내일\", \"다른 날 ›\".\n3) Title \"반납 시각\": \"오전타임 후 12:00\" and \"오후 16:30\" drawn as not available now (dashed light gray-blue border, no fill, muted gray text; not red), then \"야간 22:00\" (selected, navy fill) and \"심야 24:00\".\n4) Title \"반납 장소\": \"매장 직접\" (selected, navy fill), \"설천 ›\", \"만선 ›\", \"솔마을 ›\", \"꽃마을 ›\".\nThere is no lift-ticket row on this step (tickets are chosen on step 1).\nRight panel, from x 732 to 1012: cream panel titled \"접수 내용\" with a 2px navy rule. Four two-line rows 52px: \"수령 · 지금 16:25\" / \"매장 직접\"; \"반납 · 오늘 22:00\" / \"매장 직접 · 손님이 가져옴\"; \"장비 225,000원\" / \"스키 4 · 의류 3 · 헬멧 1\"; \"리프트권 140,000원\" / \"야간권 4매 · 보증금 20,000원 따로\". Under it a gray 16px note on two lines: \"품목마다 다른 약속은 접수 뒤 접수증의 약속 바꾸기에서 합니다.\" At the bottom the only orange primary, 56px tall and panel-wide: \"다음 · 받을 돈 정하기\".\nFooter 72px: outlined button with a left chevron and \"장부\", then bold \"새 접수 · 이민호 팀 · 4명\"."
+      "prompt": "Screen V3 · 새 접수 ② 일정 (POS, 1024×600, full screen). The same walk-in team at 16:25; step 2 of 3.\nHeader 60px as in the common description.\nLeft, from x 12 to 716 and y 72 to 528: the same paper slip with a 2px navy border. Slip head 60px: serif \"새 접수\"; index tabs \"① 품목\", \"② 일정\" (active), \"③ 결제\".\nFour blocks, each a small gray bold 16px title line (28px) above one row of 52px choice buttons at least 104px wide, 8px between blocks:\n1) Title \"수령 방법\": \"매장 직접 · 즉시\" (selected, navy fill), \"예약 · 수령일 ›\", \"차량 배달 ›\".\n2) Title \"반납일\": \"오늘\" (selected, navy fill), \"내일\", \"다른 날 ›\".\n3) Title \"반납 시각\": \"오전타임 후 12:00\" and \"오후 16:30\" drawn as not available now (dashed light gray-blue border, no fill, muted gray text; not red), then \"야간 22:00\" (selected, navy fill) and \"심야 24:00\".\n4) Title \"반납 장소\": \"매장 직접\" (selected, navy fill), \"설천 ›\", \"만선 ›\", \"솔마을 ›\", \"꽃마을 ›\".\nThere is no lift-ticket row on this step (tickets are chosen on step 1).\nRight panel, from x 732 to 1012: cream panel titled \"접수 내용\" with a 2px navy rule. Four two-line rows 52px: \"수령 · 즉시 16:25\" / \"매장 직접\"; \"반납 · 오늘 22:00\" / \"매장 직접 반납\"; \"장비 225,000원\" / \"스키 4 · 의류 3 · 헬멧 1\"; \"리프트권 140,000원\" / \"야간권 4매 · 보증금 20,000원 별도\". Under it a gray 16px note: \"품목별 일정 · 접수 후 일정 변경\" At the bottom the only orange primary, 56px tall and panel-wide: \"다음 · 결제\".\nFooter 72px: outlined button with a left chevron and \"장부\", then bold \"새 접수 · 이민호 팀 · 4명\"."
     },
     {
       "code": "V5",
       "group": "B",
-      "title": "한 번에 수납 · 여러 팀",
+      "title": "일괄 수납 · 여러 팀",
       "frame": {
         "w": 1024,
         "h": 600
@@ -341,15 +350,15 @@
       "alsoReference": [
         "02-ledger-1024x600.png"
       ],
-      "primary": "수납 · 6팀 · 485,000원",
+      "primary": "수납 처리 · 6팀 · 485,000원",
       "mustShow": [
-        "한 번에 수납",
-        "이정호 팀 몫 6",
+        "일괄 수납",
+        "이정호 팀 결제 · 6팀",
         "미수 3",
-        "고름",
-        "받을 돈",
+        "선택",
+        "받을 금액",
         "이정호 · 0032",
-        "내는 팀",
+        "결제 팀",
         "이서연 · 0036",
         "결제 예정",
         "이민호 · 0042",
@@ -366,29 +375,29 @@
         "45,000원",
         "40,000원",
         "25,000원",
-        "일부만 ›",
+        "부분 결제 ›",
         "485,000원",
-        "6팀 · 이정호 팀이 냄",
+        "6팀 · 이정호 팀 결제",
         "결제 수단",
         "카드",
         "현금",
         "계좌이체",
-        "다른 수단",
+        "기타",
         "접수증",
-        "끝 4자리로 팀 더하기"
+        "팀 추가 · 끝 4자리"
       ],
-      "prompt": "Screen V5 · 한 번에 수납 · 여러 팀 (POS, 1024×600, full screen) at 16:40. One family member, 이정호 팀, pays for six teams at once.\nHeader 60px as in the common description.\nLeft, from x 12 to 716 and y 72 to 528: a cream paper sheet like the ledger in the attached screenshot. Title row 60px: serif \"한 번에 수납\" at the left, 2px navy rule, and two index tabs at the right: \"이정호 팀 몫 6\" (active) and \"미수 3\". A table with a 40px header row in gray bold 16px: \"고름\", \"팀\", \"품목\", right-aligned \"받을 돈\", and no header text over the last column. Column widths about 56, 150, 186, 112, 164 px. Six ruled rows 52px tall, every row checked. The first cell of each row is a 56px-wide checkbox cell with a 28px navy filled square holding a cream check mark. The 팀 cell has two lines: bold name and last four digits, and under it a small tag. The last cell holds an outlined button about 148px wide and 40px tall: \"일부만 ›\".\nRow 1: \"이정호 · 0032\" / gray tag \"내는 팀\" | \"스키 2 · 헬멧 2\" | \"90,000원\" | \"일부만 ›\".\nRow 2: \"이서연 · 0036\" / light-blue tag \"결제 예정\" | \"스키 1 · 의류 1\" | \"60,000원\" | \"일부만 ›\".\nRow 3: \"이민호 · 0042\" / \"결제 예정\" | \"스키 4 · 의류 3 · 헬멧 1\" | \"225,000원\" | \"일부만 ›\".\nRow 4: \"강지은 · 0043\" / \"결제 예정\" | \"보드 1 · 의류 1\" | \"45,000원\" | \"일부만 ›\".\nRow 5: \"이준서 · 0044\" / \"결제 예정\" | \"스키 1\" | \"40,000원\" | \"일부만 ›\".\nRow 6: \"송하윤 · 0045\" / \"결제 예정\" | \"보드 1\" | \"25,000원\" | \"일부만 ›\".\nRight panel, from x 732 to 1012: cream panel titled \"받을 돈\" with a 2px navy rule; a big bold 28px \"485,000원\" and under it \"6팀 · 이정호 팀이 냄\"; a small gray title \"결제 수단\" and a 2×2 grid of 52px choice buttons \"카드\" (selected, navy fill), \"현금\", \"계좌이체\", \"다른 수단\"; empty cream space; at the bottom the only orange primary, 56px and panel-wide: \"수납 · 6팀 · 485,000원\".\nFooter 72px: outlined \"‹ 접수증\" and an outlined button with a keypad icon \"끝 4자리로 팀 더하기\".",
+      "prompt": "Screen V5 · 일괄 수납 · 여러 팀 (POS, 1024×600, full screen) at 16:40. One family member, 이정호 팀, pays for six teams at once.\nHeader 60px as in the common description.\nLeft, from x 12 to 716 and y 72 to 528: a cream paper sheet like the ledger in the attached screenshot. Title row 60px: serif \"일괄 수납\" at the left, 2px navy rule, and two index tabs at the right: \"이정호 팀 결제 · 6팀\" (active) and \"미수 3\". A table with a 40px header row in gray bold 16px: \"선택\", \"팀\", \"품목\", right-aligned \"받을 금액\", and no header text over the last column. Column widths about 56, 150, 186, 112, 164 px. Six ruled rows 52px tall, every row checked. The first cell of each row is a 56px-wide checkbox cell with a 28px navy filled square holding a cream check mark. The 팀 cell has two lines: bold name and last four digits, and under it a small tag. The last cell holds an outlined button about 148px wide and 40px tall: \"부분 결제 ›\".\nRow 1: \"이정호 · 0032\" / gray tag \"결제 팀\" | \"스키 2 · 헬멧 2\" | \"90,000원\" | \"부분 결제 ›\".\nRow 2: \"이서연 · 0036\" / light-blue tag \"결제 예정\" | \"스키 1 · 의류 1\" | \"60,000원\" | \"부분 결제 ›\".\nRow 3: \"이민호 · 0042\" / \"결제 예정\" | \"스키 4 · 의류 3 · 헬멧 1\" | \"225,000원\" | \"부분 결제 ›\".\nRow 4: \"강지은 · 0043\" / \"결제 예정\" | \"보드 1 · 의류 1\" | \"45,000원\" | \"부분 결제 ›\".\nRow 5: \"이준서 · 0044\" / \"결제 예정\" | \"스키 1\" | \"40,000원\" | \"부분 결제 ›\".\nRow 6: \"송하윤 · 0045\" / \"결제 예정\" | \"보드 1\" | \"25,000원\" | \"부분 결제 ›\".\nRight panel, from x 732 to 1012: cream panel titled \"받을 금액\" with a 2px navy rule; a big bold 28px \"485,000원\" and under it \"6팀 · 이정호 팀 결제\"; a small gray title \"결제 수단\" and a 2×2 grid of 52px choice buttons \"카드\" (selected, navy fill), \"현금\", \"계좌이체\", \"기타\"; empty cream space; at the bottom the only orange primary, 56px and panel-wide: \"수납 처리 · 6팀 · 485,000원\".\nFooter 72px: outlined \"‹ 접수증\" and an outlined button with a keypad icon \"팀 추가 · 끝 4자리\".",
       "variants": [
         {
           "key": "part",
           "hash": "#part",
-          "note": "이민호 팀의 품목 일부만 고른 상태(스키 4 · 헬멧 1, 의류 3은 이민호 팀이 나중에 냄)",
-          "primary": "수납 · 6팀 · 425,000원",
+          "note": "이민호 팀의 품목 일부만 선택한 상태(스키 4 · 헬멧 1, 의류 3은 이민호 팀 미수로 남김)",
+          "primary": "수납 처리 · 6팀 · 425,000원",
           "mustShow": [
-            "일부 · 165,000원 ›",
+            "부분 · 165,000원 ›",
             "225,000원",
             "425,000원",
-            "6팀 · 이정호 팀이 냄"
+            "6팀 · 이정호 팀 결제"
           ]
         }
       ]
@@ -405,12 +414,12 @@
       "file": "v6-day-close.html",
       "png": "v6-day-close.png",
       "styleReference": "02-ledger-1024x600.png",
-      "primary": "마감하기",
+      "primary": "마감 · 12월 26일",
       "mustShow": [
         "12월 26일 (토) 마감",
-        "지금 27일 00:40",
-        "새벽 6시 전이라 26일 장부 · 00:15 정하늘 · 0041 반납 포함",
-        "받은 돈",
+        "현재 27일 00:40",
+        "26일 장부 · 기준 06:00 · 00:15 정하늘 · 0041 반납 포함",
+        "결제 수단",
         "건수",
         "금액",
         "카드",
@@ -420,55 +429,55 @@
         "1호 차량 35,000원 포함",
         "6건",
         "440,000원",
-        "셀 돈",
-        "예상 · 센 금액",
+        "현금 점검",
+        "예상 · 실제",
         "1호 차량 현금",
-        "23:48 입고 · 보냄 대기 0",
+        "23:48 입고 · 전송 대기 0",
         "예상 35,000원",
-        "센 금액 35,000원 · 차이 0원",
+        "실제 35,000원 · 차액 0원",
         "00:32",
         "카운터 돈통",
         "시재 100,000원 포함",
         "예상 545,000원 · 보증금 5,000원 포함",
-        "센 금액 545,000원 · 차이 0원",
-        "다시 세기",
-        "27일로 넘길 일 · 5",
+        "실제 545,000원 · 차액 0원",
+        "재점검",
+        "이월 항목 · 5",
         "미수 · 1팀 · 120,000원",
-        "윤서준 · 0028 · 27일 09:00 반납 때",
-        "27일 반납 장비 · 8개 · 2팀",
+        "윤서준 · 0028 · 27일 09:00 반납 시",
+        "27일 반납 예정 · 8개 · 2팀",
         "윤서준 · 0028 / 이정호 · 0032",
-        "안 돌아온 리프트권 · 1매 · 늦음",
-        "최하은 · 0026 · 22:10 약속",
+        "리프트권 미반납 · 1매 · 지연",
+        "최하은 · 0026 · 반납 22:10",
         "보증금 보관 중 · 리프트권 1매 · 5,000원",
-        "최하은 · 0026 · 돈통에 있음",
+        "최하은 · 0026 · 돈통 보관",
         "확인 필요 · 1건",
-        "김민수 · 0025 · 헬멧 1개 입고 안 됨",
-        "받은 돈 1,965,000원 · 돈통 차이 0원"
+        "김민수 · 0025 · 헬멧 1개 미입고",
+        "수납 합계 1,965,000원 · 돈통 차액 0원"
       ],
       "variants": [
         {
           "key": "before",
           "hash": "#before",
-          "note": "아무것도 세기 전(지금 할 일: 차량 현금)",
-          "primary": "차량 현금 세기 · 35,000원",
+          "note": "점검 전(현재 처리: 차량 현금)",
+          "primary": "차량 현금 점검 · 35,000원",
           "mustShow": [
             "예상 35,000원",
-            "아직 안 셈",
-            "내일 세기",
-            "차량 현금을 센 뒤에 셉니다",
-            "받은 돈 1,965,000원 · 차량 현금부터 셉니다"
+            "미점검",
+            "점검 이월",
+            "차량 현금 점검 후",
+            "수납 합계 1,965,000원 · 차량 현금 점검 필요"
           ]
         },
         {
           "key": "drawer",
           "hash": "#drawer",
-          "note": "차량 현금을 센 뒤(지금 할 일: 돈통)",
-          "primary": "돈통 세기",
+          "note": "차량 현금 점검 후(현재 처리: 돈통)",
+          "primary": "돈통 점검",
           "mustShow": [
-            "센 금액 35,000원 · 차이 0원",
+            "실제 35,000원 · 차액 0원",
             "예상 545,000원 · 보증금 5,000원 포함",
-            "센 금액 — · 차이 —",
-            "받은 돈 1,965,000원 · 돈통을 세면 마감할 수 있습니다"
+            "실제 — · 차액 —",
+            "수납 합계 1,965,000원 · 돈통 점검 필요"
           ]
         }
       ],
@@ -484,7 +493,7 @@
           "note": "설치한 앱 · 작업 표시줄"
         }
       ],
-      "prompt": "Screen V6 · 하루 마감 (POS, 1024×600, full screen). Closing the day of 12월 26일 (토); the clock is already 00:40 on the 27th, but the shop counts everything before 06:00 as the previous day, so it is still the 26th. The van cash and the counter drawer have both been counted; the day is ready to close.\nHeader 60px as in the common description.\nA full-width cream paper sheet (x 12 to 1012) like the ledger in the attached screenshot. Title row 60px with the 2px navy rule: serif \"12월 26일 (토) 마감\" at the left; at the right, standing on the rule, a 40px pale yellow #FFF6D6 box with a 3px amber #F5B400 bar on its left edge, holding an amber pill \"지금 27일 00:40\" and dark bold text \"새벽 6시 전이라 26일 장부 · 00:15 정하늘 · 0041 반납 포함\". No tabs.\nTwo columns 8px under the rule (left 600px, right about 350px, 16px gap), each about 300px tall; the paper below them stays empty.\nLeft column: two ruled tables 12px apart. Table 1: a 40px header in gray bold \"받은 돈\", \"건수\", \"금액\"; rows 52px: \"카드\" | \"11건\" | bold 20px \"1,525,000원\"; \"현금\" with a gray second line \"1호 차량 35,000원 포함\" | \"6건\" | bold \"440,000원\". Table 2: a 40px header in gray bold \"셀 돈\", \"예상 · 센 금액\"; two two-line rows 52px: \"1호 차량 현금\" / gray \"23:48 입고 · 보냄 대기 0\" | \"예상 35,000원\" / \"센 금액 35,000원 · 차이 0원\" (차이 0원 in green bold) | in the last 112px cell a small vermilion oval ink stamp \"확인\" / \"00:32\"; \"카운터 돈통\" / gray \"시재 100,000원 포함\" | \"예상 545,000원 · 보증금 5,000원 포함\" / \"센 금액 545,000원 · 차이 0원\" | the last cell is a borderless full-height action cell with bold \"다시 세기\", set off by a thin vertical rule (no box, no border).\nRight column: header 40px bold \"27일로 넘길 일 · 5\" with a 2px navy rule; five two-line ruled rows 52px, each ending with a small chevron \"›\": \"미수 · 1팀 · 120,000원\" / \"윤서준 · 0028 · 27일 09:00 반납 때\"; \"27일 반납 장비 · 8개 · 2팀\" / \"윤서준 · 0028 / 이정호 · 0032\"; \"안 돌아온 리프트권 · 1매 · 늦음\" / \"최하은 · 0026 · 22:10 약속\" (the only late row: the word 늦음 in crimson and a 3px crimson bar at the left of the row); \"보증금 보관 중 · 리프트권 1매 · 5,000원\" / \"최하은 · 0026 · 돈통에 있음\"; \"확인 필요 · 1건\" / \"김민수 · 0025 · 헬멧 1개 입고 안 됨\".\nFooter 72px: outlined button with a left chevron and \"장부\", bold \"받은 돈 1,965,000원 · 돈통 차이 0원\", and at the right the only orange primary \"마감하기\"."
+      "prompt": "Screen V6 · 하루 마감 (POS, 1024×600, full screen). Closing the day of 12월 26일 (토); the clock is already 00:40 on the 27th, but the shop counts everything before 06:00 as the previous day, so it is still the 26th. The van cash and the counter drawer have both been counted; the day is ready to close.\nHeader 60px as in the common description.\nA full-width cream paper sheet (x 12 to 1012) like the ledger in the attached screenshot. Title row 60px with the 2px navy rule: serif \"12월 26일 (토) 마감\" at the left; at the right, standing on the rule, a 40px pale yellow #FFF6D6 box with a 3px amber #F5B400 bar on its left edge, holding an amber pill \"현재 27일 00:40\" and dark bold text \"26일 장부 · 기준 06:00 · 00:15 정하늘 · 0041 반납 포함\". No tabs.\nTwo columns 8px under the rule (left 600px, right about 350px, 16px gap), each about 300px tall; the paper below them stays empty.\nLeft column: two ruled tables 12px apart. Table 1: a 40px header in gray bold \"결제 수단\", \"건수\", \"금액\"; rows 52px: \"카드\" | \"11건\" | bold 20px \"1,525,000원\"; \"현금\" with a gray second line \"1호 차량 35,000원 포함\" | \"6건\" | bold \"440,000원\". Table 2: a 40px header in gray bold \"현금 점검\", \"예상 · 실제\"; two two-line rows 52px: \"1호 차량 현금\" / gray \"23:48 입고 · 전송 대기 0\" | \"예상 35,000원\" / \"실제 35,000원 · 차액 0원\" (차액 0원 in green bold) | in the last 112px cell a small vermilion oval ink stamp \"점검\" / \"00:32\"; \"카운터 돈통\" / gray \"시재 100,000원 포함\" | \"예상 545,000원 · 보증금 5,000원 포함\" / \"실제 545,000원 · 차액 0원\" | the last cell is a borderless full-height action cell with bold \"재점검\", set off by a thin vertical rule (no box, no border).\nRight column: header 40px bold \"이월 항목 · 5\" with a 2px navy rule; five two-line ruled rows 52px, each ending with a small chevron \"›\": \"미수 · 1팀 · 120,000원\" / \"윤서준 · 0028 · 27일 09:00 반납 시\"; \"27일 반납 예정 · 8개 · 2팀\" / \"윤서준 · 0028 / 이정호 · 0032\"; \"리프트권 미반납 · 1매 · 지연\" / \"최하은 · 0026 · 반납 22:10\" (the only late row: the word 지연 in crimson and a 3px crimson bar at the left of the row); \"보증금 보관 중 · 리프트권 1매 · 5,000원\" / \"최하은 · 0026 · 돈통 보관\"; \"확인 필요 · 1건\" / \"김민수 · 0025 · 헬멧 1개 미입고\".\nFooter 72px: outlined button with a left chevron and \"장부\", bold \"수납 합계 1,965,000원 · 돈통 차액 0원\", and at the right the only orange primary \"마감 · 12월 26일\"."
     },
     {
       "code": "V7",
@@ -501,12 +510,12 @@
       "alsoReference": [
         "07-driver-1024x520.png"
       ],
-      "primary": "전달 도장 · 6개",
+      "primary": "배달 처리 · 6개",
       "mustShow": [
         "우리 스키샵",
         "1호 차량",
         "끝 4자리",
-        "차에 있는 것",
+        "차량 재고",
         "나가기",
         "배달 · 17:00 만선 광장",
         "최하은 · 0026",
@@ -514,20 +523,20 @@
         "품목",
         "수량",
         "적재",
-        "전달",
+        "배달",
         "3대",
         "3개",
         "16:40",
-        "미수 없음 · 12/25 계좌이체로 받음",
+        "미수 없음 · 12/25 계좌이체 수납",
         "현장 수납",
         "리프트권 추가",
-        "야간권 6매 있음",
-        "못 전함",
+        "야간권 재고 6매",
+        "배달 실패",
         "전화",
-        "돌려주기 약속",
+        "반납 일정",
         "오늘 22:10 · 만선 티롤 앞 · 1호 차량",
         "배달 목록",
-        "전달 0 · 남음 1팀"
+        "완료 0 · 잔여 1"
       ],
       "variants": [
         {
@@ -535,7 +544,7 @@
           "hash": "#offline",
           "note": "연결이 끊긴 때(연결 띠 32px)",
           "mustShow": [
-            "연결 끊김 · 보냄 대기 2 · 마지막 맞춤 16:48"
+            "연결 끊김 · 전송 대기 2 · 마지막 연결 16:48"
           ]
         }
       ],
@@ -551,16 +560,16 @@
           "hash": "#offline",
           "note": "기사 태블릿 작은 틀 · 연결 끊김",
           "mustShow": [
-            "연결 끊김 · 보냄 대기 2 · 마지막 맞춤 16:48"
+            "연결 끊김 · 전송 대기 2 · 마지막 연결 16:48"
           ]
         }
       ],
-      "prompt": "Screen V7 · 기사 업무 판 · 한 팀 (DRIVER TABLET in the delivery van, 1024×600) at 16:55, opened by tapping one delivery in the driver's list. Same paper visual system, but every touch target is at least 56px, body text 18px, and the single primary button is solid purple #5F33E1, 72px tall; no orange anywhere.\nHeader 60px on the beige desk: at the left gray bold \"우리 스키샵\"; at the right a light-purple pill \"1호 차량\", then cream outlined buttons 56px tall: \"끝 4자리\" with a keypad icon, \"차에 있는 것\", a bell icon button with a navy badge \"1\", \"나가기\" with an exit icon.\nLeft paper sheet (x 8 to 612, y 60 to 520): title row 56px in serif \"배달 · 17:00 만선 광장\" with a 2px navy rule. Directly under the rule the team block: heavy 26px \"최하은 · 0026\" and under it 18px \"010-0000-0026 · 3명\". A compact items table: header row in gray bold \"품목\", \"수량\", \"적재\", \"전달\"; two ruled rows 60px: \"스키\" | \"3대\" | a vermilion oval stamp \"적재\" / \"16:40\" | an empty dashed circle; \"헬멧\" | \"3개\" | vermilion oval stamp \"적재\" / \"16:40\" | an empty dashed circle. Under a rule a bold line \"미수 없음 · 12/25 계좌이체로 받음\" (미수 없음 in green). The rest of the paper is empty.\nRight cream panel (x 620 to 1016, y 60 to 520): a 2×2 grid of big outlined buttons about 88px tall: \"현장 수납\"; a two-line button \"리프트권 추가\" with a smaller second line \"야간권 6매 있음\"; \"못 전함\"; and \"전화\" with a phone icon. Under them a thin rule, a small gray label \"돌려주기 약속\" and a bold 18px line \"오늘 22:10 · 만선 티롤 앞 · 1호 차량\".\nFooter 80px on cream: an outlined 56px button with a left chevron and \"배달 목록\", bold \"전달 0 · 남음 1팀\", and at the right the only purple primary 72px \"전달 도장 · 6개\"."
+      "prompt": "Screen V7 · 기사 업무 판 · 한 팀 (DRIVER TABLET in the delivery van, 1024×600) at 16:55, opened by tapping one delivery in the driver's list. Same paper visual system, but every touch target is at least 56px, body text 18px, and the single primary button is solid purple #5F33E1, 72px tall; no orange anywhere.\nHeader 60px on the beige desk: at the left gray bold \"우리 스키샵\"; at the right a light-purple pill \"1호 차량\", then cream outlined buttons 56px tall: \"끝 4자리\" with a keypad icon, \"차량 재고\", a bell icon button with a navy badge \"1\", \"나가기\" with an exit icon.\nLeft paper sheet (x 8 to 612, y 60 to 520): title row 56px in serif \"배달 · 17:00 만선 광장\" with a 2px navy rule. Directly under the rule the team block: heavy 26px \"최하은 · 0026\" and under it 18px \"010-0000-0026 · 3명\". A compact items table: header row in gray bold \"품목\", \"수량\", \"적재\", \"배달\"; two ruled rows 60px: \"스키\" | \"3대\" | a vermilion oval stamp \"적재\" / \"16:40\" | an empty dashed circle; \"헬멧\" | \"3개\" | vermilion oval stamp \"적재\" / \"16:40\" | an empty dashed circle. Under a rule a bold line \"미수 없음 · 12/25 계좌이체 수납\" (미수 없음 in green). The rest of the paper is empty.\nRight cream panel (x 620 to 1016, y 60 to 520): a 2×2 grid of big outlined buttons about 88px tall: \"현장 수납\"; a two-line button \"리프트권 추가\" with a smaller second line \"야간권 재고 6매\"; \"배달 실패\"; and \"전화\" with a phone icon. Under them a thin rule, a small gray label \"반납 일정\" and a bold 18px line \"오늘 22:10 · 만선 티롤 앞 · 1호 차량\".\nFooter 80px on cream: an outlined 56px button with a left chevron and \"배달 목록\", bold \"완료 0 · 잔여 1\", and at the right the only purple primary 72px \"배달 처리 · 6개\"."
     },
     {
       "code": "V8",
       "group": "C",
-      "title": "매장 설정 · 가게 규칙",
+      "title": "매장 설정 · 운영 규칙",
       "frame": {
         "w": 1024,
         "h": 600
@@ -572,7 +581,7 @@
       "alsoReference": [
         "11-pos-collections-1024x600.png"
       ],
-      "primary": "저장 · 3곳",
+      "primary": "저장 · 3건",
       "mustShow": [
         "매장 설정",
         "매장 정보",
@@ -580,42 +589,42 @@
         "반납 타임",
         "요금 · 할인",
         "차량 · 직원",
-        "가게 규칙",
+        "운영 규칙",
         "리프트권 반납",
-        "바꿈",
-        "꼭 돌려받음",
-        "주면 끝 · 돌아오면 적음",
-        "꼭 돌려받으면 권이 돌아와야 그 팀 일이 끝납니다.",
+        "변경됨",
+        "반납 필수",
+        "반납 선택 · 반납 시 기록",
+        "반납 필수 · 리프트권 반납 후 완료",
         "리프트권 보증금",
         "보증금",
-        "받음",
-        "안 받음",
+        "사용",
+        "미사용",
         "1매 5,000원 ›",
-        "받는 때",
-        "접수할 때",
-        "못 받으면 권을 줄 때",
-        "권을 줄 때",
-        "안 돌아오면",
-        "보증금 안 돌려드림",
-        "권 값 받음",
-        "보증금만큼 빼고",
-        "리프트권 값 · 전화 예약",
+        "입금 시점",
+        "접수 시",
+        "미입금: 지급 시",
+        "지급 시",
+        "미반납 시",
+        "보증금 몰수",
+        "분실금 청구",
+        "보증금 공제",
+        "리프트권 결제 · 전화 예약",
         "선입금 전액",
-        "예약금만",
-        "당일에 받음",
+        "예약금",
+        "당일 결제",
         "당일 취소 환불",
-        "환불함",
-        "환불 안 함",
-        "전날 장부로 치는 시각",
-        "자정",
-        "새벽 3시",
-        "새벽 6시",
-        "다른 시각",
+        "환불",
+        "환불 없음",
+        "영업일 기준 시각",
+        "00:00",
+        "03:00",
+        "06:00",
+        "직접 입력",
         "27일 00:15 반납 → 26일 장부",
         "27일 07:00 반납 → 27일 장부",
-        "마감한 뒤에 온 것은 다음 마감에 셉니다.",
+        "마감 후 기록 · 다음 마감 반영",
         "관리",
-        "바꾼 곳 3 · 저장하면 다음 기록부터 바뀝니다"
+        "변경 3건 · 다음 기록부터 적용"
       ],
       "checkFrames": [
         {
@@ -624,14 +633,14 @@
           "note": "설치한 앱 · 제목 표시줄 · 카드 쪽 넘김",
           "mustShow": [
             "리프트권 반납",
-            "주면 끝 · 돌아오면 적음",
+            "반납 선택 · 반납 시 기록",
             "리프트권 보증금",
             "1매 5,000원 ›",
-            "못 받으면 권을 줄 때",
-            "보증금 안 돌려드림",
-            "권 값 받음",
+            "미입금: 지급 시",
+            "보증금 몰수",
+            "분실금 청구",
             "관리",
-            "바꾼 곳 3 · 저장하면 다음 기록부터 바뀝니다",
+            "변경 3건 · 다음 기록부터 적용",
             "1 / 2쪽"
           ]
         },
@@ -641,19 +650,19 @@
           "note": "설치한 앱 · 작업 표시줄 · 카드 쪽 넘김",
           "mustShow": [
             "리프트권 반납",
-            "주면 끝 · 돌아오면 적음",
+            "반납 선택 · 반납 시 기록",
             "리프트권 보증금",
             "1매 5,000원 ›",
-            "못 받으면 권을 줄 때",
-            "보증금 안 돌려드림",
-            "권 값 받음",
+            "미입금: 지급 시",
+            "보증금 몰수",
+            "분실금 청구",
             "관리",
-            "바꾼 곳 3 · 저장하면 다음 기록부터 바뀝니다",
+            "변경 3건 · 다음 기록부터 적용",
             "1 / 2쪽"
           ]
         }
       ],
-      "prompt": "Screen V8 · 매장 설정 · 가게 규칙 (POS 관리 screen for the shop owner, 1024×600). Same 16px minimum text and 52px touch targets as every POS screen.\nHeader 60px as in the common description, except the \"관리\" button is pressed (navy fill, cream text).\nA full-width cream paper sheet (x 12 to 1012). Title row 60px: serif \"매장 설정\" at the left, 2px navy rule, and six paper index tabs at the right: \"매장 정보\", \"장소\", \"반납 타임\", \"요금 · 할인\", \"차량 · 직원\", \"가게 규칙\" (active).\nBody: two columns of setting cards 474px wide (cream cards with a 2px light border #C9D3E0 and 10px radius, 12px inner padding, 8px apart). Each card: a bold 17px title line (with a small beige tag \"바꿈\" at the right on changed cards), then rows of 52px choice buttons (selected = navy fill, cream text; unselected = cream with a navy border). Some choice buttons have two lines: a bold first line and a smaller second line.\nLeft column:\nCard \"리프트권 반납\" with tag \"바꿈\": buttons \"꼭 돌려받음\" (selected) and \"주면 끝 · 돌아오면 적음\"; a gray 16px note \"꼭 돌려받으면 권이 돌아와야 그 팀 일이 끝납니다.\"\nCard \"리프트권 보증금\" with tag \"바꿈\": three rows, each with a gray bold label at the left: \"보증금\": \"받음\" (selected), \"안 받음\", and an outlined value button \"1매 5,000원 ›\" (never navy); \"받는 때\": a two-line \"접수할 때\" / \"못 받으면 권을 줄 때\" (selected) and \"권을 줄 때\"; \"안 돌아오면\": \"보증금 안 돌려드림\" (selected) and a two-line \"권 값 받음\" / \"보증금만큼 빼고\".\nRight column:\nCard \"리프트권 값 · 전화 예약\": \"선입금 전액\" (selected), \"예약금만\", \"당일에 받음\".\nCard \"당일 취소 환불\" is a single row: the title at the left and the buttons \"환불함\" (selected) and \"환불 안 함\" at the right.\nCard \"전날 장부로 치는 시각\" with tag \"바꿈\": \"자정\", \"새벽 3시\", \"새벽 6시\" (selected), \"다른 시각\"; then three 16px lines: \"27일 00:15 반납 → 26일 장부\", \"27일 07:00 반납 → 27일 장부\" (the ledger names in bold) and gray \"마감한 뒤에 온 것은 다음 마감에 셉니다.\"\nFooter 72px: an outlined button with a left chevron and \"관리\", bold \"바꾼 곳 3 · 저장하면 다음 기록부터 바뀝니다\", and at the right the only orange primary \"저장 · 3곳\"."
+      "prompt": "Screen V8 · 매장 설정 · 운영 규칙 (POS 관리 screen for the shop owner, 1024×600). Same 16px minimum text and 52px touch targets as every POS screen.\nHeader 60px as in the common description, except the \"관리\" button is pressed (navy fill, cream text).\nA full-width cream paper sheet (x 12 to 1012). Title row 60px: serif \"매장 설정\" at the left, 2px navy rule, and six paper index tabs at the right: \"매장 정보\", \"장소\", \"반납 타임\", \"요금 · 할인\", \"차량 · 직원\", \"운영 규칙\" (active).\nBody: two columns of setting cards 474px wide (cream cards with a 2px light border #C9D3E0 and 10px radius, 12px inner padding, 8px apart). Each card: a bold 17px title line (with a small beige tag \"변경됨\" at the right on changed cards), then rows of 52px choice buttons (selected = navy fill, cream text; unselected = cream with a navy border). Some choice buttons have two lines: a bold first line and a smaller second line.\nLeft column:\nCard \"리프트권 반납\" with tag \"변경됨\": buttons \"반납 필수\" (selected) and \"반납 선택 · 반납 시 기록\"; a gray 16px note \"반납 필수 · 리프트권 반납 후 완료\"\nCard \"리프트권 보증금\" with tag \"변경됨\": three rows, each with a gray bold label at the left: \"보증금\": \"사용\" (selected), \"미사용\", and an outlined value button \"1매 5,000원 ›\" (never navy); \"입금 시점\": a two-line \"접수 시\" / \"미입금: 지급 시\" (selected) and \"지급 시\"; \"미반납 시\": \"보증금 몰수\" (selected) and a two-line \"분실금 청구\" / \"보증금 공제\".\nRight column:\nCard \"리프트권 결제 · 전화 예약\": \"선입금 전액\" (selected), \"예약금\", \"당일 결제\".\nCard \"당일 취소 환불\" is a single row: the title at the left and the buttons \"환불\" (selected) and \"환불 없음\" at the right.\nCard \"영업일 기준 시각\" with tag \"변경됨\": \"00:00\", \"03:00\", \"06:00\" (selected), \"직접 입력\"; then three 16px lines: \"27일 00:15 반납 → 26일 장부\", \"27일 07:00 반납 → 27일 장부\" (the ledger names in bold) and gray \"마감 후 기록 · 다음 마감 반영\"\nFooter 72px: an outlined button with a left chevron and \"관리\", bold \"변경 3건 · 다음 기록부터 적용\", and at the right the only orange primary \"저장 · 3건\"."
     }
   ]
 }

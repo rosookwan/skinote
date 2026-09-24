@@ -102,7 +102,8 @@ export interface FxPin {
   id: string;
   orderId: string;
   at: number;
-  note: string;
+  /** 매장이 적은 메모('조기 반납'). 없으면 긴급 줄에 메모 칸이 없다. */
+  note?: string;
   status: 'requested' | 'delivered' | 'acknowledged';
 }
 

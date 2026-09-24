@@ -6135,14 +6135,14 @@ INSERT INTO sys_features (key, label, description, default_enabled, depends_on_j
  ('night_collection',     '야간 수거',             'night return slots, collection list night group, prep reminder', 0, '["vehicles"]', 1),
  ('lift_tickets',         '리프트권 대행',         'ticket products, issue, allocation, recovery, vendor refunds', 0, '[]', 1),
  ('lessons',              '강습',                  'lesson kind, lesson teams (강습팀), lesson list, lesson_done stamp', 0, '[]', 1),
- ('size_preinput',        '사이즈 미리 받기',      'intake links, submissions, reviews, prep sheet', 0, '[]', 1),
+ ('size_preinput',        '사이즈 사전 입력',      'intake links, submissions, reviews, prep sheet', 0, '[]', 1),
  ('partner_ledger',       '거래처 장부',           'counterparty trades, settlements, equipment loans', 0, '[]', 1),
  ('deposits',             '보증금',                'security deposit holds', 0, '[]', 1),
  ('prepayment',           '선입금 방식',           'prepayment purpose and the prepayment_mode setting in the confirm window', 1, '[]', 1),
  ('exchange',             '교환',                  'size / damage exchange for exchangeable kinds', 1, '[]', 1),
  ('driver_field_payment', '배달 현장 수납',        'driver sees due, collects in the field, adds tickets from van stock', 0, '["vehicles"]', 1),
- ('multi_order_payment',  '여러 팀 한 번에 수납',  'one tender across several orders, payer team promises', 1, '[]', 1),
- ('split_payment',        '나눠서 결제',           'one order paid in rounds by items and quantities', 0, '[]', 1),
+ ('multi_order_payment',  '일괄 수납',  'one tender across several orders, payer team promises', 1, '[]', 1),
+ ('split_payment',        '부분 결제',           'one order paid in rounds by items and quantities', 0, '[]', 1),
  ('card_terminal',        '카드 단말 연동',        'payment intents through a terminal agent', 0, '[]', 1),
  ('sms',                  '문자 발송',             'real SMS through a provider (test shops go to a sink)', 0, '[]', 1),
  ('bundles',              '세트 상품',             'bundle items and component lines', 0, '[]', 1),
@@ -6157,14 +6157,14 @@ INSERT INTO sys_features (key, label, description, default_enabled, depends_on_j
  ('night_collection',     '야간 수거',             'night return slots, collection list night group, prep reminder', 0, '["vehicles"]', NULL, 1),
  ('lift_tickets',         '리프트권 대행',         'ticket products, issue, allocation, recovery, vendor refunds', 0, '[]', NULL, 1),
  ('lessons',              '강습',                  'lesson kind, lesson teams (강습팀), lesson list, lesson_done stamp', 0, '[]', NULL, 1),
- ('size_preinput',        '사이즈 미리 받기',      'intake links, submissions, reviews, prep sheet', 0, '[]', NULL, 1),
+ ('size_preinput',        '사이즈 사전 입력',      'intake links, submissions, reviews, prep sheet', 0, '[]', NULL, 1),
  ('partner_ledger',       '거래처 장부',           'counterparty trades, settlements, equipment loans', 0, '[]', NULL, 1),
  ('deposits',             '보증금',                'security deposit holds', 0, '[]', NULL, 1),
  ('prepayment',           '선입금 방식',           'prepayment purpose and the prepayment_mode setting in the confirm window', 1, '[]', NULL, 1),
  ('exchange',             '교환',                  'size / damage exchange for exchangeable kinds', 1, '[]', NULL, 1),
  ('driver_field_payment', '배달 현장 수납',        'driver sees due, collects in the field, adds tickets from van stock', 0, '["vehicles"]', NULL, 1),
- ('multi_order_payment',  '여러 팀 한 번에 수납',  'one tender across several orders, payer team promises', 1, '[]', NULL, 1),
- ('split_payment',        '나눠서 결제',           'one order paid in rounds by items and quantities', 0, '[]', NULL, 1),
+ ('multi_order_payment',  '일괄 수납',  'one tender across several orders, payer team promises', 1, '[]', NULL, 1),
+ ('split_payment',        '부분 결제',           'one order paid in rounds by items and quantities', 0, '[]', NULL, 1),
  ('card_terminal',        '카드 단말 연동',        'payment intents through a terminal agent', 0, '[]', 'feature.card_terminal', 1),
  ('sms',                  '문자 발송',             'real SMS through a provider (test shops go to a sink)', 0, '[]', 'feature.sms', 1),
  ('bundles',              '세트 상품',             'bundle items and component lines', 0, '[]', NULL, 1),
@@ -6177,7 +6177,7 @@ INSERT INTO sys_permissions (key, label, group_key, scopes_json, sensitive, adde
  ('order.create',            '접수',                 'order',    '["shop","own_vehicle"]', 0, 1),
  ('order.add',               '품목 추가',            'order',    '["shop","own_vehicle"]', 0, 1),
  ('order.cancel',            '접수 취소',            'order',    '["shop"]', 1, 1),
- ('order.promise.change',    '약속 바꾸기',          'order',    '["shop"]', 0, 1),
+ ('order.promise.change',    '일정 변경',          'order',    '["shop"]', 0, 1),
  ('order.extend',            '기간 연장',            'order',    '["shop"]', 0, 1),
  ('price.override',          '가격 직접 입력',       'money',    '["shop"]', 1, 1),
  ('discount.apply',          '할인 적용',            'money',    '["shop"]', 0, 1),
@@ -6185,25 +6185,25 @@ INSERT INTO sys_permissions (key, label, group_key, scopes_json, sensitive, adde
  ('payment.take',            '수납',                 'money',    '["shop"]', 0, 1),
  ('payment.refund',          '환불',                 'money',    '["shop"]', 1, 1),
  ('payment.collect_field',   '현장 수납',            'money',    '["own_vehicle"]', 0, 1),
- ('payment.reallocate',      '수납 옮기기',          'money',    '["shop"]', 1, 1),
- ('deposit.take',            '보증금 받기',          'money',    '["shop"]', 0, 1),
- ('deposit.return',          '보증금 돌려주기',      'money',    '["shop"]', 1, 1),
- ('deposit.return_field',    '현장 보증금 돌려주기', 'money',    '["own_vehicle"]', 1, 1),
- ('deposit.keep',            '보증금에서 빼기',      'money',    '["shop"]', 1, 1),
+ ('payment.reallocate',      '수납 이동',          'money',    '["shop"]', 1, 1),
+ ('deposit.take',            '보증금 입금',          'money',    '["shop"]', 0, 1),
+ ('deposit.return',          '보증금 반환',      'money',    '["shop"]', 1, 1),
+ ('deposit.return_field',    '현장 보증금 반환', 'money',    '["own_vehicle"]', 1, 1),
+ ('deposit.keep',            '보증금 몰수',      'money',    '["shop"]', 1, 1),
  ('adjustment.create',       '금액 조정',            'money',    '["shop"]', 1, 1),
  ('cash.entry',              '현금 입출금',          'money',    '["shop"]', 1, 1),
- ('cash.transfer',           '차량 현금 넘기기',     'money',    '["shop","own_vehicle"]', 0, 1),
+ ('cash.transfer',           '차량 현금 인계',     'money',    '["shop","own_vehicle"]', 0, 1),
  ('cash.transfer.confirm',   '차량 현금 확인',       'money',    '["shop"]', 0, 1),
  ('closing.close',           '마감',                 'money',    '["shop"]', 1, 1),
- ('closing.reopen',          '마감 다시 열기',       'money',    '["shop"]', 1, 1),
- ('stock.move',              '지급·반납·적재·받음',  'stock',    '["shop","own_vehicle"]', 0, 1),
+ ('closing.reopen',          '마감 해제',       'money',    '["shop"]', 1, 1),
+ ('stock.move',              '지급·반납·적재·수거',  'stock',    '["shop","own_vehicle"]', 0, 1),
  ('stock.receive',           '매장 입고',            'stock',    '["shop","own_vehicle"]', 0, 1),
- ('stock.correct',           '처리 되돌리기',        'stock',    '["shop"]', 1, 1),
- ('stock.intake',            '재고 들이기',          'stock',    '["shop"]', 0, 1),
+ ('stock.correct',           '처리 취소',        'stock',    '["shop"]', 1, 1),
+ ('stock.intake',            '재고 입고',          'stock',    '["shop"]', 0, 1),
  ('asset.condition',         '정비 상태',            'stock',    '["shop"]', 0, 1),
  ('task.manage',             '차량 업무 관리',       'dispatch', '["shop"]', 0, 1),
- ('route.reorder',           '방문 순서 바꾸기',     'dispatch', '["shop","own_vehicle"]', 0, 1),
- ('task.pin',                '빨리 확인',            'dispatch', '["shop"]', 0, 1),
+ ('route.reorder',           '방문 순서 변경',     'dispatch', '["shop","own_vehicle"]', 0, 1),
+ ('task.pin',                '긴급 요청',            'dispatch', '["shop"]', 0, 1),
  ('task.visit',              '방문 결과',            'dispatch', '["own_vehicle","shop"]', 0, 1),
  ('ticket.issue',            '발권',                 'stock',    '["shop"]', 0, 1),
  ('ticket.allocate',         '권 배정',              'stock',    '["shop","own_vehicle"]', 0, 1),
@@ -6220,30 +6220,30 @@ INSERT INTO sys_permissions (key, label, group_key, scopes_json, sensitive, adde
  ('counterparty.manage',     '거래처 관리',          'settings', '["shop"]', 0, 1),
  ('counterparty.settle',     '거래처 정산',          'money',    '["shop"]', 1, 1),
  ('customer.manage',         '고객 관리',            'order',    '["shop"]', 0, 1),
- ('customer.anonymize',      '고객 정보 지우기',     'settings', '["shop"]', 1, 1),
+ ('customer.anonymize',      '고객 정보 삭제',     'settings', '["shop"]', 1, 1),
  ('review.resolve',          '확인 필요 처리',       'order',    '["shop"]', 0, 1),
  ('export.data',             '자료 내보내기',        'admin',    '["shop"]', 1, 1),
- ('audit.view',              '사용 내역 보기',       'admin',    '["shop"]', 0, 1);
+ ('audit.view',              '사용 내역 조회',       'admin',    '["shop"]', 0, 1);
 
 INSERT INTO sys_setting_definitions (key, label, value_schema_key, default_value, effective_dated, added_in) VALUES
  ('prepayment_mode',                 '선입금 방식',             'setting.prepayment_mode',        '{"mode":"none"}', 1, 1),
  ('same_day_cancel_refund_default',  '발권 후 취소 환불 기본',  'setting.refund_decision',        '{"decision":"refund"}', 0, 1),
  ('payment_timing_default',          '결제 시점 기본',          'setting.payment_timing',         '{"timing":"at_intake"}', 0, 1),
  ('rounding_policy',                 '끝전 처리',               'setting.rounding',               '{"unit":10,"mode":"floor"}', 1, 1),
- ('discount_stacking',               '할인 겹치기',             'setting.discount_stacking',      '{"policy":"exclusive_per_group"}', 1, 1),
- ('receipt_number_format',           '접수 번호 모양',          'setting.receipt_format',         '{"pattern":"YYMMDD-NNN"}', 0, 1),
+ ('discount_stacking',               '할인 중복',             'setting.discount_stacking',      '{"policy":"exclusive_per_group"}', 1, 1),
+ ('receipt_number_format',           '접수 번호 형식',          'setting.receipt_format',         '{"pattern":"YYMMDD-NNN"}', 0, 1),
  ('weekday_day_types',               '요일별 요금 구분',        'setting.weekday_day_types',      '{"sat":"weekend","sun":"weekend","default":"weekday"}', 1, 1),
  ('walk_in_phone_required',          '현장 접수 연락처 필수',   'setting.flag',                   '{"enabled":true}', 0, 1),
  ('extension_default_return_time',   '연장 기본 반납 시각',     'setting.local_time',             '{"time":"16:30"}', 0, 1),
  ('night_collection_notice_minutes', '야간 수거 준비 알림',     'setting.minutes',                '{"minutes":60}', 0, 1),
- ('driver_sees_due_amount',          '기사에게 미수 보이기',    'setting.flag',                   '{"enabled":true}', 0, 1),
+ ('driver_sees_due_amount',          '기사 화면 미수 표시',    'setting.flag',                   '{"enabled":true}', 0, 1),
  ('lesson_settlement_timing',        '강습 정산 시점',          'setting.lesson_settlement',      '{"timing":"on_close"}', 0, 1),
- ('max_line_quantity',               '한 줄 최대 수량',         'setting.max_quantity',           '{"max":500}', 0, 1),
+ ('max_line_quantity',               '품목 줄 최대 수량',         'setting.max_quantity',           '{"max":500}', 0, 1),
  ('session_idle_minutes',            '자동 로그아웃',           'setting.session_idle',           '{"counter":480,"driver":20160}', 0, 1),
  ('login_lockout',                   '로그인 잠금',             'setting.login_lockout',          '{"max_failures":5,"lock_minutes":10}', 0, 1),
  ('retention',                       '보관 기간',               'setting.retention',              '{"command_result_days":90,"event_pii_days":30,"change_log_days":60,"intent_marks_days":30,"customer_pii_days":1095,"journal_hot_seasons":2,"outbox_payload_days":30,"pii_access_days":365}', 0, 1),
  ('backup_policy',                   '백업',                    'setting.backup_policy',          '{"wal_keep_days":7,"daily_keep_days":35,"journal_pii_keep_days":35,"weekly_scrubbed_keep_weeks":26,"season_scrubbed_keep_years":5,"drill_weekday":"mon","drill_time":"04:30","owner_export_scrubbed":true,"owner_export":false}', 0, 1),
- ('offline_policy',                  '오프라인 기록',           'setting.offline_policy',         '{"max_backdate_hours":168,"future_skew_minutes":5,"sent_log_days":7,"sent_pii_hours":24,"clock_warn_minutes":2,"seq_gap_alert_minutes":30,"counter_days_ahead":2,"counter_due_lookback_days":30,"reconnect_window_seconds":120,"fallback_after_failures":2,"fallback_recover_seconds":10,"pii_wipe_hours":{"driver":24,"counter":72},"app_lock_minutes":{"driver_phone":5,"driver_tablet":30}}', 0, 1),
+ ('offline_policy',                  '연결 끊김 기록',           'setting.offline_policy',         '{"max_backdate_hours":168,"future_skew_minutes":5,"sent_log_days":7,"sent_pii_hours":24,"clock_warn_minutes":2,"seq_gap_alert_minutes":30,"counter_days_ahead":2,"counter_due_lookback_days":30,"reconnect_window_seconds":120,"fallback_after_failures":2,"fallback_recover_seconds":10,"pii_wipe_hours":{"driver":24,"counter":72},"app_lock_minutes":{"driver_phone":5,"driver_tablet":30}}', 0, 1),
  ('closing_policy',                  '마감 확인',               'setting.closing_policy',         '{"block_on_unsent_van":true,"block_on_unsent_devices":true,"block_on_money_findings":true,"reopen":"latest_only"}', 0, 1);
 
 INSERT INTO sys_device_kinds (key, label, added_in) VALUES
@@ -6256,7 +6256,7 @@ INSERT INTO sys_device_classes (key, label, added_in) VALUES
  ('print','인쇄',1), ('admin','관리자 콘솔 1440x810',1);
 
 INSERT INTO sys_return_policies (key, label, blocks_completion, added_in) VALUES
- ('required','반납 필요',1,1), ('optional','반납 선택(회수하면 기록)',0,1), ('none','반납 없음',0,1);
+ ('required','반납 필수',1,1), ('optional','반납 선택(반납 시 기록)',0,1), ('none','반납 없음',0,1);
 
 INSERT INTO sys_fulfillment_modes (key, label, has_custody, needs_issue, default_return_policy_key, completion_rule_key, added_in) VALUES
  ('rental','대여',1,1,'required','custody',1),
@@ -6265,10 +6265,10 @@ INSERT INTO sys_fulfillment_modes (key, label, has_custody, needs_issue, default
  ('sale','판매',1,1,'none','custody',1),
  ('fee','요금만',0,0,'none','immediate',1),
  ('bundle','세트',0,0,'none','children_complete',1),
- ('placeholder','인원만 예약',0,0,'none','never',1);
+ ('placeholder','인원 예약',0,0,'none','never',1);
 
 INSERT INTO sys_tracking_modes (key, label, added_in) VALUES
- ('unit','하나씩(번호)',1), ('count','수량으로',1), ('none','재고 없음',1);
+ ('unit','개별(번호)',1), ('count','수량',1), ('none','재고 없음',1);
 
 INSERT INTO sys_price_bases (key, label, multiplies_days, multiplies_headcount, uses_tiers, added_in) VALUES
  ('per_day','1일',1,0,1,1), ('per_unit','1개·1매',0,0,0,1), ('per_session','1회',0,0,0,1),
@@ -6276,21 +6276,21 @@ INSERT INTO sys_price_bases (key, label, multiplies_days, multiplies_headcount, 
  ('flat','정액',0,0,0,1);
 
 INSERT INTO sys_discount_kinds (key, label, target_scope_key, added_in) VALUES
- ('per_unit_day','개당 하루 금액','line',1), ('percent','비율(%)','group',1), ('amount','금액','group',1),
+ ('per_unit_day','개당 1일 금액','line',1), ('percent','비율(%)','group',1), ('amount','금액','group',1),
  ('package','묶음 조건','group',1), ('manual_amount','직접 금액','line',1), ('manual_percent','직접 비율','line',1);
 
 INSERT INTO sys_location_kinds (key, label, added_in) VALUES
  ('external','외부(구입·발권)',1), ('shop','매장',1), ('storage','창고',1), ('vehicle','차량',1),
- ('customer','손님',1), ('counterparty','거래처',1), ('other_shop','다른 매장',1), ('void','없어짐',1);
+ ('customer','손님',1), ('counterparty','거래처',1), ('other_shop','다른 매장',1), ('void','폐기·분실',1);
 
 INSERT INTO sys_movement_kinds (key, label, reversible, creates_stock, added_in) VALUES
- ('stock_opening','기초 재고',0,1,1), ('stock_receive','재고 들이기',1,1,1), ('ticket_issue','발권',1,1,1),
- ('partner_borrow','거래처에서 빌림',1,1,1), ('load','차량 적재',1,0,1), ('deliver','지급·전달',1,0,1),
- ('collect','차량 받음',1,0,1), ('receive','매장 입고',1,0,1), ('direct_return','매장 반납',1,0,1),
- ('vendor_refund','발권처 환불',1,0,1), ('found','찾음',1,0,1), ('partner_lend','거래처에 빌려줌',1,0,1),
- ('partner_receive','거래처에서 돌려받음',1,0,1), ('partner_return','거래처에 돌려줌',1,0,1),
- ('vehicle_handover','차량 간 넘김',1,0,1), ('relocate','매장·창고 이동',1,0,1), ('shop_transfer','다른 매장으로',1,0,1),
- ('write_off','폐기·분실',1,0,1), ('reversal','되돌리기',0,0,1);
+ ('stock_opening','기초 재고',0,1,1), ('stock_receive','재고 입고',1,1,1), ('ticket_issue','발권',1,1,1),
+ ('partner_borrow','거래처 대여 입고',1,1,1), ('load','차량 적재',1,0,1), ('deliver','지급·배달',1,0,1),
+ ('collect','차량 수거',1,0,1), ('receive','매장 입고',1,0,1), ('direct_return','매장 반납',1,0,1),
+ ('vendor_refund','발권처 환불',1,0,1), ('found','분실 회수',1,0,1), ('partner_lend','거래처 대여 출고',1,0,1),
+ ('partner_receive','거래처 회수',1,0,1), ('partner_return','거래처 반납',1,0,1),
+ ('vehicle_handover','차량 간 인계',1,0,1), ('relocate','매장·창고 이동',1,0,1), ('shop_transfer','다른 매장 이동',1,0,1),
+ ('write_off','폐기·분실',1,0,1), ('reversal','처리 취소',0,0,1);
 
 INSERT INTO sys_movement_routes (movement_kind_key, from_kind_key, to_kind_key, driver_allowed, offline_allowed, added_in) VALUES
  ('stock_opening','external','shop',0,0,1), ('stock_opening','external','storage',0,0,1),
@@ -6320,7 +6320,7 @@ SELECT 'reversal', r.to_kind_key, r.from_kind_key, 0, 0, 1
 ON CONFLICT DO NOTHING;
 
 INSERT INTO sys_claim_lanes (key, label, exclusive, bound, added_in) VALUES
- ('preparation','준비',1,1,1), ('transport','차량 업무',1,1,1), ('disposition','내보내기(환불·대여·교환)',1,1,1),
+ ('preparation','준비',1,1,1), ('transport','차량 업무',1,1,1), ('disposition','반출(환불·대여·교환)',1,1,1),
  ('composition','구성품',1,0,1), ('ticket_window','권 배정(시간대)',0,1,1);
 
 INSERT INTO sys_claim_types (key, label, lane_key, windowed, added_in) VALUES
@@ -6342,47 +6342,47 @@ INSERT INTO sys_fulfillment_methods (key, promise_type_key, label, requires_vehi
  ('shop_direct','return','매장 직접 반납',0,0,NULL,1), ('vehicle_collection','return','차량 수거',1,1,'collection',1);
 
 INSERT INTO sys_payment_timings (key, label, added_in) VALUES
- ('at_intake','접수 때',1), ('at_issue','지급 때',1), ('at_return','반납 때',1), ('later','나중에',1),
- ('by_other_order','다른 팀이 결제',1), ('partner_postpaid','거래처 후불',1);
+ ('at_intake','접수 시',1), ('at_issue','지급 시',1), ('at_return','반납 시',1), ('later','후불',1),
+ ('by_other_order','다른 팀 결제',1), ('partner_postpaid','거래처 후불',1);
 
 INSERT INTO sys_payment_kinds (key, label, balance_sign, deposit_sign, cash_sign, requires_refund_of, requires_deposit, added_in) VALUES
  ('payment','수납',1,0,1,0,0,1), ('refund','환불',-1,0,-1,1,0,1),
- ('legacy_refund','이전 자료 환불(대상 모름)',-1,0,-1,0,0,1),   -- import only: old refunds that name no payment
- ('deposit_in','보증금 받음',0,1,1,0,1,1), ('deposit_out','보증금 돌려줌',0,-1,-1,0,1,1),
- ('deposit_apply','보증금으로 결제',1,-1,0,0,1,1),
- ('deposit_forfeit','보증금에서 뺌',0,-1,0,0,1,1),   -- a unit never came back: the shop keeps its deposit (no cash moves)
- ('deposit_restore','뺀 보증금 되돌림',0,1,0,0,1,1);  -- the unit came back after all: held again, then refunded as usual
+ ('legacy_refund','이전 자료 환불(대상 미확인)',-1,0,-1,0,0,1),   -- import only: old refunds that name no payment
+ ('deposit_in','보증금 입금',0,1,1,0,1,1), ('deposit_out','보증금 반환',0,-1,-1,0,1,1),
+ ('deposit_apply','보증금 결제',1,-1,0,0,1,1),
+ ('deposit_forfeit','보증금 몰수',0,-1,0,0,1,1),   -- a unit never came back: the shop keeps its deposit (no cash moves)
+ ('deposit_restore','몰수 취소',0,1,0,0,1,1);  -- the unit came back after all: held again, then refunded as usual
 
 INSERT INTO sys_payment_purposes (key, label, added_in) VALUES
  ('charge','수납',1), ('prepayment','예약금·선입금',1), ('deposit','보증금',1);
 
 INSERT INTO sys_deposit_timings (key, label, added_in) VALUES
- ('at_intake','접수할 때',1), ('at_issue','지급할 때',1);
+ ('at_intake','접수 시',1), ('at_issue','지급 시',1);
 
 INSERT INTO sys_deposit_refund_methods (key, label, added_in) VALUES
- ('cash','현금으로 돌려드림',1), ('offset_due','미수에서 빼기',1), ('same_method','받은 수단으로 돌려드림',1);
+ ('cash','현금 반환',1), ('offset_due','미수 차감',1), ('same_method','동일 수단 반환',1);
 
 INSERT INTO sys_deposit_unreturned_actions (key, label, added_in) VALUES
- ('keep','보증금에서 뺌',1), ('charge_loss','분실 값 따로 받음',1);
+ ('keep','보증금 몰수',1), ('charge_loss','분실금 청구(보증금 공제)',1);
 
 INSERT INTO sys_deposit_entry_kinds (key, label, unit_sign, payment_kind_key, added_in) VALUES
- ('take','보증금 받음',1,'deposit_in',1), ('refund','보증금 돌려드림',-1,'deposit_out',1),
- ('apply','미수에서 뺌',-1,'deposit_apply',1), ('keep','보증금에서 뺌',-1,'deposit_forfeit',1),
- ('restore','뺀 보증금 되돌림',1,'deposit_restore',1);
+ ('take','보증금 입금',1,'deposit_in',1), ('refund','보증금 반환',-1,'deposit_out',1),
+ ('apply','미수 차감',-1,'deposit_apply',1), ('keep','보증금 몰수',-1,'deposit_forfeit',1),
+ ('restore','몰수 취소',1,'deposit_restore',1);
 
 INSERT INTO sys_counterparty_roles (key, label, added_in) VALUES
  ('resort_vendor','발권처',1), ('partner_shop','거래처 샵',1), ('lesson_team','강습팀',1),
  ('lodging_affiliate','제휴 숙소',1), ('billing_company','후불 거래처',1);
 
 INSERT INTO sys_trade_kinds (key, label, direction_sign, added_in) VALUES
- ('receivable','받을 돈',1,1), ('payable','줄 돈',-1,1), ('ticket_purchase','권 구입',-1,1),
- ('ticket_sale','권 판매',1,1), ('ticket_refund','권 환불',1,1), ('equipment_borrow_fee','장비 빌린 값',-1,1),
- ('equipment_lend_fee','장비 빌려준 값',1,1), ('lesson_consignment','강습 위탁',-1,1),
- ('commission_payable','수수료 줄 돈',-1,1), ('commission_receivable','수수료 받을 돈',1,1);
+ ('receivable','미수',1,1), ('payable','미지급',-1,1), ('ticket_purchase','권 구입',-1,1),
+ ('ticket_sale','권 판매',1,1), ('ticket_refund','권 환불',1,1), ('equipment_borrow_fee','장비 대여 비용',-1,1),
+ ('equipment_lend_fee','장비 대여 수입',1,1), ('lesson_consignment','강습 위탁',-1,1),
+ ('commission_payable','수수료 미지급',-1,1), ('commission_receivable','수수료 미수',1,1);
 
 INSERT INTO sys_entity_types (key, label, added_in) VALUES
  ('order','접수',1), ('order_line','품목 줄',1), ('order_person','일행',1), ('customer','고객',1),
- ('catalog_item','상품',1), ('item_variant','규격',1), ('asset','장비 하나',1), ('task','차량 업무',1),
+ ('catalog_item','상품',1), ('item_variant','규격',1), ('asset','개별 장비',1), ('task','차량 업무',1),
  ('place','장소',1), ('counterparty','거래처',1);
 
 INSERT INTO sys_attribute_data_types (key, value_column, added_in) VALUES
@@ -6396,9 +6396,9 @@ INSERT INTO sys_attribute_placements (key, label, added_in) VALUES
 
 INSERT INTO sys_reason_domains (key, label, added_in) VALUES
  ('visit_result','방문 결과',1), ('early_return','조기 반납',1), ('exchange','교환',1), ('handover','인계',1),
- ('asset_condition','정비 상태',1), ('found','찾음',1), ('cash_entry','현금 입출금',1), ('refund','환불',1),
+ ('asset_condition','정비 상태',1), ('found','분실 회수',1), ('cash_entry','현금 입출금',1), ('refund','환불',1),
  ('cancellation','취소',1), ('adjustment','금액 조정',1), ('closing_difference','마감 차액',1),
- ('reallocation','수납 옮기기',1), ('price_override','가격 직접 입력',1), ('deposit','보증금',1);
+ ('reallocation','수납 이동',1), ('price_override','가격 직접 입력',1), ('deposit','보증금',1);
 
 INSERT INTO sys_stamp_rules (key, scope_key, description, added_in) VALUES
  ('qty_prepared','line','qty_prepared of active quantity',1),
@@ -6414,7 +6414,7 @@ INSERT INTO sys_stamp_rules (key, scope_key, description, added_in) VALUES
 
 INSERT INTO sys_outbox_channels (key, label, auto_retry, added_in) VALUES
  ('sms','문자',0,1), ('print','인쇄',1,1), ('card_terminal','카드 단말',0,1), ('webhook','외부 알림',1,1),
- ('backup_upload','백업 올리기',1,1);
+ ('backup_upload','백업 전송',1,1);
 
 INSERT INTO sys_print_renderers (key, label, added_in) VALUES
  ('receipt_slip','대여 접수증',1), ('collection_list_a4','수거 목록 A4',1), ('prep_sheet_a4','준비표 A4',1),
@@ -6422,65 +6422,65 @@ INSERT INTO sys_print_renderers (key, label, added_in) VALUES
  ('unreturned_list','미반납 목록',1), ('ledger_a4','대여 장부 A4',1), ('qr_guide','QR 안내판',1);
 
 INSERT INTO sys_screen_templates (key, label, added_in) VALUES
- ('ledger','장부',1), ('slip','접수증',1), ('checklist','남은 일 목록',1), ('collection_list','수거 목록',1),
- ('driver_list','기사 목록',1), ('tiles','타일 선택',1), ('form','입력',1), ('split','나눠서 결제',1);
+ ('ledger','장부',1), ('slip','접수증',1), ('checklist','처리 현황',1), ('collection_list','수거 목록',1),
+ ('driver_list','기사 목록',1), ('tiles','타일 선택',1), ('form','입력',1), ('split','부분 결제',1);
 
 INSERT INTO sys_column_renderers (key, label, binding_key, added_in) VALUES
- ('time','시각','none',1), ('team','팀','none',1), ('items','품목','none',1), ('promise','약속','none',1), ('place','장소','none',1),
- ('money','돈','none',1), ('stamp','도장','stamp_step',1), ('attribute','속성','attribute',1), ('text','글자','none',1),
- ('vehicle','차량','none',1), ('action','버튼(전화 · 못 받음)','action',1);
+ ('time','시각','none',1), ('team','팀','none',1), ('items','품목','none',1), ('promise','일정','none',1), ('place','장소','none',1),
+ ('money','금액','none',1), ('stamp','도장','stamp_step',1), ('attribute','속성','attribute',1), ('text','글자','none',1),
+ ('vehicle','차량','none',1), ('action','버튼(전화 · 수거 실패)','action',1);
 
 INSERT INTO sys_ledger_filters (key, label, added_in) VALUES
  ('all','전체',1), ('pickup','수령',1), ('return','반납',1), ('unpaid','미수',1), ('vehicle','차량',1),
- ('lessons','강습',1), ('open_tasks','남은 업무',1), ('collected','받음',1), ('remaining','남음',1), ('pinned','빨리 확인',1);
+ ('lessons','강습',1), ('open_tasks','미처리 업무',1), ('collected','수거 완료',1), ('remaining','잔여',1), ('pinned','긴급',1);
 
 INSERT INTO sys_ledger_metrics (key, label, added_in) VALUES
  ('team_count','팀',1), ('issued_count','지급',1), ('returned_count','반납',1), ('due_total','미수',1),
- ('collected_count','받음',1), ('pending_count','보냄 대기',1), ('remaining_count','남음',1), ('vehicle_load','차에 있는 것',1);
+ ('collected_count','수거 완료',1), ('pending_count','전송 대기',1), ('remaining_count','잔여',1), ('vehicle_load','차량 재고',1);
 
 INSERT INTO sys_cash_sources (key, label, added_in) VALUES
- ('payment','수납·환불·보증금',1), ('cash_entry','현금 입출금',1), ('cash_transfer','차량 현금 넘김',1),
- ('cash_transfer_confirmation','넘긴 현금 확인',1), ('counterparty_settlement','거래처 정산(발권처 환불금 포함)',1);
+ ('payment','수납·환불·보증금',1), ('cash_entry','현금 입출금',1), ('cash_transfer','차량 현금 인계',1),
+ ('cash_transfer_confirmation','인계 현금 확인',1), ('counterparty_settlement','거래처 정산(발권처 환불금 포함)',1);
 
 INSERT INTO sys_booking_channels (key, label, added_in) VALUES
- ('walk_in','현장 방문',1), ('phone','전화 예약',1), ('intake_form','사이즈 입력폼',1),
+ ('walk_in','현장 접수',1), ('phone','전화 예약',1), ('intake_form','사이즈 입력폼',1),
  ('ticket_reservation','리프트권 예약',1), ('driver_field','배달 현장',1), ('legacy','이전 자료',1);
 
 INSERT INTO sys_review_kinds (key, label, message_template, severity_key, routing_key, added_in) VALUES
- ('already_returned',   '이미 받음',       '{team} 팀 {item} {qty}개는 매장에서 이미 받았습니다. 기사님 기록은 넣지 않았습니다.', 'info', 'origin_device', 1),
- ('collect_exceeds',    '받은 수 확인',    '{team} 팀에서 {qty}개를 받았다고 했지만 손님에게 남은 것은 {left}개입니다. {left}개만 넣었습니다.', 'action', 'origin_device', 1),
- ('plan_displaced',     '계획이 바뀜',     '{item}은(는) {where}(으)로 실제로 옮겨져서 {plan} 계획을 풀었습니다. 계획을 다시 정해 주세요.', 'action', 'manager', 1),
- ('late_money',         '마감 뒤 들어온 돈', '{team} 팀 {amount}원은 마감한 날({day})에 받은 돈이라 {posting_day} 마감에 넣었습니다.', 'info', 'manager', 1),
- ('overpaid',           '더 받은 돈',      '{team} 팀은 {amount}원을 더 받았습니다. 돌려드리거나 다른 팀으로 옮겨 주세요.', 'action', 'order_banner', 1),
- ('allocation_fallback','품목 없이 받은 돈', '{team} 팀 {amount}원은 품목을 찾지 못해 팀 전체에 넣었습니다. 품목을 골라 주세요.', 'action', 'manager', 1),
- ('card_unknown',       '카드 결과 모름',  '카드 {amount}원 결제 결과를 모릅니다. 단말기 화면이나 영수증을 확인해 주세요.', 'blocking', 'dialog_step', 1),
- ('possible_duplicate_card', '같은 승인번호', '승인번호 {approval}의 카드 {amount}원이 두 번 기록됐습니다. 단말기 내역을 확인해 주세요.', 'action', 'manager', 1),
- ('extra_card_approval','카드가 한 번 더 승인됨', '카드 {amount}원이 한 번 더 승인됐습니다. 단말기에서 하나를 취소해 주세요.', 'blocking', 'dialog_step', 1),
- ('possible_duplicate_money', '같은 돈 두 번?', '{team} 팀에 {amount}원이 {minutes}분 안에 두 번 들어왔습니다. 같은 돈이 두 번 들어왔나요?', 'action', 'origin_device', 1),
- ('sms_unknown',        '문자 결과 모름',  '{team} 팀 문자가 갔는지 모릅니다. 필요하면 전화해 주세요.', 'info', 'origin_device', 1),
- ('task_cancelled',     '취소된 업무',     '{team} 팀 업무가 취소된 뒤에 기사님 기록이 들어왔습니다.', 'action', 'manager', 1),
- ('task_moved_meanwhile','옮긴 업무의 기록', '{team} 팀 업무를 {to_vehicle}(으)로 옮기기 전에 {from_vehicle}이(가) 이미 처리했습니다. {to_vehicle} 업무는 취소했습니다.', 'info', 'manager', 1),
- ('ticket_unavailable', '차에 권 없음',    '차에 남은 리프트권이 없어 {team} 팀 추가 권을 넣지 못했습니다. 받은 돈은 기록했습니다.', 'action', 'manager', 1),
- ('found_after_charge', '분실 금액 확인',  '{item}을(를) 찾았습니다. {team} 팀에 받은 분실 금액 {amount}원을 돌려드릴지 정해 주세요.', 'action', 'order_banner', 1),
- ('deposit_kept_returned', '뺀 보증금 확인', '{team} 팀 {item} {qty}{unit}이(가) 돌아왔습니다. 보증금에서 뺀 {amount}원을 돌려드릴지 정해 주세요.', 'action', 'order_banner', 1),
- ('blocked_command',    '멈춘 처리',       '앞선 처리가 되지 않아 이어진 처리 {count}건을 멈췄습니다(돈 기록은 모두 넣었습니다).', 'action', 'origin_device', 1),
- ('device_gap',         '오지 않은 기록',  '{device} 기록 {count}건이 오지 않았습니다. 그 기기를 켜서 보내 주세요.', 'action', 'manager', 1),
- ('clock_suspect',      '기기 시계 확인',  '{device} 시계가 맞지 않아 {count}건의 날짜를 확인해야 합니다.', 'action', 'manager', 1),
- ('van_unsynced',       '차량 기록 대기',  '{vehicle} 기록 {count}건이 아직 오지 않았습니다. 마감 전에 보내 주세요.', 'blocking', 'dialog_step', 1),
- ('route_superseded',   '순서가 바뀜',     '방문 순서가 그사이 바뀌었습니다({device}, {time}).', 'info', 'origin_device', 1),
- ('decision_overridden','내 결정이 바뀜',  '{time}에 정한 {summary}을(를) {other}님이 바꿨습니다.', 'info', 'origin_device', 1),
- ('receipt_no_clash',   '접수 번호 겹침',  '복구 뒤 접수 번호 {no}이(가) 다른 팀에 쓰였습니다. 종이 접수증을 확인해 주세요.', 'action', 'manager', 1),
- ('restore_replay',     '복구 뒤 다시 받음', '복구 뒤 {device} 기기에서 {count}건을 다시 받았습니다.', 'info', 'manager', 1),
- ('ui_defaults_kept',   '화면 설정 확인',  '새 화면 설정 {count}개는 가게에서 바꾼 곳이라 그대로 두었습니다.', 'info', 'manager', 1),
- ('asset_elsewhere',    '다른 곳에 있는 장비', '{item}은(는) 기록상 {where}에 있어 {team} 팀 {action}을(를) 넣지 않았습니다. 물건이 어디 있는지 확인해 주세요.', 'action', 'origin_device', 1),
- ('deposit_over_returned', '보증금 더 돌려드림', '{team} 팀에 맡은 보증금보다 {amount}원을 더 돌려드렸습니다. {drawer}에서 나간 현금으로 적었습니다. 손님께 받을지 정해 주세요.', 'action', 'order_banner', 1),
- ('revoked_device_record', '취소한 기기의 기록', '사용을 막은 기기({device})에서 기록 {count}건이 들어왔습니다. 넣지 않고 두었습니다. 맞는 기록이면 넣어 주세요.', 'action', 'manager', 1),
- ('offline_order_unapplied', '끊긴 동안 받은 접수 확인', '끊긴 동안 받은 접수(임시 {provisional})를 그대로 넣지 못해 대표자 · 품목 · 받은 돈만 적어 두었습니다. 종이 접수증과 맞춰 주세요.', 'action', 'origin_device', 1),
- ('device_unsynced',    '기기 기록 대기',  '{device} 기록 {count}건이 아직 오지 않았습니다. 마감 전에 그 기기를 인터넷에 연결해 보내 주세요.', 'blocking', 'dialog_step', 1),
- ('licence_lapsed_record', '라이선스 끝난 뒤의 기록', '라이선스 기간이 끝난 뒤 {device}에서 끊긴 채 받은 접수 {count}건을 넣었습니다. 공급자에게 연락해 주세요.', 'info', 'manager', 1),
- ('unverified_sign_in', '확인되지 않은 로그인', '{device}에서 {staff}님이 끊긴 채 로그인해 {count}건을 적었습니다. 그 전에 계정이 멈췄거나 번호가 바뀌었습니다. 맞는 기록인지 확인해 주세요.', 'action', 'manager', 1),
- ('command_held',       '공급자 확인 중',  '{device}에서 온 기록 {count}건을 공급자가 확인하고 있습니다. 다른 일은 그대로 됩니다.', 'info', 'manager', 1),
- ('recomputed_after_restore', '되살린 뒤 다시 계산', '되살린 뒤 {team} 팀 {what}의 값을 고친 계산으로 다시 적었습니다. 전 {before} · 지금 {after}', 'action', 'manager', 1);
+ ('already_returned',   '수거 기록 제외',       '{team} 팀 {item} {qty}개 매장 반납 완료 · 기사 수거 기록 제외', 'info', 'origin_device', 1),
+ ('collect_exceeds',    '수거 수량 확인',    '{team} 팀 수거 {qty}개 · 대여 중 {left}개 · {left}개만 반영', 'action', 'origin_device', 1),
+ ('plan_displaced',     '계획 변경',     '{item} 실제 위치 {where} · {plan} 계획 해제 · 계획 다시 지정', 'action', 'manager', 1),
+ ('late_money',         '마감 후 수납', '{team} 팀 {amount}원 · 마감일({day}) 수납 · {posting_day} 마감 반영', 'info', 'manager', 1),
+ ('overpaid',           '초과 수납',      '{team} 팀 초과 수납 {amount}원 · 환불 또는 다른 팀 이동', 'action', 'order_banner', 1),
+ ('allocation_fallback','품목 미지정 수납', '{team} 팀 {amount}원 · 품목 미지정 · 팀 전체 반영 · 품목 선택 필요', 'action', 'manager', 1),
+ ('card_unknown',       '카드 결과 미확인',  '카드 {amount}원 결제 결과 미확인 · 단말기 화면 · 영수증 확인', 'blocking', 'dialog_step', 1),
+ ('possible_duplicate_card', '승인번호 중복', '승인번호 {approval} · 카드 {amount}원 2건 기록 · 단말기 내역 확인', 'action', 'manager', 1),
+ ('extra_card_approval','카드 중복 승인', '카드 {amount}원 중복 승인 · 단말기에서 1건 취소', 'blocking', 'dialog_step', 1),
+ ('possible_duplicate_money', '중복 수납 의심', '{team} 팀 {amount}원 · {minutes}분 안 2건 · 중복 여부 확인', 'action', 'origin_device', 1),
+ ('sms_unknown',        '문자 결과 미확인',  '{team} 팀 문자 발송 결과 미확인 · 필요 시 전화', 'info', 'origin_device', 1),
+ ('task_cancelled',     '취소된 업무',     '{team} 팀 업무 취소 후 기사 기록 수신', 'action', 'manager', 1),
+ ('task_moved_meanwhile','업무 차량 변경 확인', '{team} 팀 업무 · {from_vehicle} 처리 완료 · {to_vehicle} 업무 취소', 'info', 'manager', 1),
+ ('ticket_unavailable', '차량 권 재고 없음',    '차량 리프트권 재고 없음 · {team} 팀 추가 권 미반영 · 수납 기록 완료', 'action', 'manager', 1),
+ ('found_after_charge', '분실금 확인',  '{item} 분실 회수 · {team} 팀 분실금 {amount}원 · 환불 여부 결정', 'action', 'order_banner', 1),
+ ('deposit_kept_returned', '몰수 보증금 확인', '{team} 팀 {item} {qty}{unit} 반납 · 몰수 보증금 {amount}원 · 반환 여부 결정', 'action', 'order_banner', 1),
+ ('blocked_command',    '처리 중단',       '앞 처리 실패 · 다음 처리 {count}건 중단 · 수납 기록 반영', 'action', 'origin_device', 1),
+ ('device_gap',         '미수신 기록',  '{device} 기록 {count}건 미수신 · 해당 기기 전송 필요', 'action', 'manager', 1),
+ ('clock_suspect',      '기기 시계 확인',  '{device} 시계 불일치 · {count}건 날짜 확인 필요', 'action', 'manager', 1),
+ ('van_unsynced',       '차량 전송 대기',  '{vehicle} 기록 {count}건 전송 대기 · 마감 전 전송 필요', 'blocking', 'dialog_step', 1),
+ ('route_superseded',   '순서 변경',     '방문 순서 변경됨({device}, {time})', 'info', 'origin_device', 1),
+ ('decision_overridden','결정 변경',  '{time} 결정 {summary} · {other}님 변경', 'info', 'origin_device', 1),
+ ('receipt_no_clash',   '접수 번호 중복',  '복구 후 접수 번호 {no} 중복 · 종이 접수증 확인', 'action', 'manager', 1),
+ ('restore_replay',     '복구 후 재수신', '복구 후 {device} 기기 {count}건 재수신', 'info', 'manager', 1),
+ ('ui_defaults_kept',   '화면 설정 확인',  '새 화면 설정 {count}개 · 매장 변경 항목 유지', 'info', 'manager', 1),
+ ('asset_elsewhere',    '장비 위치 불일치', '{item} 기록상 위치 {where} · {team} 팀 {action} 미반영 · 장비 위치 확인', 'action', 'origin_device', 1),
+ ('deposit_over_returned', '보증금 초과 반환', '{team} 팀 보증금 {amount}원 초과 반환 · {drawer} 현금 출금 기록 · 청구 여부 결정', 'action', 'order_banner', 1),
+ ('revoked_device_record', '사용 중지 기기 기록', '사용 중지 기기({device}) 기록 {count}건 보류 · 확인 후 반영', 'action', 'manager', 1),
+ ('offline_order_unapplied', '연결 끊김 중 접수 확인', '연결 끊김 중 접수(임시 {provisional}) · 대표자 · 품목 · 수납만 반영 · 종이 접수증 대조', 'action', 'origin_device', 1),
+ ('device_unsynced',    '기기 전송 대기',  '{device} 기록 {count}건 전송 대기 · 마감 전 기기 연결', 'blocking', 'dialog_step', 1),
+ ('licence_lapsed_record', '라이선스 만료 후 기록', '라이선스 만료 후 {device} 연결 끊김 중 접수 {count}건 반영 · 공급자 연락', 'info', 'manager', 1),
+ ('unverified_sign_in', '미확인 로그인', '{device} · {staff}님 연결 끊김 중 로그인 · {count}건 기록 · 계정 중지 또는 번호 변경 후 기록 · 확인 필요', 'action', 'manager', 1),
+ ('command_held',       '공급자 확인 중',  '{device} 기록 {count}건 공급자 확인 중 · 다른 업무 정상', 'info', 'manager', 1),
+ ('recomputed_after_restore', '복구 후 재계산', '복구 후 {team} 팀 {what} 재계산 · 이전 {before} · 현재 {after}', 'action', 'manager', 1);
 
 -- engine_key is the season-1 assignment (migration-plan 3-3) and is the ONE field of a sys row a
 -- migration may UPDATE (when a bundle moves to native). native = new TypeScript handler;
@@ -6492,84 +6492,84 @@ INSERT INTO sys_event_types (key, category_key, class_key, audit_label, is_money
  ('order.add',               'order',    'intent',      '품목 추가',            0, 1, 'native',  1),
  ('order.cancel',            'order',    'intent',      '접수 취소',            1, 0, 'legacy',  1),
  ('order.extend',            'order',    'intent',      '기간 연장',            1, 0, 'legacy',  1),
- ('order.link',              'order',    'intent',      '접수 합치기·연결',     0, 0, 'legacy',  1),
- ('reservation.change',      'order',    'intent',      '권 예약 바꾸기',       0, 0, 'legacy',  1),
- ('promise.change',          'order',    'intent',      '약속 바꾸기',          0, 0, 'native',  1),
- ('payment_promise.set',     'money',    'intent',      '결제할 팀·시점',       0, 0, 'native',  1),
+ ('order.link',              'order',    'intent',      '접수 병합·연결',     0, 0, 'legacy',  1),
+ ('reservation.change',      'order',    'intent',      '권 예약 변경',       0, 0, 'legacy',  1),
+ ('promise.change',          'order',    'intent',      '일정 변경',          0, 0, 'native',  1),
+ ('payment_promise.set',     'money',    'intent',      '결제 팀·시점',       0, 0, 'native',  1),
  ('discount.apply',          'money',    'intent',      '할인',                 1, 0, 'native',  1),
  ('payment.take',            'money',    'fact',        '수납',                 1, 1, 'native',  1),
  ('payment.refund',          'money',    'fact',        '환불',                 1, 0, 'native',  1),
- ('payment.reallocate',      'money',    'intent',      '수납 옮기기',          1, 0, 'native',  1),
+ ('payment.reallocate',      'money',    'intent',      '수납 이동',          1, 0, 'native',  1),
  ('payment.intent_request',  'money',    'intent',      '카드 결제 요청',       1, 0, 'native',  1),
  ('payment.intent_outcome',  'money',    'system',      '카드 결제 결과',       1, 0, 'native',  1),
  ('payment.intent_resolve',  'money',    'intent',      '카드 결과 확인',       1, 0, 'native',  1),
  ('tax_document.issue',      'money',    'fact',        '현금영수증·세금계산서', 1, 0, 'native',  1),
- ('deposit.take',            'money',    'fact',        '보증금 받기',          1, 1, 'native',  1),
- ('deposit.return',          'money',    'fact',        '보증금 돌려주기',      1, 1, 'native',  1),
- ('deposit.keep',            'money',    'intent',      '보증금에서 빼기',      1, 0, 'native',  1),
+ ('deposit.take',            'money',    'fact',        '보증금 입금',          1, 1, 'native',  1),
+ ('deposit.return',          'money',    'fact',        '보증금 반환',      1, 1, 'native',  1),
+ ('deposit.keep',            'money',    'intent',      '보증금 몰수',      1, 0, 'native',  1),
  ('adjustment.create',       'money',    'intent',      '금액 조정',            1, 0, 'native',  1),
  ('cash.entry',              'money',    'fact',        '현금 입출금',          1, 0, 'native',  1),
- ('cash.transfer',           'money',    'fact',        '차량 현금 넘기기',     1, 0, 'native',  1),
+ ('cash.transfer',           'money',    'fact',        '차량 현금 인계',     1, 0, 'native',  1),
  ('cash.transfer_confirm',   'money',    'fact',        '차량 현금 확인',       1, 0, 'native',  1),
  ('closing.close',           'money',    'intent',      '마감',                 1, 0, 'native',  1),
- ('closing.reopen',          'money',    'intent',      '마감 다시 열기',       1, 0, 'native',  1),
+ ('closing.reopen',          'money',    'intent',      '마감 해제',       1, 0, 'native',  1),
  ('field.collect',           'money',    'fact',        '현장 수납',            1, 1, 'native',  1),
  ('field.add_ticket',        'order',    'fact',        '배달 중 리프트권 추가', 1, 1, 'native',  1),
- ('field.deposit_return',    'money',    'fact',        '현장 보증금 돌려주기', 1, 1, 'native',  1),
+ ('field.deposit_return',    'money',    'fact',        '현장 보증금 반환', 1, 1, 'native',  1),
  ('stock.load',              'stock',    'fact',        '차량 적재',            0, 1, 'adapter', 1),
  ('stock.issue',             'stock',    'fact',        '지급',                 0, 1, 'adapter', 1),
- ('stock.deliver',           'stock',    'fact',        '배달 전달',            0, 1, 'adapter', 1),
- ('stock.collect',           'stock',    'fact',        '차량 받음',            0, 1, 'adapter', 1),
+ ('stock.deliver',           'stock',    'fact',        '차량 배달',            0, 1, 'adapter', 1),
+ ('stock.collect',           'stock',    'fact',        '차량 수거',            0, 1, 'adapter', 1),
  ('stock.receive',           'stock',    'fact',        '매장 입고',            0, 0, 'adapter', 1),
  ('stock.direct_return',     'stock',    'fact',        '매장 반납',            0, 1, 'adapter', 1),
- ('stock.reverse',           'stock',    'intent',      '처리 되돌리기',        0, 0, 'legacy',  1),
- ('stock.intake',            'stock',    'fact',        '재고 들이기',          0, 0, 'adapter', 1),
+ ('stock.reverse',           'stock',    'intent',      '처리 취소',        0, 0, 'legacy',  1),
+ ('stock.intake',            'stock',    'fact',        '재고 입고',          0, 0, 'adapter', 1),
  ('asset.condition',         'stock',    'fact',        '정비 상태',            0, 0, 'adapter', 1),
- ('asset.found',             'stock',    'fact',        '찾음',                 0, 0, 'adapter', 1),
+ ('asset.found',             'stock',    'fact',        '분실 회수',                 0, 0, 'adapter', 1),
  ('asset.manage',            'stock',    'intent',      '장비 관리',            0, 0, 'legacy',  1),
- ('asset.reclassify',        'stock',    'intent',      '장비 품목 바꾸기',     0, 0, 'native',  1),
+ ('asset.reclassify',        'stock',    'intent',      '장비 품목 변경',     0, 0, 'native',  1),
  ('preparation.set',         'stock',    'intent',      '준비',                 0, 0, 'legacy',  1),
  ('preparation.cancel',      'stock',    'intent',      '준비 취소',            0, 0, 'legacy',  1),
  ('ticket.issue',            'stock',    'fact',        '발권',                 0, 0, 'adapter', 1),
  ('ticket.allocate',         'stock',    'intent',      '권 배정',              0, 0, 'legacy',  1),
- ('ticket.release',          'stock',    'intent',      '권 배정 풀기',         0, 0, 'legacy',  1),
+ ('ticket.release',          'stock',    'intent',      '권 배정 해제',         0, 0, 'legacy',  1),
  ('ticket.recover',          'stock',    'fact',        '권 회수',              0, 0, 'adapter', 1),
- ('ticket.hand_out',         'stock',    'fact',        '권 주기(배정과 지급)', 0, 1, 'native',  1),
+ ('ticket.hand_out',         'stock',    'fact',        '권 지급(배정 포함)', 0, 1, 'native',  1),
  ('vendor_refund.plan',      'stock',    'intent',      '발권처 환불 준비',     0, 0, 'legacy',  1),
  ('vendor_refund.attempt',   'stock',    'fact',        '발권처 환불',          1, 1, 'adapter', 1),
  ('exchange.request',        'stock',    'intent',      '교환 요청',            0, 0, 'legacy',  1),
  ('exchange.cancel',         'stock',    'intent',      '교환 취소',            0, 0, 'legacy',  1),
  ('exchange.complete',       'stock',    'fact',        '교환 완료',            0, 0, 'adapter', 1),
  ('exchange.recover',        'stock',    'fact',        '교환 회수',            0, 0, 'adapter', 1),
- ('exchange.swap',           'stock',    'fact',        '바꿔 드림(카운터)',    0, 1, 'native',  1),
+ ('exchange.swap',           'stock',    'fact',        '즉시 교환(카운터)',    0, 1, 'native',  1),
  ('early_return.create',     'stock',    'intent',      '조기 반납',            0, 0, 'legacy',  1),
- ('equipment_loan.move',     'stock',    'fact',        '거래처 장비 빌림·빌려줌', 0, 0, 'adapter', 1),
+ ('equipment_loan.move',     'stock',    'fact',        '거래처 장비 대여', 0, 0, 'adapter', 1),
  ('counterparty.trade',      'money',    'fact',        '거래처 거래',          1, 0, 'adapter', 1),
  ('counterparty.settle',     'money',    'fact',        '거래처 정산',          1, 0, 'adapter', 1),
  ('counterparty.agreement',  'money',    'intent',      '거래처 약정',          0, 0, 'legacy',  1),
- ('lesson.close',            'order',    'fact',        '강습 끝 · 불참 · 취소', 0, 0, 'native',  1),
- ('lesson.correct',          'order',    'intent',      '강습 결과 고치기',     1, 0, 'native',  1),
- ('placeholder.convert',     'order',    'intent',      '인원 예약을 품목으로', 0, 0, 'native',  1),
- ('task.save',               'dispatch', 'intent',      '차량 업무 만들기',     0, 0, 'native',  1),
+ ('lesson.close',            'order',    'fact',        '강습 완료 · 불참 · 취소', 0, 0, 'native',  1),
+ ('lesson.correct',          'order',    'intent',      '강습 결과 수정',     1, 0, 'native',  1),
+ ('placeholder.convert',     'order',    'intent',      '인원 예약 품목 전환', 0, 0, 'native',  1),
+ ('task.save',               'dispatch', 'intent',      '차량 업무 생성',     0, 0, 'native',  1),
  ('task.visit',              'dispatch', 'fact',        '방문 결과',            0, 1, 'native',  1),
- ('task.reassign',           'dispatch', 'intent',      '업무 옮기기',          0, 0, 'native',  1),
+ ('task.reassign',           'dispatch', 'intent',      '업무 차량 변경',          0, 0, 'native',  1),
  ('route.move',              'dispatch', 'commutative', '방문 순서',            0, 1, 'native',  1),
- ('route.reset',             'dispatch', 'commutative', '시간순 되돌리기',      0, 1, 'native',  1),
- ('task.pin',                'dispatch', 'commutative', '빨리 확인',            0, 0, 'native',  1),
- ('task.unpin',              'dispatch', 'commutative', '빨리 확인 풀기',       0, 0, 'native',  1),
+ ('route.reset',             'dispatch', 'commutative', '시간순 정렬',      0, 1, 'native',  1),
+ ('task.pin',                'dispatch', 'commutative', '긴급 요청',            0, 0, 'native',  1),
+ ('task.unpin',              'dispatch', 'commutative', '긴급 해제',       0, 0, 'native',  1),
  ('notification.ack',        'dispatch', 'commutative', '알림 확인',            0, 1, 'native',  1),
- ('intake.create',           'order',    'intent',      '사이즈 요청 만들기',   0, 0, 'legacy',  1),
- ('intake.revoke',           'order',    'intent',      '사이즈 요청 끊기',     0, 0, 'legacy',  1),
+ ('intake.create',           'order',    'intent',      '사이즈 요청 생성',   0, 0, 'legacy',  1),
+ ('intake.revoke',           'order',    'intent',      '사이즈 요청 해지',     0, 0, 'legacy',  1),
  ('intake.submit',           'order',    'fact',        '사이즈 입력',          0, 0, 'adapter', 1),
  ('intake.review',           'order',    'intent',      '사이즈 확인',          0, 0, 'legacy',  1),
  ('intake.apply',            'order',    'intent',      '사이즈 반영',          0, 0, 'legacy',  1),
  ('customer.update',         'order',    'intent',      '고객 정보',            0, 0, 'legacy',  1),
  ('print.request',           'order',    'commutative', '인쇄',                 0, 1, 'native',  1),
  ('print.outcome',           'system',   'system',      '인쇄 결과',            0, 0, 'native',  1),
- ('sms.send',                'order',    'intent',      '문자 보내기',          0, 0, 'native',  1),
+ ('sms.send',                'order',    'intent',      '문자 발송',          0, 0, 'native',  1),
  ('sms.outcome',             'system',   'system',      '문자 결과',            0, 0, 'native',  1),
- ('inbound.record',          'system',   'system',      '바깥에서 온 결과',     0, 0, 'native',  1),
- ('registry.update',         'settings', 'intent',      '설정 목록 바꾸기',     0, 0, 'native',  1),
+ ('inbound.record',          'system',   'system',      '외부 결과 수신',     0, 0, 'native',  1),
+ ('registry.update',         'settings', 'intent',      '설정 목록 변경',     0, 0, 'native',  1),
  ('setting.set',             'settings', 'intent',      '매장 설정',            0, 0, 'native',  1),
  ('feature.set',             'settings', 'intent',      '사용 기능',            0, 0, 'native',  1),
  ('ui_defaults.apply',       'settings', 'system',      '화면 기본 설정 반영',  0, 0, 'native',  1),
@@ -6577,9 +6577,9 @@ INSERT INTO sys_event_types (key, category_key, class_key, audit_label, is_money
  ('device.register',         'settings', 'intent',      '기기 등록',            0, 0, 'native',  1),
  ('device.sign_in',          'settings', 'system',      '기기 로그인',          0, 1, 'native',  1),
  ('review.resolve',          'sync',     'intent',      '확인 필요 처리',       0, 0, 'native',  1),
- ('customer.anonymize',      'settings', 'intent',      '고객 정보 지우기',     0, 0, 'native',  1),
- ('verifier.repair',         'system',   'system',      '검증기 고침',          0, 0, 'native',  1),
- ('legacy.imported',         'import',   'system',      '이전 자료 가져옴',     0, 0, 'import',  1);
+ ('customer.anonymize',      'settings', 'intent',      '고객 정보 삭제',     0, 0, 'native',  1),
+ ('verifier.repair',         'system',   'system',      '검증 보정',          0, 0, 'native',  1),
+ ('legacy.imported',         'import',   'system',      '이전 자료 등록',     0, 0, 'import',  1);
 
 -- What each device kind may queue while it cannot reach the server (sync doc 8-2). Counters record the facts
 -- of the counter (지급 · 반납 도장, 적재, 권 주기, 바꿔 드림, money, deposits), new walk-in orders with a provisional
@@ -6588,11 +6588,11 @@ INSERT INTO sys_event_types (key, category_key, class_key, audit_label, is_money
 -- season-1 list. On arrival every queued command is a recorded fact (sync doc 8-12): epoch, basis, conflict keys
 -- and expect never send it back; only its decisions (quote, discount, payer, licence) go to a review item.
 INSERT INTO sys_offline_limits (key, label, added_in) VALUES
- ('walk_in_cached_quote','현장 대여 · 기기에 있는 게시 요금표 값 · 미리 정한 할인 · 이 팀이나 나중에 냄',1),
- ('own_payer_cached_quote','기기에 있는 게시 요금표 값 · 결제할 팀이 이 팀 · 열린 접수',1),
- ('cached_quote','기기에 있는 게시 요금표 값',1),
- ('shop_ticket_stock','기기 사본의 매장 권 재고에서 · 겹치지 않는 사용 창',1),
- ('same_line_swap','같은 품목 줄에서 번호 · 규격만 바꿈 · 값 그대로',1);
+ ('walk_in_cached_quote','현장 접수 · 기기 게시 요금표 · 사전 설정 할인 · 이 팀 결제 또는 후불',1),
+ ('own_payer_cached_quote','기기 게시 요금표 · 결제 팀 = 이 팀 · 진행 중 접수',1),
+ ('cached_quote','기기 게시 요금표',1),
+ ('shop_ticket_stock','기기 사본 매장 권 재고 · 사용 시간 비중복',1),
+ ('same_line_swap','같은 품목 줄 번호 · 규격 변경 · 금액 유지',1);
 
 INSERT INTO sys_offline_commands (event_type_key, device_kind_key, limit_key, added_in) VALUES
  ('order.create','pos','walk_in_cached_quote',1), ('order.add','pos','own_payer_cached_quote',1),
@@ -6622,7 +6622,7 @@ INSERT INTO sys_screens (key, label, route_pattern, template_key, params_schema_
  ('collection_list','수거 목록','/collections/:date','collection_list','route.collection_list',1),
  ('driver_list','기사 목록','/driver/:date','driver_list','route.driver_list',1),
  ('driver_task','업무 판','/driver/tasks/:taskId','slip','route.driver_task',1),
- ('van_stock','차에 있는 것','/driver/stock',NULL,NULL,1),
+ ('van_stock','차량 재고','/driver/stock',NULL,NULL,1),
  ('review_list','확인 필요','/review','checklist',NULL,1),
  ('closing','마감','/closing/:date','form','route.closing',1),
  ('lift_tickets','리프트권','/tickets',NULL,NULL,1),
@@ -6636,20 +6636,20 @@ INSERT INTO sys_group_keys (key, label, added_in) VALUES
  ('time_bucket','시간대',1), ('return_slot','반납 타임',1), ('place','장소',1), ('area','구역',1), ('vehicle','차량',1);
 
 INSERT INTO sys_sort_keys (key, label, is_time, added_in) VALUES
- ('next_due_at','다음 약속 시각',1,1), ('promised_at','약속 시각',1,1), ('manual_route','방문 순서',0,1), ('receipt_no','접수 번호',0,1);
+ ('next_due_at','다음 일정 시각',1,1), ('promised_at','일정 시각',1,1), ('manual_route','방문 순서',0,1), ('receipt_no','접수 번호',0,1);
 
 INSERT INTO sys_fit_modes (key, label, added_in) VALUES
- ('parts','뒷부분부터 빼기',1), ('items','외 N종',1), ('words','낱말',1), ('alts','짧은 글',1);
+ ('parts','뒷부분부터 생략',1), ('items','외 N종',1), ('words','낱말',1), ('alts','짧은 글',1);
 
-INSERT INTO sys_fold_modes (key, label, added_in) VALUES ('prefix','앞에 붙이기',1), ('second_line','둘째 줄',1);
+INSERT INTO sys_fold_modes (key, label, added_in) VALUES ('prefix','앞에 표시',1), ('second_line','둘째 줄',1);
 
 INSERT INTO sys_align_keys (key, label, added_in) VALUES ('start','왼쪽',1), ('center','가운데',1), ('end','오른쪽',1);
 
 INSERT INTO sys_overflow_modes (key, label, added_in) VALUES
- ('more_sheet','더 보기',1), ('page','쪽 넘김',1), ('fold','합치기',1), ('two_column','두 줄',1);
+ ('more_sheet','더 보기',1), ('page','쪽 넘김',1), ('fold','합산',1), ('two_column','두 줄',1);
 
 INSERT INTO sys_tones (key, label, late_only, is_seal, added_in) VALUES
- ('red','빨강(늦음만)',1,0,1), ('seal','도장 주홍',0,1,1), ('orange','주황',0,0,1), ('green','초록',0,0,1),
+ ('red','빨강(지연만)',1,0,1), ('seal','도장 주홍',0,1,1), ('orange','주황',0,0,1), ('green','초록',0,0,1),
  ('blue','파랑',0,0,1), ('purple','보라',0,0,1), ('grey','회색',0,0,1), ('ink','검정',0,0,1);
 
 INSERT INTO sys_icons (key, label, added_in) VALUES
@@ -6657,73 +6657,73 @@ INSERT INTO sys_icons (key, label, added_in) VALUES
  ('lesson','강습',1), ('goggles','고글',1), ('protector','보호대',1), ('boots','부츠',1), ('generic','기타',1);
 
 INSERT INTO sys_picker_placements (key, label, added_in) VALUES
- ('tile','타일',1), ('grouped','한 타일 뒤에 묶음',1), ('hidden','고르기에서 숨김',1);
+ ('tile','타일',1), ('grouped','타일 묶음',1), ('hidden','선택 목록 제외',1);
 
 INSERT INTO sys_conditions (key, scope_key, label, added_in) VALUES
- ('always','any','늘',1), ('vehicle_pickup','line','차량 배달 약속이 있음',1), ('vehicle_return','line','차량 수거 약속이 있음',1),
+ ('always','any','항상',1), ('vehicle_pickup','line','차량 배달 일정 있음',1), ('vehicle_return','line','차량 수거 일정 있음',1),
  ('return_required','line','반납 필요',1), ('exchangeable','line','교환 가능',1), ('extendable','line','연장 가능',1),
- ('partial_cancel_allowed','line','일부 취소 가능',1), ('has_open_tasks','order','열린 차량 업무',1),
- ('has_due','order','받을 돈이 있음',1), ('has_items_out','line','내준 장비가 아직 돌아오지 않음',1),
- ('before_last_return_slot','view','마지막 반납 타임 전',1), ('after_last_return_slot','view','마지막 반납 타임 뒤',1);
+ ('partial_cancel_allowed','line','부분 취소 가능',1), ('has_open_tasks','order','미처리 차량 업무',1),
+ ('has_due','order','미수 있음',1), ('has_items_out','line','미반납 장비 있음',1),
+ ('before_last_return_slot','view','마지막 반납 타임 이전',1), ('after_last_return_slot','view','마지막 반납 타임 이후',1);
 
 INSERT INTO sys_status_keys (domain_key, key, default_label, added_in) VALUES
  ('order','booked','예약',1), ('order','cancelled','취소',1), ('order','awaiting_exchange','교환 대기',1),
- ('order','needs_review','확인 필요',1), ('order','partial_return','일부 반납',1), ('order','in_use','이용 중',1),
- ('order','awaiting_shop','차량에 있음',1), ('order','awaiting_load','차량 적재 대기',1), ('order','awaiting_issue','지급 대기',1),
- ('order','returned','반납 끝',1), ('order','completed','끝',1),
- ('line','todo','할 일',1), ('line','partial','일부',1), ('line','done','끝',1), ('line','na','해당 없음',1),
- ('task','waiting','대기',1), ('task','in_progress','가는 중',1), ('task','completed','끝',1), ('task','cancelled','취소',1),
- ('pay_state','paid','수납 끝',1), ('pay_state','partial','일부 수납',1), ('pay_state','unpaid','미수',1),
- ('pay_state','promised','다른 팀 결제 예정',1), ('pay_state','none','받을 돈 없음',1),
- ('promise','active','살아 있음',1), ('promise','superseded','바뀜',1), ('promise','fulfilled','지킴',1), ('promise','cancelled','취소',1),
- ('booking','unassigned','강습팀 미정',1), ('booking','reserved','예약',1), ('booking','done','끝',1),
+ ('order','needs_review','확인 필요',1), ('order','partial_return','부분 반납',1), ('order','in_use','이용 중',1),
+ ('order','awaiting_shop','입고 대기',1), ('order','awaiting_load','차량 적재 대기',1), ('order','awaiting_issue','지급 대기',1),
+ ('order','returned','반납 완료',1), ('order','completed','완료',1),
+ ('line','todo','미처리',1), ('line','partial','부분',1), ('line','done','완료',1), ('line','na','해당 없음',1),
+ ('task','waiting','대기',1), ('task','in_progress','진행 중',1), ('task','completed','완료',1), ('task','cancelled','취소',1),
+ ('pay_state','paid','수납 완료',1), ('pay_state','partial','부분 수납',1), ('pay_state','unpaid','미수',1),
+ ('pay_state','promised','다른 팀 결제 예정',1), ('pay_state','none','청구 없음',1),
+ ('promise','active','유효',1), ('promise','superseded','변경됨',1), ('promise','fulfilled','완료',1), ('promise','cancelled','취소',1),
+ ('booking','unassigned','강습팀 미정',1), ('booking','reserved','예약',1), ('booking','done','완료',1),
  ('booking','cancelled','취소',1), ('booking','no_show','불참',1),
- ('stamp','todo','할 일',1), ('stamp','partial','일부',1), ('stamp','done','끝',1), ('stamp','na','—',1),
- ('stamp','blocked','먼저 할 일',1), ('stamp','scheduled','예정',1), ('stamp','delegated','차량이 함',1);
+ ('stamp','todo','미처리',1), ('stamp','partial','부분',1), ('stamp','done','완료',1), ('stamp','na','—',1),
+ ('stamp','blocked','대기',1), ('stamp','scheduled','예정',1), ('stamp','delegated','차량 담당',1);
 
 INSERT INTO sys_confirm_templates (key, label, added_in) VALUES
- ('issue','지급',1), ('return','반납',1), ('load','적재',1), ('collect','받음',1), ('receive','매장 입고',1),
- ('pay','수납',1), ('ticket_secure','발권',1), ('lesson_close','강습 끝',1), ('prepare','준비',1),
- ('visit_result','방문 결과',1), ('field_payment','현장 수납',1), ('add_ticket','리프트권 추가',1), ('swap','바꿔 드림',1);
+ ('issue','지급',1), ('return','반납',1), ('load','적재',1), ('collect','수거',1), ('receive','매장 입고',1),
+ ('pay','수납',1), ('ticket_secure','발권',1), ('lesson_close','강습 완료',1), ('prepare','준비',1),
+ ('visit_result','방문 결과',1), ('field_payment','현장 수납',1), ('add_ticket','리프트권 추가',1), ('swap','즉시 교환',1);
 
 INSERT INTO sys_actions (key, label, kind_key, command_key, confirm_template_key, undo_command_key, screen_key, rule_scope_key, added_in) VALUES
- ('stamp.issue','지급 도장','stamp','stock.issue','issue','stock.reverse',NULL,'line',1),
- ('stamp.return','반납 도장','stamp','stock.direct_return','return','stock.reverse',NULL,'line',1),
- ('stamp.load','적재 도장','stamp','stock.load','load','stock.reverse',NULL,'line',1),
- ('stamp.collect','받음 도장','stamp','stock.collect','collect','stock.reverse',NULL,'line',1),
- ('stamp.receive','입고 도장','stamp','stock.receive','receive','stock.reverse',NULL,'task',1),
- ('stamp.ticket_secure','발권 도장','stamp','ticket.allocate','ticket_secure','ticket.release',NULL,'line',1),
- ('stamp.lesson_done','강습 도장','stamp','lesson.close','lesson_close','lesson.correct',NULL,'line',1),
- ('stamp.pay','수납 도장','stamp','payment.take','pay',NULL,NULL,'order',1),
- ('stamp.prepare','준비 도장','stamp','preparation.set','prepare','preparation.cancel',NULL,'line',1),
- ('stamp.ticket_hand_out','권 지급 도장','stamp','ticket.hand_out','issue','stock.reverse',NULL,'line',1),
- ('next_step','다음 할 일','next',NULL,NULL,NULL,NULL,'order',1),
+ ('stamp.issue','지급 처리','stamp','stock.issue','issue','stock.reverse',NULL,'line',1),
+ ('stamp.return','반납 처리','stamp','stock.direct_return','return','stock.reverse',NULL,'line',1),
+ ('stamp.load','적재 처리','stamp','stock.load','load','stock.reverse',NULL,'line',1),
+ ('stamp.collect','수거 처리','stamp','stock.collect','collect','stock.reverse',NULL,'line',1),
+ ('stamp.receive','입고 처리','stamp','stock.receive','receive','stock.reverse',NULL,'task',1),
+ ('stamp.ticket_secure','발권 처리','stamp','ticket.allocate','ticket_secure','ticket.release',NULL,'line',1),
+ ('stamp.lesson_done','강습 처리','stamp','lesson.close','lesson_close','lesson.correct',NULL,'line',1),
+ ('stamp.pay','수납 처리','stamp','payment.take','pay',NULL,NULL,'order',1),
+ ('stamp.prepare','준비 처리','stamp','preparation.set','prepare','preparation.cancel',NULL,'line',1),
+ ('stamp.ticket_hand_out','권 지급 처리','stamp','ticket.hand_out','issue','stock.reverse',NULL,'line',1),
+ ('next_step','다음 처리','next',NULL,NULL,NULL,NULL,'order',1),
  ('new_order','새 접수','screen',NULL,NULL,NULL,'new_order',NULL,1),
  ('close_day','마감','screen',NULL,NULL,NULL,'closing',NULL,1),
  ('receive_to_shop','매장 입고','command','stock.receive','receive','stock.reverse',NULL,'task',1),
  ('pay','수납','command','payment.take','pay',NULL,NULL,'order',1),
- ('change_promise','약속 바꾸기','command','promise.change',NULL,NULL,NULL,'line',1),
+ ('change_promise','일정 변경','command','promise.change',NULL,NULL,NULL,'line',1),
  ('exchange','교환','command','exchange.request',NULL,'exchange.cancel',NULL,'line',1),
  ('extend','연장','command','order.extend',NULL,NULL,NULL,'line',1),
  ('cancel','접수 취소','command','order.cancel',NULL,NULL,NULL,'line',1),
  ('early_return','조기 반납','command','early_return.create',NULL,NULL,NULL,'line',1),
  ('print','인쇄','command','print.request',NULL,NULL,NULL,'order',1),
  ('call','전화','device',NULL,NULL,NULL,NULL,'order',1),
- ('not_collected','못 받음','command','task.visit','visit_result',NULL,NULL,'task',1),
- ('not_delivered','못 전함','command','task.visit','visit_result',NULL,NULL,'task',1),
+ ('not_collected','수거 실패','command','task.visit','visit_result',NULL,NULL,'task',1),
+ ('not_delivered','배달 실패','command','task.visit','visit_result',NULL,NULL,'task',1),
  ('field_collect','현장 수납','command','field.collect','field_payment',NULL,NULL,'order',1),
- ('leave_unpaid','미수로 두기','command','payment_promise.set',NULL,NULL,NULL,'order',1),
+ ('leave_unpaid','후불 처리','command','payment_promise.set',NULL,NULL,NULL,'order',1),
  ('add_ticket','리프트권 추가','command','field.add_ticket','add_ticket',NULL,NULL,'order',1),
- ('exchange_swap','바꿔 드림','command','exchange.swap','swap',NULL,NULL,'line',1),
+ ('exchange_swap','즉시 교환','command','exchange.swap','swap',NULL,NULL,'line',1),
  ('move_up','▲','command','route.move',NULL,NULL,NULL,'task',1),
  ('move_down','▼','command','route.move',NULL,NULL,NULL,'task',1),
  ('move_top','맨 위로','command','route.move',NULL,NULL,NULL,'task',1),
- ('route_reset','시간순 되돌리기','command','route.reset',NULL,NULL,NULL,'task',1),
- ('pin','빨리 확인','command','task.pin',NULL,'task.unpin',NULL,'task',1),
- ('open_slip','접수증 열기','screen',NULL,NULL,NULL,'order_slip',NULL,1);
+ ('route_reset','시간순 정렬','command','route.reset',NULL,NULL,NULL,'task',1),
+ ('pin','긴급 요청','command','task.pin',NULL,'task.unpin',NULL,'task',1),
+ ('open_slip','접수증','screen',NULL,NULL,NULL,'order_slip',NULL,1);
 
 INSERT INTO sys_input_widgets (key, label, added_in) VALUES
- ('keypad','숫자판',1), ('option_grid','선택 격자(쪽 넘김)',1), ('toggle','켜기·끄기',1),
+ ('keypad','숫자판',1), ('option_grid','선택 격자(쪽 넘김)',1), ('toggle','사용·미사용',1),
  ('slot_buttons','시각 버튼',1), ('text','글자(화면 키보드)',1), ('date_picker','달력',1);
 
 INSERT INTO sys_display_formats (key, label, added_in) VALUES
@@ -6731,12 +6731,12 @@ INSERT INTO sys_display_formats (key, label, added_in) VALUES
  ('relative_date','오늘·내일·모레',1), ('option_label','선택지 이름',1);
 
 INSERT INTO sys_stamp_states (key, label, tone_key, added_in) VALUES
- ('todo','할 일','ink',1), ('partial','일부','orange',1), ('done','끝(도장)','seal',1), ('na','해당 없음','grey',1),
- ('blocked','먼저 할 일','grey',1), ('scheduled','예정(다른 팀·나중에)','blue',1), ('delegated','차량이 함','purple',1);
+ ('todo','미처리','ink',1), ('partial','부분','orange',1), ('done','완료(도장)','seal',1), ('na','해당 없음','grey',1),
+ ('blocked','대기','grey',1), ('scheduled','예정(다른 팀·후불)','blue',1), ('delegated','차량 담당','purple',1);
 
 INSERT INTO sys_stamp_rollups (key, label, description, added_in) VALUES
- ('worst_of','가장 늦은 상태','team cell = the least advanced line state; na lines are ignored; mixed done/todo = partial',1),
- ('first_open','첫 남은 단계','chain cell = the first step of the chain that is not done (적재 before 지급)',1);
+ ('worst_of','최저 진행 상태','team cell = the least advanced line state; na lines are ignored; mixed done/todo = partial',1),
+ ('first_open','첫 미처리 단계','chain cell = the first step of the chain that is not done (적재 before 지급)',1);
 
 INSERT INTO sys_row_grains (key, label, added_in) VALUES
  ('order','팀 한 줄',1), ('order_line','품목 한 줄',1), ('task','업무 한 줄',1), ('service_booking','강습 한 줄',1), ('asset','장비 한 줄',1);
@@ -6755,5 +6755,5 @@ INSERT INTO sys_tax_categories (key, label, rate_bp, revenue_basis_key, added_in
  ('agency','대행(수수료만 매출)',1000,'commission',1);
 
 INSERT INTO sys_place_uses (key, label, added_in) VALUES
- ('pickup','수령',1), ('return','반납',1), ('lodging','숙소',1), ('meeting','만남(강습)',1),
+ ('pickup','수령',1), ('return','반납',1), ('lodging','숙소',1), ('meeting','집결(강습)',1),
  ('parking','주차장',1), ('locker','보관함',1), ('bus_stop','정류장',1);

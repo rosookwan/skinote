@@ -62,7 +62,7 @@ describe('기본 설정이 모든 대상 크기에 들어간다', () => {
 });
 
 describe('등급의 목록 높이에 줄이 들어간다', () => {
-  it('포스 장부: 모든 검사 크기에서 한 쪽에 줄 5개 이상(지금 줄 포함 4개 이상)', () => {
+  it('포스 장부: 모든 검사 크기에서 한 쪽에 줄 5개 이상(현재 줄 포함 4개 이상)', () => {
     for (const cls of ['pos', 'pos_narrow'] as const) {
       const p = DEVICE_PROFILES[cls];
       for (const size of p.checkSizes) {
@@ -73,7 +73,7 @@ describe('등급의 목록 높이에 줄이 들어간다', () => {
     }
   });
 
-  it('기사 기기: 빨리 확인 · 묶음 제목 · 연결 띠가 모두 있어도 한 쪽에 줄 3개 이상', () => {
+  it('기사 기기: 긴급 · 묶음 제목 · 연결 띠가 모두 있어도 한 쪽에 줄 3개 이상', () => {
     for (const cls of ['driver_tablet', 'driver_phone'] as const) {
       const p = DEVICE_PROFILES[cls];
       for (const size of p.checkSizes) {
