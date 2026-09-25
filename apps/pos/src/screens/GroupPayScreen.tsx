@@ -393,7 +393,7 @@ export function GroupPayScreen({ orderId }: { orderId: string }) {
 function GroupRow({ row, onToggle, onPart }: { row: GroupPayRow; onToggle: () => void; onPart: () => void }) {
   const [name, ...rest] = row.team.split(' · ');
   return (
-    <tr className={'sn-row' + (row.selected ? '' : ' is-off')}>
+    <tr className={'sn-row' + (row.selected ? '' : ' is-off')} data-team={row.team}>
       <td className="is-action">
         <SelectCell checked={row.selected} label={say('teamSelected', { team: row.team })} onToggle={onToggle} />
       </td>

@@ -1251,8 +1251,16 @@ async function groupPayWalk(w) {
   // 미수 탭: 고른 팀이 먼저(보이는 체크 = 주 버튼 금액, 검토 반영), 그다음 더할 미수 팀. 박준호 팀을 켜고(합계 · 주 버튼이 바뀜) 끄기.
   await w.click(tab(/^미수/));
   await w.pages('v5-unpaid');
-  const park = () => page.locator('.pos-group-table tr', { hasText: '0022' }).locator('[role="checkbox"]');
-  for (let guard = 0; guard < 4 && !(await park().count()); guard += 1) await w.click(page.locator('.sn-footer').getByRole('button', { name: '다음 쪽' }));
+  // 좁은 화면에서는 팀 칸의 끝 4자리가 규칙대로 빠질 수 있어, 보이는 글자가 아니라 줄의 data-team으로 찾는다.
+  const footerNext = () => page.locator('.sn-footer').getByRole('button', { name: '다음 쪽' });
+  const nextFooterPage = async () => {
+    const next = footerNext();
+    if (!(await next.count()) || (await next.first().isDisabled())) return false;
+    await w.click(next);
+    return true;
+  };
+  const park = () => page.locator('.pos-group-table tr[data-team$="0022"]').locator('[role="checkbox"]');
+  for (let guard = 0; guard < 4 && !(await park().count()); guard += 1) if (!(await nextFooterPage())) break;
   if (await park().count()) {
     await w.click(park());
     await w.scene('v5-unpaid-on');
@@ -1266,8 +1274,8 @@ async function groupPayWalk(w) {
   if (!/5팀|6팀/.test((await page.locator('.pos-group-go').textContent()) ?? '')) w.fail('v5-off', '고름을 끈 뒤 주 버튼의 팀 수가 줄지 않음');
   await w.click(checks().nth(1));
   // 부분 결제 판(이민호 팀): 걷고, 의류를 빼고 선택.
-  const minho = () => page.locator('.pos-group-table tr', { hasText: '0042' }).locator('.pos-group-part');
-  for (let guard = 0; guard < 4 && !(await minho().count()); guard += 1) await w.click(page.locator('.sn-footer').getByRole('button', { name: '다음 쪽' }));
+  const minho = () => page.locator('.pos-group-table tr[data-team$="0042"]').locator('.pos-group-part');
+  for (let guard = 0; guard < 4 && !(await minho().count()); guard += 1) if (!(await nextFooterPage())) break;
   if (await minho().count()) {
     await w.probe(minho(), 'v5-part');
     await w.closeTo(0);
