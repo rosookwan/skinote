@@ -37,14 +37,16 @@ export function registerServiceWorker(): void {
     window.location.reload();
   });
 
-  const tryApply = (reg: ServiceWorkerRegistration) => {
-    const waiting = reg.waiting;
+  const tryApply = (reg: ServiceWorkerRegistration | undefined) => {
+    // 서비스 워커를 막은 브라우저(검사 도구 등)에서는 등록 결과가 비어 올 수 있다.
+    const waiting = reg?.waiting;
     if (!waiting || !hadController) return;
     const dialogOpen = document.querySelector('[role="dialog"], [aria-modal="true"]') !== null;
     if (safeToApply(Date.now(), loadedAt, lastTouch, new Date().getHours(), dialogOpen)) waiting.postMessage({ type: 'skinote:apply-update' });
   };
 
-  const watch = (reg: ServiceWorkerRegistration) => {
+  const watch = (reg: ServiceWorkerRegistration | undefined) => {
+    if (!reg) return;
     tryApply(reg);
     reg.addEventListener('updatefound', () => {
       const incoming = reg.installing;
