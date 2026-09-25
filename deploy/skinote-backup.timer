@@ -1,0 +1,13 @@
+# 날마다 새벽 04:00(한국 시간)에 skinote-backup.service. 서버가 꺼져 있어 놓친 때는 켜지면 바로 돈다(Persistent).
+# 확인: systemctl list-timers skinote-backup.timer
+
+[Unit]
+Description=Skinote daily database backup at 04:00 Asia/Seoul
+
+[Timer]
+OnCalendar=*-*-* 04:00:00 Asia/Seoul
+Persistent=true
+Unit=skinote-backup.service
+
+[Install]
+WantedBy=timers.target

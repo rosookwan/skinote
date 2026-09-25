@@ -89,6 +89,15 @@ export function clearCommandDraft(key: string): void {
   writeDraft(key, null);
 }
 
+/**
+ * 주 버튼 글이 창 폭에 들어가지 않을 때의 짧은 글들: 뒤의 ' · ' 조각부터 통째로 뺀다(`수거 처리 · 6개 · 3매 · 보증금 15,000원` →
+ * `수거 처리 · 6개 · 3매` → … → `수거 처리`). 동작 이름은 남고, 뺀 조각(보증금 · 금액)은 창의 요약 줄에 있다(기사 휴대폰 창).
+ */
+export function confirmLabelAlts(label: string): string[] {
+  const parts = label.split(' · ');
+  return parts.map((_, i) => parts.slice(0, parts.length - i).join(' · '));
+}
+
 export interface ConfirmQuantity {
   value: number;
   min: number;
@@ -110,13 +119,15 @@ export interface ConfirmDialogProps {
   onClose: () => void;
   /** 결과를 기다리는 중: 다시 눌러도 같은 요청번호로 간다. */
   busy?: boolean;
+  /** 주 버튼을 누를 수 없음(이 요청번호로 보낸 일이 끝나 다시 보낼 것이 없음: 창을 닫는다). */
+  disabled?: boolean;
   /** 이 창의 요청번호(초안). 시험 · 기록이 읽는다. */
   requestId?: string;
   /** 창 안의 단계(확인 필요 · 카드 결과 모름 등). */
   children?: ReactNode;
 }
 
-export function ConfirmDialog({ open, title, summary, quantity, onQuantityChange, confirmLabel, onConfirm, onClose, busy = false, requestId, children }: ConfirmDialogProps) {
+export function ConfirmDialog({ open, title, summary, quantity, onQuantityChange, confirmLabel, onConfirm, onClose, busy = false, disabled = false, requestId, children }: ConfirmDialogProps) {
   const { profile, viewport } = useUi();
   const titleId = useId();
   const primaryRef = useRef<HTMLDivElement>(null);
@@ -161,7 +172,7 @@ export function ConfirmDialog({ open, title, summary, quantity, onQuantityChange
             <span>{t('close')}</span>
           </button>
           <div ref={primaryRef} className="sn-dialog-primary">
-            <PrimaryButton label={busy ? t('processing') : confirmLabel} onPress={onConfirm} busy={busy} />
+            <PrimaryButton label={busy ? t('processing') : confirmLabel} {...(busy ? {} : { alts: confirmLabelAlts(confirmLabel) })} onPress={onConfirm} busy={busy} disabled={disabled} />
           </div>
         </footer>
       </div>

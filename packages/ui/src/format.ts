@@ -111,3 +111,24 @@ export function formatMetricValue(value: MetricValue): { text: string; items?: s
     }
   }
 }
+
+/** 전화번호 숫자 → '010-0000-0042'(3 · 4 · 4, 10자리는 3 · 3 · 4). 치는 동안에도 쓴다('010-00'). */
+export function formatPhone(digits: string): string {
+  const d = digits.replace(/\D/g, '').slice(0, 11);
+  if (d.length <= 3) return d;
+  if (d.length <= 7) return d.slice(0, 3) + '-' + d.slice(3);
+  if (d.length <= 10) return d.slice(0, 3) + '-' + d.slice(3, 6) + '-' + d.slice(6);
+  return d.slice(0, 3) + '-' + d.slice(3, 7) + '-' + d.slice(7);
+}
+
+/** 시각 숫자('172') → '17:2_'(치는 동안), 넷이면 '17:20'. */
+export function formatTimeDigits(digits: string): string {
+  const d = (digits.replace(/\D/g, '').slice(0, 4) + '____').slice(0, 4);
+  return d.slice(0, 2) + ':' + d.slice(2);
+}
+
+/** 숫자 넷('1720') → 'HH:MM'. 넷이 아니면 null(시각이 맞는지는 서버가 본다). */
+export function timeFromDigits(digits: string): string | null {
+  const d = digits.replace(/\D/g, '');
+  return d.length === 4 ? d.slice(0, 2) + ':' + d.slice(2) : null;
+}

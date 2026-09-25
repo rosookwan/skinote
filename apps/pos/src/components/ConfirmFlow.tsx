@@ -3,16 +3,21 @@
 // 화면은 무엇을 몇 개 보낼지 계산하지 않는다: 초안의 명령을 그대로 보내고, 사람이 고른 수량 · 수단만 넣는다.
 // 돈 결정의 바탕(expect: 받을 돈)은 창을 연 때 초안에 넣어 명령과 함께 보낸다(ui 7절, sync 4-2).
 // 연결이 끊겨 묻거나 보내지 못하면 '처리 중'을 풀고 쉬운 한 문장을 보인다(같은 창에서 다시 누르면 같은 요청번호).
+// 이어진 명령(then: 지급 뒤의 보증금 입금 등)은 창이 열릴 때 명령마다 요청번호를 만들고 앞 명령을 dependsOn으로 가진다. 확정하면
+// 차례로 보내고, 하나가 적용되지 않으면 거기서 멈추고 그 까닭 한 줄을 창에 보인다(뒤 명령은 보내지 않는다).
+// 틀이 따로인 창(초안의 template): 'return'이면 요약 창 대신 반납 확인 창(V1, ReturnDialog)을 연다. 그 창은 번호 · 수량 · 보증금을
+// 고를 때마다 서버에 다시 묻고, 요청번호 · 이어진 명령을 스스로 연 때 정한다(여기의 초안은 만들지 않는다).
 import {
-  draftToEnvelope, type ActionKey, type AnyCommandDraft, type AnyCommandEnvelope, type Basis, type ConfirmCommand, type ConfirmDraftParams,
-  type ConfirmDraftView, type OpenDraftOptions, type StampCell, type StampStepRow,
+  chainDrafts, draftToEnvelope, isAccepted, type ActionKey, type AnyCommandDraft, type AnyCommandEnvelope, type Basis, type CommandOutcome,
+  type ConfirmCommand, type ConfirmDraftParams, type ConfirmDraftView, type ConfirmStep, type OpenDraftOptions, type StampCell, type StampStepRow,
 } from '@skinote/contract';
 import { ConfirmDialog, formatTime, useCommandDraft } from '@skinote/ui';
-import { useCallback, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useClient } from '../app/client.tsx';
 import { actionLabel } from '../app/labels.ts';
 import { say } from '../app/strings.ts';
 import { NoticeDialog, type NoticeAction } from './NoticeDialog.tsx';
+import { ReturnDialog } from './ReturnDialog.tsx';
 
 export interface ConfirmRequest extends ConfirmDraftParams {
   /** 창 맨 위에 붙일 한 문장(막힌 칸을 눌러 앞 단계 창이 열렸을 때). */
@@ -53,6 +58,7 @@ export function withChoices(command: ConfirmCommand, qty: number | null, method:
     case 'stock.direct_return': return { type: command.type, payload: withQuantity(command.payload, qty) };
     case 'stock.load': return { type: command.type, payload: withQuantity(command.payload, qty) };
     case 'stock.collect': return { type: command.type, payload: withQuantity(command.payload, qty) };
+    case 'stock.deliver': return { type: command.type, payload: withQuantity(command.payload, qty) };
     default: return command;
   }
 }
@@ -65,6 +71,32 @@ export function draftOptions(view: ConfirmDraftView | null): OpenDraftOptions {
 /** 확정: 창을 연 때의 초안(요청번호 · basis · expect)에 사람이 고른 수량 · 수단만 넣은 봉투. */
 export function confirmEnvelope(draft: AnyCommandDraft, command: ConfirmCommand, qty: number | null, method: string | null): AnyCommandEnvelope {
   return draftToEnvelope(draft, {}, withChoices(command, qty, method));
+}
+
+/** 이어서 보낼 명령들의 초안(계약의 chainDrafts: 명령마다 요청번호, 앞 명령에 dependsOn, basis는 첫 명령과 같음). */
+export { chainDrafts };
+
+/**
+ * 이어진 명령이 막힌 뒤 다시 물은 초안(순수 함수): 보낼 명령이 있고 틀이 따로가 아니면 이 창에서 새 요청번호로 다시(retry), 아니면 주 버튼을
+ * 막는다(spent: 같은 요청번호를 다시 보내면 서버는 처음 결과를 돌려줄 뿐이다).
+ */
+export function chainRetry(again: ConfirmDraftView | null): 'retry' | 'spent' {
+  return again?.command && again.template !== 'return' ? 'retry' : 'spent';
+}
+
+/** 이어진 명령을 계속 보내도 되는 결과(적용 · 일부 적용 · 기사 기기의 보냄 대기). */
+export const chainGoesOn = (outcome: CommandOutcome) => isAccepted(outcome);
+
+/**
+ * 첫 명령 뒤의 이어진 명령을 차례로 보낸다. 하나라도 계속할 수 없는 결과면 거기서 멈추고 그 결과를 돌려준다(모두 되면 null).
+ * 보내지 못함(연결 끊김)은 던진다: 같은 창에서 다시 누르면 같은 요청번호로 처음부터 다시 보낸다(이미 된 명령은 서버가 처음 결과를 준다).
+ */
+export async function sendChain(send: (envelope: AnyCommandEnvelope) => Promise<CommandOutcome>, chain: readonly AnyCommandDraft[]): Promise<CommandOutcome | null> {
+  for (const draft of chain) {
+    const outcome = await send(draftToEnvelope(draft));
+    if (!chainGoesOn(outcome)) return outcome;
+  }
+  return null;
 }
 
 /** 주 버튼 글: 초안의 동작 이름에, 수량 −/+가 있으면 지금 수량을 붙인다('지급 처리 · 2개', 수를 바꾸면 따라 바뀜). */
@@ -82,15 +114,30 @@ export function useConfirmFlow(): ConfirmFlow {
   const [method, setMethod] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const command = view?.command ?? null;
-  const key = request && command ? draftKey(request) : null;
+  /**
+   * 시도: 첫 명령은 되었는데 이어 보낸 명령이 막히면 지금 자료로 초안을 다시 묻고(창 안에서 다시, data-model 4-18) 새 요청번호로 연다.
+   * 다시 물은 초안에 보낼 것이 없으면 주 버튼을 막는다(spent: 창을 닫는다).
+   */
+  const [attempt, setAttempt] = useState(0);
+  const [spent, setSpent] = useState(false);
+  // 틀이 따로인 창(반납 확인 창)은 요청번호를 스스로 만든다: 여기서는 요약 창의 초안만.
+  const separate = view?.template === 'return';
+  const command = separate ? null : view?.command ?? null;
+  const key = request && command ? draftKey(request) + ':' + attempt : null;
   const { draft, markSent } = useCommandDraft(key, command, view?.basis ?? NO_BASIS, draftOptions(view));
+  // 이어진 명령의 초안: 첫 초안(요청번호)이 정해지면 한 번 만든다. 창을 연 동안 그대로다.
+  const [chain, setChain] = useState<AnyCommandDraft[]>([]);
+  const thenSteps = view?.then;
+  useEffect(() => {
+    setChain(draft && thenSteps?.length ? chainDrafts(draft, thenSteps) : []);
+  }, [draft?.requestId]);
 
   const close = useCallback(() => {
     setRequest(null);
     setView(null);
     setError(null);
     setBusy(false);
+    setSpent(false);
   }, []);
 
   const open = useCallback((next: ConfirmRequest) => {
@@ -106,19 +153,37 @@ export function useConfirmFlow(): ConfirmFlow {
       setMethod(draftView.methods?.[0]?.key ?? null);
       setError(null);
       setBusy(false);
+      setSpent(false);
     }, () => {
       setNotice({ title: actionLabel(next.actionKey), lines: [say('openFailed')] });
     });
   }, [client]);
 
   const confirm = useCallback(() => {
-    if (!draft || !command || busy) return;
+    // 이어진 명령의 초안이 아직 없으면(창이 막 열린 한 순간) 누름을 받지 않는다.
+    if (!draft || !command || busy || spent || (thenSteps?.length ?? 0) > chain.length) return;
     setBusy(true);
     markSent();
-    client.command(confirmEnvelope(draft, command, qty, method)).then((outcome) => {
+    const send = (envelope: AnyCommandEnvelope) => client.command(envelope);
+    (async () => {
+      const outcome = await send(confirmEnvelope(draft, command, qty, method));
       // queued: 오프라인 기사 기기가 보냄 대기에 넣었다(목록에 점선 도장). 창은 닫는다.
-      if (outcome.outcome === 'applied' || outcome.outcome === 'partially_applied' || outcome.outcome === 'queued') {
-        close();
+      if (chainGoesOn(outcome)) {
+        // 이어진 명령(보증금 입금 등)을 차례로. 하나가 안 되면 멈추고 그 까닭 한 줄(앞 명령은 이미 적용됨).
+        const stopped = await sendChain(send, chain);
+        if (!stopped) {
+          close();
+          return;
+        }
+        setBusy(false);
+        setError(stopped.error?.message ?? say('commandFailed'));
+        // 앞 명령은 적용되었다: 남은 일(보증금 입금 등)을 지금 자료로 다시 묻는다. 보낼 것이 있으면 새 요청번호로 이 창에서, 없으면 막는다.
+        const again = request ? await client.query('confirmDraft', request).catch(() => null) : null;
+        if (chainRetry(again) === 'retry' && again) {
+          setView(again);
+          setQty(again.quantity?.value ?? null);
+          setAttempt((n) => n + 1);
+        } else setSpent(true);
       } else if (outcome.outcome === 'superseded') {
         const title = view?.title ?? '';
         close();
@@ -127,15 +192,23 @@ export function useConfirmFlow(): ConfirmFlow {
         setBusy(false);
         setError(outcome.error?.message ?? say('commandFailed'));
       }
-    }, () => {
+    })().catch(() => {
       // 보내지 못했다(연결 끊김): '처리 중'을 풀고, 같은 창에서 다시 누르면 같은 요청번호로 다시 보낸다.
       setBusy(false);
       setError(say('sendFailed'));
     });
-  }, [draft, command, busy, client, qty, method, close, view, markSent]);
+  }, [draft, command, busy, spent, client, qty, method, close, view, markSent, chain, thenSteps, request]);
 
   const element = (
     <>
+      {view && separate && request?.orderId ? (
+        <ReturnDialog
+          orderId={request.orderId}
+          {...(request.lineIds?.length ? { lineIds: request.lineIds } : {})}
+          onClose={close}
+          onNotice={(title, line) => { close(); setNotice({ title, lines: [line] }); }}
+        />
+      ) : null}
       {view && draft && command ? (
         <ConfirmDialog
           open
@@ -146,6 +219,7 @@ export function useConfirmFlow(): ConfirmFlow {
           onConfirm={confirm}
           onClose={close}
           busy={busy}
+          disabled={spent}
           requestId={draft.requestId}
         >
           {view.methods ? (
@@ -184,7 +258,9 @@ export function pressStamp(
   const step = steps.get(cell.stepKey);
   if (!step) return;
   const { teamName, ...draftTarget } = target;
-  const title = teamName ? say('noticeTitle', { label: step.label, name: teamName }) : step.label;
+  // 이 자리에서 부르는 이름(기사 기기의 차량 배달 = `배달`)이 있으면 그것, 없으면 단계 이름.
+  const name = cell.label ?? step.label;
+  const title = teamName ? say('noticeTitle', { label: name, name: teamName }) : name;
   const openStep = (actionKey: StampStepRow['action_key'], lead?: string) => flow.open({ ...draftTarget, actionKey, ...(lead ? { lead } : {}) });
   if (cell.pressNote) {
     const action = cell.pressNote.action;
@@ -209,7 +285,7 @@ export function pressStamp(
       return;
     }
     case 'done':
-      flow.notify({ title, lines: [cell.at ? say('stampedAt', { label: step.label, time: formatTime(cell.at, timezone) }) : say('stamped', { label: step.label })] });
+      flow.notify({ title, lines: [cell.at ? say('stampedAt', { label: name, time: formatTime(cell.at, timezone) }) : say('stamped', { label: name })] });
       return;
     case 'delegated':
       flow.notify({ title, lines: [say('delegatedTo', { who: cell.delegatedTo ?? say('vehicle') })] });

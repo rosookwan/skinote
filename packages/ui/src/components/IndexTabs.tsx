@@ -6,6 +6,7 @@ import { useMemo, useRef, useState } from 'react';
 import { useDeviceProfile } from '../context.tsx';
 import { measureFor, useElementSize, useFontsVersion, useIsoLayoutEffect } from '../measure.ts';
 import { t } from '../strings.ko-KR.ts';
+import { Tag } from './Tag.tsx';
 import { TextFit } from './TextFit.tsx';
 
 export interface IndexTabsProps {
@@ -17,19 +18,22 @@ export interface IndexTabsProps {
   onSelect: (tabKey: string) => void;
   /** '더 보기' 탭(넘친 탭들). */
   onMore?: (tabs: LedgerTabRow[]) => void;
+  /** 제목 옆 이름표(`마감 완료`). 탭과 같이 폭을 잰다. */
+  tag?: string;
 }
 
-export function IndexTabs({ title, tabs, counts, active, onSelect, onMore }: IndexTabsProps) {
+export function IndexTabs({ title, tabs, counts, active, onSelect, onMore, tag }: IndexTabsProps) {
   const profile = useDeviceProfile();
   const navRef = useRef<HTMLDivElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
+  const tagRef = useRef<HTMLSpanElement>(null);
   const bar = useElementSize(barRef);
   const fonts = useFontsVersion();
   const entries = useMemo(() => tabs.map((tab) => ({ ...tab, pinnedEnd: false })), [tabs]);
   const [limit, setLimit] = useState(profile.capacity.tabs);
   // 크기가 바뀌면 등급 칸 수부터 다시 세고, 넘치면 하나씩 줄인다(잰 폭으로 맞춤).
-  useIsoLayoutEffect(() => { setLimit(profile.capacity.tabs); }, [bar?.width, profile.capacity.tabs, fonts, tabs]);
+  useIsoLayoutEffect(() => { setLimit(profile.capacity.tabs); }, [bar?.width, profile.capacity.tabs, fonts, tabs, tag]);
   // 탭이 먼저다: 제목은 낱말을 줄여 비켜 주고(첫 낱말은 남김), 그래도 탭이 넘치면 탭을 더 보기로 보낸다.
   useIsoLayoutEffect(() => {
     const bar = barRef.current;
@@ -39,7 +43,8 @@ export function IndexTabs({ title, tabs, counts, active, onSelect, onMore }: Ind
     const bs = getComputedStyle(bar);
     const inner = bar.clientWidth - parseFloat(bs.paddingLeft) - parseFloat(bs.paddingRight) - (parseFloat(bs.columnGap) || 0);
     const titleMin = measureFor(heading.firstElementChild ?? heading, profile.titleFontPx)(title.split(' ')[0] ?? '');
-    if (nav.scrollWidth + titleMin > inner + 1) setLimit(limit - 1);
+    const tagWidth = tagRef.current ? tagRef.current.offsetWidth + (parseFloat(bs.columnGap) || 0) : 0;
+    if (nav.scrollWidth + titleMin + tagWidth > inner + 1) setLimit(limit - 1);
   });
   const fitted = fitList(entries, limit, { moreTakesSlot: true });
   const activeHidden = fitted.overflow.some((tab) => tab.tab_key === active);
@@ -53,6 +58,7 @@ export function IndexTabs({ title, tabs, counts, active, onSelect, onMore }: Ind
   return (
     <div ref={barRef} className="sn-titlebar">
       <h1 ref={titleRef} className="sn-title"><TextFit input={{ mode: 'words', text: title }} /></h1>
+      {tag ? <span ref={tagRef} className="sn-title-tag"><Tag text={tag} /></span> : null}
       <div ref={navRef} className="sn-tabs" role="tablist" aria-label={title}>
         {fitted.shown.map((tab) => (
           <button

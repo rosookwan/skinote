@@ -13,8 +13,13 @@ import { applyCommand, OFFLINE_ALLOWED } from './commands.ts';
 import type { FxState } from './model.ts';
 import { findOrder, orderIdOfTask } from './rules.ts';
 import { DEMO_START_MS, SHOP_NAME, createSeed } from './seed.ts';
+import {
+  addTicketSheet, checkoutSheet, closingSheet, fieldPaySheet, groupPaySheet, orderDraft, partialPaySheet, promiseSheet, returnSheet, shopRules,
+  taskSheet,
+} from './sheets.ts';
+import { applyStory } from './story.ts';
 import { MINUTE, hm, iso } from './time.ts';
-import { collectionList, confirmDraft, dayLedger, findLast4, orderSlip, reviewList, type ViewContext } from './views.ts';
+import { collectionList, confirmDraft, dayLedger, deliveryList, findLast4, orderSlip, reviewList, type ViewContext } from './views.ts';
 
 /** localStorage와 같은 모양(시험은 메모리 저장소를 넣는다). */
 export interface FixtureStorage {
@@ -31,12 +36,17 @@ export interface FixtureClientOptions {
   realNow?: () => number;
   /** 다른 탭(기사 화면 등)이 같은 자료를 바꾸면 따라 읽는다. */
   listenToOtherTabs?: boolean;
+  /**
+   * 뒷이야기(story.ts): 체험 시계를 앞으로 돌리면 그 사이의 사건을 적는다. 체험판은 켜고(main.tsx), 시험은 기본으로 끈다
+   * (이야기를 보는 시험만 켠다).
+   */
+  story?: boolean;
 }
 
 export const FIXTURE_STORAGE_KEY = 'skinote.demo.v1';
 
 interface Saved {
-  version: 2;
+  version: 3;
   state: FxState;
   /** 저장할 때의 체험 시계(ms). */
   clock: number;
@@ -58,12 +68,14 @@ export class FixtureClient implements DomainClient {
   private readonly key: string;
   private readonly realNow: () => number;
   private readonly listeners = new Set<(head: SyncHead) => void>();
+  private readonly story: boolean;
   private device: FixtureDevice = 'counter';
 
   constructor(options: FixtureClientOptions = {}) {
     this.storage = options.storage ?? null;
     this.key = options.storageKey ?? FIXTURE_STORAGE_KEY;
     this.realNow = options.realNow ?? (() => Date.now());
+    this.story = options.story ?? false;
     this.settings = defaultUiConfig({ shopName: SHOP_NAME, timezone: 'Asia/Seoul' });
     const saved = this.read();
     this.state = saved?.state ?? createSeed(newEpoch(this.realNow()));
@@ -90,8 +102,11 @@ export class FixtureClient implements DomainClient {
     return this.anchorDemo + (this.realNow() - this.anchorReal);
   }
 
+  /** 시계를 앞으로. 뒷이야기가 켜져 있으면 그 사이의 사건을 그 시각으로 적는다. */
   advanceClock(minutes: number): void {
     this.anchorDemo += minutes * MINUTE;
+    // 사건의 명령은 applyCommand가 적용할 때 rev를 올린다(아래 emit이 화면에 알린다).
+    if (this.story) applyStory(this.state, this.now(), applyCommand);
     this.save();
     this.emit();
   }
@@ -152,6 +167,7 @@ export class FixtureClient implements DomainClient {
     switch (viewKey) {
       case 'day_ledger': return clone(dayLedger(ctx, params));
       case 'collection_list': return clone(collectionList(ctx, params));
+      case 'delivery_list': return clone(deliveryList(ctx, params));
       default: throw new DomainError('UNKNOWN_VIEW', '체험 자료에 없는 화면: ' + viewKey);
     }
   }
@@ -173,6 +189,18 @@ export class FixtureClient implements DomainClient {
         const list = collectionList(ctx, { vehicleId: (params as QueryParams['vehicleLoad']).vehicleId });
         return answer(list.vehicleLoad!);
       }
+      // 둘째 판 화면(sheets.ts, 단계마다 채움).
+      case 'returnSheet': return answer(returnSheet(ctx, params as QueryParams['returnSheet']));
+      case 'promiseSheet': return answer(promiseSheet(ctx, params as QueryParams['promiseSheet']));
+      case 'orderDraft': return answer(orderDraft(ctx, params as QueryParams['orderDraft']));
+      case 'checkoutSheet': return answer(checkoutSheet(ctx, params as QueryParams['checkoutSheet']));
+      case 'groupPaySheet': return answer(groupPaySheet(ctx, params as QueryParams['groupPaySheet']));
+      case 'partialPaySheet': return answer(partialPaySheet(ctx, params as QueryParams['partialPaySheet']));
+      case 'closingSheet': return answer(closingSheet(ctx, params as QueryParams['closingSheet']));
+      case 'taskSheet': return answer(taskSheet(ctx, params as QueryParams['taskSheet']));
+      case 'fieldPaySheet': return answer(fieldPaySheet(ctx, params as QueryParams['fieldPaySheet']));
+      case 'addTicketSheet': return answer(addTicketSheet(ctx, params as QueryParams['addTicketSheet']));
+      case 'shopRules': return answer(shopRules(ctx, params as QueryParams['shopRules']));
       default: throw new DomainError('UNKNOWN_VIEW', '체험 자료에 없는 조회: ' + String(name));
     }
   }
@@ -209,7 +237,9 @@ export class FixtureClient implements DomainClient {
     const queue = this.state.driverDevice.queue;
     if (!queue.some((q) => q.envelope.requestId === envelope.requestId)) {
       const at = this.now();
-      queue.push({ envelope, at, summary: this.summary(envelope, at) });
+      // 보냄 대기의 명령은 기기 번호(deviceSeq)를 가진다: 서버는 돈의 바탕(expect)을 참고 값으로 적는다(sync 8-12).
+      const seq = queue.reduce((max, q) => Math.max(max, q.envelope.deviceSeq ?? 0), 0) + 1;
+      queue.push({ envelope: { ...envelope, deviceSeq: seq }, at, summary: this.summary(envelope, at) });
       this.save();
       this.emit();
     }
@@ -221,7 +251,10 @@ export class FixtureClient implements DomainClient {
     const taskId = 'taskId' in envelope.payload ? envelope.payload.taskId : undefined;
     const o = taskId ? findOrder(this.state, orderIdOfTask(taskId)) : undefined;
     const who = o ? o.teamName + ' · ' + o.last4 + ' ' : '';
-    const what: Partial<Record<CommandType, string>> = { 'stock.collect': '수거', 'task.visit': '수거 실패', 'route.move': '순서 변경', 'route.reset': '시간순 정렬', 'notification.ack': '긴급 확인' };
+    const what: Partial<Record<CommandType, string>> = {
+      'stock.collect': '수거', 'stock.deliver': '배달', 'task.visit': taskId && taskId.startsWith('deliver:') ? '배달 실패' : '수거 실패', 'route.move': '순서 변경',
+      'route.reset': '시간순 정렬', 'notification.ack': '긴급 확인', 'field.collect': '현장 수납', 'field.add_ticket': '리프트권 추가', 'field.deposit_return': '보증금 반환',
+    };
     return who + (what[envelope.type] ?? envelope.type) + ' ' + hm(at);
   }
 
@@ -229,12 +262,12 @@ export class FixtureClient implements DomainClient {
     const base = { config: this.settings, now: this.now() };
     const queue = this.state.driverDevice.queue;
     if (this.device !== 'driver' || queue.length === 0) return { ...base, state: this.state };
-    // 보냄 대기 겹치기(sync 8-1): 대기 명령을 복사본에 적용해 그리고 버린다. 받음만 대기인 업무는 점선.
+    // 보냄 대기 겹치기(sync 8-1): 대기 명령을 복사본에 적용해 그리고 버린다. 수거 · 배달이 대기인 업무는 점선.
     const shadow = structuredClone(this.state);
     const pendingTasks = new Set<string>();
     for (const q of shadow.driverDevice.queue) {
       const outcome = applyCommand(shadow, q.envelope, q.at);
-      if (q.envelope.type === 'stock.collect' && outcome.outcome === 'applied') pendingTasks.add(q.envelope.payload.taskId);
+      if ((q.envelope.type === 'stock.collect' || q.envelope.type === 'stock.deliver') && outcome.outcome === 'applied') pendingTasks.add(q.envelope.payload.taskId);
     }
     return { ...base, state: shadow, pendingTasks };
   }
@@ -249,7 +282,9 @@ export class FixtureClient implements DomainClient {
       const raw = this.storage?.getItem(this.key);
       if (!raw) return null;
       const saved = JSON.parse(raw) as Saved;
-      if (saved.version !== 2 || saved.state?.version !== 2 || !Array.isArray(saved.state.orders) || !saved.state.driverDevice || typeof saved.clock !== 'number') return null;
+      // 옛 판(2 이하)으로 저장된 체험 자료는 버리고 처음 자료로 시작한다(판 3: 운영 규칙 · 번호 · 보증금 · 돈통).
+      if (saved.version !== 3 || saved.state?.version !== 3 || !Array.isArray(saved.state.orders) || !saved.state.driverDevice || !saved.state.settings
+        || typeof saved.clock !== 'number') return null;
       return saved;
     } catch {
       return null;
@@ -258,7 +293,7 @@ export class FixtureClient implements DomainClient {
 
   private save(): void {
     try {
-      const saved: Saved = { version: 2, state: this.state, clock: this.now() };
+      const saved: Saved = { version: 3, state: this.state, clock: this.now() };
       this.storage?.setItem(this.key, JSON.stringify(saved));
     } catch {
       // 저장이 막힌 브라우저에서도 체험은 돈다(새로 고치면 처음 자료).

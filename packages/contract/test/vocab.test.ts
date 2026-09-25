@@ -2,8 +2,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
-  ACTION_COMMAND, ACTION_KIND, ACTION_LABELS, ACTION_SCREEN, ALIGN_KEYS, COLUMN_BINDING, COLUMN_RENDERER_KEYS, CONDITION_SCOPE, CONFIRM_TEMPLATE_KEYS, DEVICE_CLASS_KEYS,
-  FEATURE_KEYS, FIT_MODE_KEYS, FOLD_MODE_KEYS, GROUP_KEYS, LEDGER_FILTER_KEYS, LEDGER_METRIC_KEYS, OVERFLOW_MODE_KEYS,
+  ACTION_COMMAND, ACTION_KIND, ACTION_LABELS, ACTION_SCREEN, ALIGN_KEYS, COLUMN_BINDING, COLUMN_RENDERER_KEYS, COMMAND_TYPES, CONDITION_SCOPE, CONFIRM_TEMPLATE_KEYS, DEVICE_CLASS_KEYS,
+  FEATURE_KEYS, FIT_MODE_KEYS, OFFLINE_COMMANDS, offlineAllowed, FOLD_MODE_KEYS, GROUP_KEYS, LEDGER_FILTER_KEYS, LEDGER_METRIC_KEYS, OVERFLOW_MODE_KEYS,
   ROW_GRAIN_KEYS, SCREEN_ROUTES, SCREEN_TEMPLATE_KEYS, SORT_KEY_IS_TIME, STAMP_ROLLUP_KEYS, STAMP_RULE_SCOPE,
   STAMP_STATE_KEYS, STAMP_TONE_BY_STATE, STATUS_DEFAULT_LABELS, TONE_KEYS, WORKSPACE_KEYS,
 } from '../src/index.ts';
@@ -66,6 +66,22 @@ function splitValues(text: string): string[] {
 const keysOf = (table: string) => seedRows(table).map((row) => row[0]).sort();
 const sorted = (values: readonly string[]) => [...values].sort();
 
+describe('끊긴 채 보내는 명령(OFFLINE_COMMANDS)이 sys_offline_commands 시드와 같다', () => {
+  it('기기 종류마다 명령 목록이 시드 그대로, 연결이 필요한 결정은 들지 않는다', () => {
+    const rows = seedRows('sys_offline_commands');
+    expect(rows.length).toBeGreaterThan(0);
+    for (const kind of Object.keys(OFFLINE_COMMANDS) as (keyof typeof OFFLINE_COMMANDS)[]) {
+      expect(sorted(OFFLINE_COMMANDS[kind]), kind).toEqual(sorted(rows.filter((r) => r[1] === kind).map((r) => r[0]!)));
+    }
+    expect(offlineAllowed('pos_narrow', 'payment.take')).toBe(true);
+    for (const type of ['promise.change', 'setting.set', 'closing.close', 'stock.receive', 'cash.transfer'] as const) {
+      expect(offlineAllowed('pos', type), type).toBe(false);
+      expect(offlineAllowed('driver_phone', type), type).toBe(false);
+    }
+    expect(offlineAllowed('driver_tablet', 'field.collect')).toBe(true);
+  });
+});
+
 describe('어휘가 schema.sql 시드와 같다', () => {
   it.each([
     ['sys_device_classes', DEVICE_CLASS_KEYS],
@@ -108,6 +124,12 @@ describe('어휘가 schema.sql 시드와 같다', () => {
       expect((ACTION_SCREEN as Record<string, string>)[key ?? ''] ?? 'NULL').toBe(screen);
     }
     for (const [key, , route] of seedRows('sys_screens')) expect(SCREEN_ROUTES[key as keyof typeof SCREEN_ROUTES]).toBe(route);
+  });
+
+  it('계약의 명령 이름은 모두 sys_event_types의 key다', () => {
+    const events = new Set(keysOf('sys_event_types'));
+    expect(events.size).toBeGreaterThan(0);
+    expect(COMMAND_TYPES.filter((type) => !events.has(type))).toEqual([]);
   });
 
   it('도장 상태의 색과 늦음 · 도장 색 표시', () => {

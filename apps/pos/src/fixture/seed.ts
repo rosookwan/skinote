@@ -2,8 +2,13 @@
 // 이름은 시안의 이름을 쓰고, 전화번호는 모두 가짜(010-0000-xxxx)다. 실제 손님 자료는 없다.
 // 들어 있는 경우: 전화 예약 · 리프트권 선입금(박준호), 차량 배달(최하은), 매장 수령(박준호 · 이정호), 조기 반납(오승민),
 // 다른 팀이 결제(이서연 → 이정호), 늦은 미수(김영희), 숙소 수거(솔마을 한솔동 · 꽃마을 들국화), 반납 끝(최은정).
-import type { ConditionKey } from '@skinote/contract';
-import type { FxArea, FxLine, FxOrder, FxPayment, FxPin, FxPromise, FxSection, FxState, FxVehicle } from './model.ts';
+// 둘째 판(docs/design/screens-v2/spec.md 2-3 · 2-4): 이 매장의 운영 규칙(리프트권 반납 필수 · 보증금 1매 5,000원 현금 · 영업일 기준
+// 06:00 · 시재 100,000원), 번호 스티커 · 권 번호(박준호 팀의 준비 번호는 시안 V1의 번호), 돈통 · 차량 지갑, 1호 차량 예비권 야간권 6매.
+// 15:40 뒤의 이야기(새 팀 0042 ~ 0045 · 일괄 수납 · 부분 반납 · 마감)는 story.ts의 사건이 시계를 앞으로 돌릴 때 적는다.
+import type {
+  FxArea, FxAsset, FxDrawer, FxLine, FxOrder, FxPayment, FxPin, FxPromise, FxSection, FxShopRules, FxState, FxVehicle,
+} from './model.ts';
+import { PRODUCTS, type FxProduct } from './catalog.ts';
 import { kstAt } from './time.ts';
 
 export const DEMO_DATE = '2026-12-26';
@@ -32,31 +37,21 @@ export const VEHICLES: readonly FxVehicle[] = [
   { id: 'v2', label: '2호 차량' },
 ];
 
-interface CatalogItem {
-  label: string;
-  shortLabel?: string;
-  unit?: string;
-  price: number;
-  section: FxSection;
-  returnable: boolean;
-  capabilities: ConditionKey[];
-}
+/**
+ * 리프트권 줄을 돌려받는지(item_kinds.return_policy_key를 운영 규칙에서 복사, catalog 11). 줄을 만들 때 한 번 복사하고,
+ * 규칙을 바꾸면(V8) 다음에 만드는 줄부터다. 반납 선택(optional)은 반납이 끝남의 조건이 아니라 반납 칸이 없다.
+ */
+export const liftReturnable = (rules: Pick<FxShopRules, 'liftReturnPolicy'>) => rules.liftReturnPolicy === 'required';
 
-const CATALOG = {
-  ski: { label: '스키', price: 40_000, section: 'gear', returnable: true, capabilities: ['exchangeable', 'extendable'] },
-  board: { label: '보드', price: 25_000, section: 'gear', returnable: true, capabilities: ['exchangeable', 'extendable'] },
-  helmet: { label: '헬멧', price: 5_000, section: 'gear', returnable: true, capabilities: ['exchangeable', 'extendable'] },
-  clothes: { label: '의류', price: 20_000, section: 'gear', returnable: true, capabilities: ['exchangeable', 'extendable'] },
-  night_adult: { label: '야간권 성인', shortLabel: '야간권', unit: '매', price: 35_000, section: 'lift', returnable: false, capabilities: [] },
-} as const satisfies Record<string, CatalogItem>;
-
-type Kind = keyof typeof CATALOG;
+/** 처음 자료에 쓴 상품(품목 목록은 catalog.ts). 리프트권 줄의 returnable은 목록 값이 아니라 운영 규칙에서 줄을 만들 때 복사한다(line()). */
+type Kind = 'ski' | 'board' | 'helmet' | 'clothes' | 'night_adult';
 
 const at = (hour: number, minute: number, dayOffset = 0) => kstAt(DEMO_DATE, dayOffset, hour, minute);
 
-/** 품목 줄. done: 지급(issued) · 반납(returned)까지 된 시각. */
+/** 품목 줄. done: 지급(issued) · 반납(returned)까지 된 시각. 리프트권 줄의 반납 여부는 이 매장의 운영 규칙에서. */
 function line(orderId: string, n: number, kind: Kind, qty: number, done: { issuedAt?: number; returnedAt?: number } = {}): FxLine {
-  const item: CatalogItem = CATALOG[kind];
+  const product: FxProduct = PRODUCTS[kind]!;
+  const item: FxProduct = product.section === 'lift' ? { ...product, returnable: liftReturnable(SHOP_RULES) } : product;
   return {
     id: orderId + '-l' + n,
     kind,
@@ -64,10 +59,12 @@ function line(orderId: string, n: number, kind: Kind, qty: number, done: { issue
     shortLabel: item.shortLabel ?? item.label,
     qty,
     ...(item.unit ? { unit: item.unit } : {}),
+    countWord: item.countWord,
     amount: item.price * qty,
     section: item.section,
     returnable: item.returnable,
     capabilities: [...item.capabilities],
+    tracking: item.tracking,
     loaded: 0,
     issued: done.issuedAt !== undefined ? qty : 0,
     ...(done.issuedAt !== undefined ? { issuedAt: done.issuedAt } : {}),
@@ -81,7 +78,7 @@ function line(orderId: string, n: number, kind: Kind, qty: number, done: { issue
 const store = (atMs: number): FxPromise => ({ at: atMs, mode: 'store' });
 const van = (atMs: number, placeId: string, note?: string): FxPromise => ({ at: atMs, mode: 'vehicle', placeId, vehicleId: 'v1', ...(note ? { note } : {}) });
 const paid = (orderId: string, amount: number, methodKey: FxPayment['methodKey'], atMs: number, section?: FxSection): FxPayment => ({
-  id: orderId + '-p1', amount, methodKey, at: atMs, ...(section ? { section } : {}),
+  id: orderId + '-p1', amount, methodKey, at: atMs, ...(section ? { section } : {}), ...(methodKey === 'cash' ? { drawerId: 'counter' } : {}),
 });
 
 interface OrderInput {
@@ -143,8 +140,10 @@ function orders(): FxOrder[] {
       id: 'o22', no: 17, teamName: '박준호', last4: '0022', channel: 'phone', party: 3, createdAt: at(10, 12, -2),
       pickup: store(at(16, 0)), giveBack: van(at(22, 0), 'seolcheon_parking'),
       lines: (id) => [line(id, 1, 'ski', 2), line(id, 2, 'board', 1), line(id, 3, 'helmet', 3), line(id, 4, 'night_adult', 3)],
-      // 리프트권은 리조트에서 미리 끊어 두므로 값을 먼저 받는다(선입금). 장비 값은 받을 때.
+      // 리프트권은 리조트에서 미리 끊어 두므로 값을 먼저 받는다(선입금). 장비 값 120,000원은 반납 때 받기로 했다(spec 2-4 16:05:
+      // 그래서 V9 · V1의 처리 현황에서 수납이 반납 뒤에 오고, 19:40 · 21:30의 미수는 지연이 아니다).
       payments: (id) => [paid(id, 105_000, 'transfer', at(10, 20, -2), 'lift')],
+      payWhen: 'return',
     }),
     walkIn({
       id: 'o23', no: 6, teamName: '이수진', last4: '0023', party: 2, createdAt: at(10, 5), issuedAt: at(10, 12),
@@ -237,17 +236,112 @@ function pins(): FxPin[] {
   return [{ id: 'pin1', orderId: 'o39', at: at(21, 50), note: '조기 반납', status: 'requested' }];
 }
 
+/** 이 매장의 운영 규칙(catalog 3 · spec 2-3). V8에서 바꾸면 다음 기록부터다. */
+export const SHOP_RULES: FxShopRules = {
+  liftReturnPolicy: 'required',
+  liftDeposit: {
+    key: 'lift_ticket_card', label: '리프트권 보증금', section: 'lift', unitAmount: 5_000, timing: 'at_intake', refundDefault: 'cash',
+    unreturned: 'keep', lossAmount: 35_000, afterDays: 1, methods: ['cash'],
+  },
+  prepaymentMode: 'full_lift_ticket',
+  prepaymentAmount: 50_000,
+  sameDayCancelRefund: 'refund',
+  businessDayCutoff: '06:00',
+  openingCash: 100_000,
+  driverSeesDue: true,
+  defaultReturnSlotKey: 'afternoon',
+  returnSlots: [
+    { key: 'morning', label: '오전타임 후', hour: 12, minute: 0 },
+    { key: 'afternoon', label: '오후', hour: 16, minute: 30 },
+    { key: 'night', label: '야간', hour: 22, minute: 0 },
+    { key: 'late_night', label: '심야', hour: 24, minute: 0 },
+  ],
+};
+
+/** 돈통 · 차량 지갑 · 넘기는 중 · 과부족(data-model 4-12). 뒤의 둘은 화면에 이름이 나오지 않는다. */
+export const DRAWERS: readonly FxDrawer[] = [
+  { id: 'counter', kind: 'counter', label: '카운터 돈통' },
+  { id: 'van:v1', kind: 'vehicle', label: '1호 차량 현금', vehicleId: 'v1' },
+  { id: 'van:v2', kind: 'vehicle', label: '2호 차량 현금', vehicleId: 'v2' },
+  { id: 'transit', kind: 'transit', label: '넘기는 중' },
+  { id: 'over_short', kind: 'over_short', label: '과부족' },
+];
+
+/**
+ * 매장 재고의 번호 범위(예시, 상품 key → 번호). 야간권은 31번부터(1호 차량 예비권은 51 ~ 56번). 부츠와 다른 권종(새 접수에서 고를 수
+ * 있는 것)도 번호를 가진다: 권종마다 백 단위를 나눠 한 매장 안에서 번호가 겹쳐 보이지 않게 했다. 고글은 수량으로 세어 번호가 없다.
+ */
+const STOCK_NUMBERS: Readonly<Record<string, readonly [number, number]>> = {
+  ski: [1, 40], board: [1, 20], boots: [1, 40], helmet: [1, 30], clothes: [1, 40], night_adult: [31, 50],
+  morning_adult: [101, 120], afternoon_adult: [201, 220], day_adult: [301, 320], full_adult: [401, 420],
+};
+/** 박준호 팀(0022)의 준비 번호: 시안 V1의 번호(스키 17 · 18번, 보드 5번, 헬멧 12 · 14 · 15번, 야간권 31 · 32 · 33번). */
+const PLANNED: Readonly<Record<string, readonly string[]>> = {
+  'o22-l1': ['17', '18'], 'o22-l2': ['5'], 'o22-l3': ['12', '14', '15'], 'o22-l4': ['31', '32', '33'],
+};
+/** 1호 차량 예비권(시안 V7 `야간권 재고 6매`). */
+const VAN_SPARE: { vehicleId: string; kind: Kind; numbers: readonly string[] } = { vehicleId: 'v1', kind: 'night_adult', numbers: ['51', '52', '53', '54', '55', '56'] };
+
+export const assetId = (kind: string, no: string) => kind + '-' + no;
+
+/**
+ * 번호를 붙인다: 이미 지급한 줄은 매장 재고의 빈 번호를 차례로(돌아온 줄은 돌아온 번호까지), 박준호 팀은 준비 번호.
+ * 실물 목록(assets)은 매장 재고 전부와 차량 예비권이다.
+ */
+function numberPieces(list: FxOrder[]): FxAsset[] {
+  const reserved = new Set(Object.entries(PLANNED).flatMap(([lineId, nos]) => {
+    const kind = list.flatMap((o) => o.lines).find((l) => l.id === lineId)?.kind ?? '';
+    return nos.map((no) => assetId(kind, no));
+  }));
+  const free = new Map<string, string[]>();
+  const assets: FxAsset[] = [];
+  for (const [kind, [from, to]] of Object.entries(STOCK_NUMBERS)) {
+    const nos: string[] = [];
+    for (let n = from; n <= to; n += 1) {
+      assets.push({ id: assetId(kind, String(n)), kind, no: String(n) });
+      if (!reserved.has(assetId(kind, String(n)))) nos.push(String(n));
+    }
+    free.set(kind, nos);
+  }
+  for (const no of VAN_SPARE.numbers) assets.push({ id: assetId(VAN_SPARE.kind, no), kind: VAN_SPARE.kind, no, vehicleId: VAN_SPARE.vehicleId });
+  for (const o of list) {
+    for (const l of o.lines) {
+      const planned = PLANNED[l.id];
+      if (planned) l.plannedAssetIds = planned.map((no) => assetId(l.kind, no));
+      if (l.tracking !== 'unit' || l.issued === 0) continue;
+      const pool = free.get(l.kind) ?? [];
+      const taken = pool.splice(0, l.issued).map((no) => assetId(l.kind, no));
+      l.assetIds = taken;
+      const back = l.returned + l.collected;
+      if (back > 0) l.backAssetIds = taken.slice(0, back);
+    }
+  }
+  return assets;
+}
+
 /** 처음 자료. epoch는 되돌릴 때마다 새로 받는다. */
 export function createSeed(epoch: string): FxState {
+  const list = orders();
+  const assets = numberPieces(list);
   return {
-    version: 2,
+    version: 3,
     epoch,
     rev: 1,
     businessDate: DEMO_DATE,
-    orders: orders(),
+    orders: list,
     pins: pins(),
     routeRanks: {},
     outcomes: {},
     driverDevice: { offline: false, queue: [] },
+    settings: structuredClone(SHOP_RULES),
+    assets,
+    deposits: [],
+    paymentGroups: [],
+    drawers: DRAWERS.map((d) => ({ ...d })),
+    cashTransfers: [],
+    closings: [],
+    vanReceipts: [],
+    nextReceiptSeq: 19,
+    storyApplied: [],
   };
 }

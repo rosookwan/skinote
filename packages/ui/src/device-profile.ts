@@ -62,12 +62,23 @@ export interface DeviceProfile {
   keypad: { keyPx: number; displayPx: number; titlePx: number; loadPx: number; sidePanelPx: number; sidePanelMinHeightPx: number; allowSide: boolean };
   /** 도장 그림(누르는 곳은 칸 전체). */
   stamp: { markPx: number; miniMarkPx: number };
+  /**
+   * 남는 높이를 나눠 쓰는 줄(layout fillRows: 기사 업무 판 V7의 품목 줄 60 ~ 88, spec 3-8)과 화면 위로 올라오는 아래 판(현장 수납 ·
+   * 리프트권 추가, ui 6-5)의 최대 높이. 휴대폰 업무 판은 한 칸 세로라 줄 최소가 누르는 곳(56)이다.
+   */
+  fill: { rowMinPx: number; rowMaxPx: number; panelMaxPx: number };
+  /**
+   * 쪽 나누기의 한 쪽 줄 수 · 카드 폭(시안의 수, spec 3-1 · 3-6 · 3-7 · 3-9): 반납 창 품목 칸 3줄(창 500 ≤ 1024×529의 한도), 부분 결제 판 3줄,
+   * 마감 이월 항목 5줄, 운영 규칙 카드의 가장 작은 폭 = 누르는 곳 9칸(474 카드). 잰 높이가 더 적으면 화면이 줄인다.
+   */
+  pages: { returnPieceRows: number; partialPayRows: number; closingCarryRows: number; ruleCardMinTargets: number };
   space: { xs: number; s: number; m: number; l: number };
   radius: { s: number; m: number; paper: number };
   line: { hair: number; strong: number; stamp: number };
 }
 
 const SPACE = { xs: 4, s: 8, m: 12, l: 16 } as const;
+const PAGES = { returnPieceRows: 3, partialPayRows: 3, closingCarryRows: 5, ruleCardMinTargets: 9 } as const;
 const RADIUS = { s: 8, m: 10, paper: 4 } as const;
 const LINE = { hair: 1, strong: 2, stamp: 3 } as const;
 const STAMP = { markPx: 48, miniMarkPx: 24 } as const;
@@ -83,6 +94,8 @@ const DRIVER_CONFIRM: ConfirmWindowSpec = {
 const POS_SLIP = { titlePx: 60, fieldsPx: 40, promisePx: 32, moneyPx: 40, sidePanelPx: 280, gapPx: 16 };
 const KEYPAD = { keyPx: 56, displayPx: 56, titlePx: 40, loadPx: 48, sidePanelPx: 268, sidePanelMinHeightPx: 600 };
 const PLAIN = { cardMaxPx: 672, choicePx: 72 };
+/** 줄 최소 · 최대(V7 60 ~ 88, V6 52 ~ 88)와 아래 판 최대 높이(ui 6-5: 440). */
+const PANEL_MAX_PX = 440;
 
 const pos: DeviceProfile = {
   key: 'pos',
@@ -98,7 +111,7 @@ const pos: DeviceProfile = {
   slip: POS_SLIP,
   confirm: POS_CONFIRM,
   keypad: { ...KEYPAD, allowSide: false },
-  stamp: STAMP, space: SPACE, radius: RADIUS, line: LINE,
+  stamp: STAMP, fill: { rowMinPx: 52, rowMaxPx: 88, panelMaxPx: PANEL_MAX_PX }, pages: PAGES, space: SPACE, radius: RADIUS, line: LINE,
 };
 
 const posNarrow: DeviceProfile = {
@@ -122,7 +135,7 @@ const driverTablet: DeviceProfile = {
   slip: null,
   confirm: DRIVER_CONFIRM,
   keypad: { ...KEYPAD, allowSide: true },
-  stamp: STAMP, space: SPACE, radius: RADIUS, line: LINE,
+  stamp: STAMP, fill: { rowMinPx: 60, rowMaxPx: 88, panelMaxPx: PANEL_MAX_PX }, pages: PAGES, space: SPACE, radius: RADIUS, line: LINE,
 };
 
 const driverPhone: DeviceProfile = {
@@ -137,6 +150,8 @@ const driverPhone: DeviceProfile = {
   combineHeadingsBelowPx: 0,
   capacity: { menu: 1, tabs: 3, quickMethods: 2, paymentSectionsPerPage: 1, sideActions: 1 },
   keypad: { ...KEYPAD, allowSide: false },
+  // 한 칸 세로 업무 판(360×640): 팀 · 품목 줄 · 돈 줄 · 반납 일정 · 2 × 2 버튼이 한 화면에 들도록 품목 줄은 누르는 곳 높이부터.
+  fill: { rowMinPx: 56, rowMaxPx: 88, panelMaxPx: PANEL_MAX_PX },
 };
 
 /** 인쇄: 크기는 인쇄 틀이 정한다. A4 794px(96dpi, 여백 뺌) 기준의 뼈대 값. */
@@ -201,6 +216,8 @@ export function profileCssVars(profile: DeviceProfile): Record<string, string> {
     '--sn-line-body': String(profile.bodyLineHeight),
     '--sn-font-title': px(profile.titleFontPx),
     '--sn-font-big': px(profile.bigFontPx),
+    /** 확인 창 칸의 굵은 품목 이름(반납 창 품목 칸, spec 3-1: 주 버튼 글자 + 2 = 포스 22px). */
+    '--sn-font-name': px(profile.bigFontPx + profile.space.xs / 2),
     '--sn-target': px(profile.minTargetPx),
     '--sn-target-repeat': px(profile.repeatTargetPx),
     '--sn-primary-h': px(profile.primaryButtonPx),
@@ -228,6 +245,9 @@ export function profileCssVars(profile: DeviceProfile): Record<string, string> {
     '--sn-confirm-title-h': px(profile.confirm.titlePx),
     '--sn-confirm-primary-h': px(profile.confirm.primaryRowPx),
     '--sn-confirm-pad': px(profile.confirm.paddingXPx),
+    /** 확정 창의 두 줄 결제 칸(104)과 결제 팀 줄(64, ui 4-5). */
+    '--sn-confirm-section-h': px(profile.confirm.sectionPx),
+    '--sn-confirm-payer-h': px(profile.confirm.payerRowPx),
     '--sn-method-min': px(profile.confirm.methodButtonMinPx),
     '--sn-key': px(profile.keypad.keyPx),
     '--sn-keypad-display': px(profile.keypad.displayPx),
@@ -235,6 +255,7 @@ export function profileCssVars(profile: DeviceProfile): Record<string, string> {
     '--sn-keypad-load': px(profile.keypad.loadPx),
     '--sn-keypad-side': px(profile.keypad.sidePanelPx),
     '--sn-stamp': px(profile.stamp.markPx),
+    '--sn-panel-max': px(profile.fill.panelMaxPx),
     '--sn-stamp-mini': px(profile.stamp.miniMarkPx),
     '--sn-space-xs': px(profile.space.xs),
     '--sn-space-s': px(profile.space.s),

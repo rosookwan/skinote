@@ -20,7 +20,15 @@ export interface TextFitProps {
 /** 여러 줄로 내려 쓸 때 줄 끝 빈자리를 셈한 몫(낱말 사이에서만 줄이 바뀌므로 넉넉히 뺀다). */
 const WRAP_SHARE = 0.85;
 
-function fitLines(input: TextFitInput, width: number, lines: number, measure: Measure): { text: string; fits: boolean; wrapped: boolean } {
+export function fitLines(input: TextFitInput, width: number, lines: number, measure: Measure): { text: string; fits: boolean; wrapped: boolean } {
+  // 대체 문구(주 버튼 이름)는 긴 것부터: 한 줄에 들어가거나, 여러 줄이 허락되면 그 줄 수에 들어가는 첫 문구(짧은 이름으로 수 · 돈을 빼기 전에).
+  if (input.mode === 'alts' && lines > 1) {
+    for (const text of input.alts) {
+      const w = measure(text);
+      if (w <= width) return { text, fits: true, wrapped: false };
+      if (w <= width * lines * WRAP_SHARE) return { text, fits: true, wrapped: true };
+    }
+  }
   const one = fitText(input, width, measure);
   if (one.fits || lines <= 1) return { ...one, wrapped: false };
   const many = fitText(input, width * lines * WRAP_SHARE, measure);

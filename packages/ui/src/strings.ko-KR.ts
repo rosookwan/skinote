@@ -63,6 +63,8 @@ export const STRINGS_KO = {
   toCollect: '받을 금액 {amount}',
   promisedBy: '{team} 결제 예정 {amount}',
   forOthers: '대납 {amount}',
+  /** 접수증 돈 줄: 다른 팀 몫까지 한 번에 낸 결제의 수단 · 실제 금액('카드 485,000원'). */
+  methodAmount: '{method} {amount}',
   won: '{n}원',
   team: '{n}팀',
   count: '{n}개',
@@ -86,9 +88,27 @@ export const STRINGS_KO = {
   stampBlocked: '{label} 대기',
   stampScheduled: '{label} 예정',
   stampDelegated: '{label} 차량 담당',
+  /** 일부는 돌아왔고 나머지는 차량이 받는 줄(부분 반납 뒤): 읽는 이름 `반납 2 / 3 · 차량 담당`, 도장 윗줄 `2/3`. */
+  stampDelegatedPartial: '{label} {done} / {total} · 차량 담당',
   stampNa: '{label} 해당 없음',
   none: '없음',
   groupsMore: '{first} 외 {n}',
+  // 둘째 판 부품(work/impl-v2/plan.md): 접수증 돈 줄의 맡은 보증금(청구 · 미수와 따로), 장소 고르기의 구역으로 돌아가기(‹ 구역),
+  // 금액 · 번호 숫자판의 입력 키.
+  depositHeld: '보증금 {amount}',
+  areas: '구역',
+  enter: '입력',
+  // 일정 변경(V9) · 새 접수(V3)의 장소 고르기 첫 버튼(문구 표 1-4 '매장 직접'), 접수증 일정 줄의 나뉜 일정('반납 일정 2건 ›', 3-3).
+  storeDirect: '매장 직접',
+  promisesKind: '{label} 일정 {n}건',
+  // 새 접수(V2) 종류 타일의 고른 수 표시(읽는 이름, 문구 표 3-6 `선택 4`).
+  pickedCount: '선택 {n}',
+  // 접수 확정 창(V4)의 결제 칸(MethodRow, 문구 표 3-7): 수단 줄 끝의 `할인 적용 ›`(갈매기는 부품이 그린다)과 읽는 이름.
+  discountApply: '할인 적용',
+  discountApplyFor: '{section} 할인 적용',
+  methodsFor: '{section} 결제 수단',
+  // 관리 화면 카드(RuleCard, 매장 설정 · 운영 규칙 V8)의 저장하지 않은 바꿈 이름표(문구 표 3-11 `변경됨`).
+  changed: '변경됨',
 } as const;
 
 export type StringKey = keyof typeof STRINGS_KO;

@@ -13,9 +13,14 @@ export interface PrimaryButtonProps {
   /** 결과를 기다리는 중('처리 중'): 두 번 눌러도 같은 요청번호로 간다. */
   busy?: boolean;
   className?: string;
+  /**
+   * 글 줄 수(기본 1). 2면 한 줄에 들어가지 않는 이름을 두 줄로 쓴다(휴대폰 아래 판: `리프트권 추가 · 1매 · 보증금 5,000원`의 돈을 빼기 전에).
+   * 주 버튼 높이(휴대폰 64px)에 두 줄이 들어갈 때만 쓴다.
+   */
+  lines?: number;
 }
 
-export function PrimaryButton({ label, alts, fill = false, onPress, disabled = false, busy = false, className }: PrimaryButtonProps) {
+export function PrimaryButton({ label, alts, fill = false, onPress, disabled = false, busy = false, className, lines = 1 }: PrimaryButtonProps) {
   return (
     <button
       type="button"
@@ -25,7 +30,7 @@ export function PrimaryButton({ label, alts, fill = false, onPress, disabled = f
       aria-busy={busy || undefined}
       onClick={onPress}
     >
-      {alts && alts.length ? <TextFit input={{ mode: 'alts', alts }} /> : label}
+      {alts && alts.length ? <TextFit input={{ mode: 'alts', alts }} lines={lines} /> : label}
     </button>
   );
 }

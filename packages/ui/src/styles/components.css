@@ -37,7 +37,7 @@
 
 /* 글자 맞추기: 한 줄, 넘치면 부품이 덜 중요한 부분을 뺀다(자르지 않는다). */
 .sn-fit { display: block; min-width: 0; white-space: nowrap; }
-.sn-fit.is-two-lines { white-space: normal; line-height: 1.2; }
+.sn-fit.is-two-lines { white-space: normal; line-height: 1.2; word-break: keep-all; }
 
 /* 버튼 */
 .sn-button {
@@ -107,6 +107,7 @@
   height: var(--sn-title-h); box-shadow: inset 0 calc(var(--sn-line-strong) * -1) 0 var(--sn-ink);
 }
 .sn-title { flex: 1 1 0; min-width: 0; padding-bottom: var(--sn-space-s); font-family: var(--sn-font-serif); font-size: var(--sn-font-title); font-weight: 700; letter-spacing: -0.01em; }
+.sn-title-tag { display: inline-flex; align-self: center; flex: none; }
 .sn-tabs { display: flex; align-items: flex-end; gap: var(--sn-space-xs); flex: 0 0 auto; }
 .sn-tab {
   position: relative; min-height: var(--sn-target); padding: 0 var(--sn-space-m);
@@ -327,6 +328,8 @@
 
 /* 확인 창 */
 .sn-overlay { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; background: var(--sn-scrim); }
+/* 창 안에서 연 아래 판(확정 창의 `다른 팀 찾기 · 끝 4자리` 숫자판)은 그 창 뒤가 아니라 위에 뜬다(같은 자리에서 창 다음에 그린 판). */
+.sn-overlay ~ .sn-sheet-overlay { z-index: 40; }
 .sn-dialog { display: flex; flex-direction: column; background: var(--sn-paper); border-radius: var(--sn-radius-m); box-shadow: 0 var(--sn-space-m) calc(var(--sn-space-l) * 2) var(--sn-shadow); }
 .sn-dialog-head { display: flex; align-items: center; flex: none; height: var(--sn-confirm-title-h); padding: 0 var(--sn-confirm-pad); box-shadow: inset 0 calc(var(--sn-line-strong) * -1) 0 var(--sn-ink); }
 .sn-dialog-title { flex: 1 1 0; min-width: 0; font-size: var(--sn-font-title); font-weight: 900; }
@@ -386,3 +389,197 @@
 /* 돈 줄 높이 전체를 차지해 기울인 글자 도장('수납 완료')의 상자가 칸 안에 들어가게 한다(도장은 전과 같이 가운데). */
 .sn-slip-stamps { display: flex; gap: var(--sn-space-s); flex: none; align-self: stretch; }
 .sn-slip-stamp { display: inline-flex; align-items: center; gap: var(--sn-space-xs); font-size: var(--sn-font-min); font-weight: 700; color: var(--sn-ink-muted); white-space: nowrap; }
+
+/* 고르기 버튼(ChoiceButton · ChoiceRow): 고른 것은 남색 바탕 · 크림 글자(주황 아님), 누를 수 없는 것은 점선 · 회색(자리는 그대로).
+   줄은 넘치면 부품이 짧은 이름 · 더 보기로 줄이므로 버튼은 줄어들지 않는다(글이 버튼 밖으로 나가지 않게). */
+.sn-choices { display: flex; align-items: center; gap: var(--sn-space-s); min-width: 0; }
+.sn-choice { flex: none; padding: 0 var(--sn-space-m); }
+.sn-choice[aria-pressed='true'] { background: var(--sn-ink); color: var(--sn-paper); }
+.sn-choice:disabled { border-style: dashed; background: transparent; color: var(--sn-ink-muted); }
+.sn-choice.is-two { flex-direction: column; gap: 0; line-height: 1.1; }
+.sn-choice.is-two > small { font-size: var(--sn-font-min); font-weight: 700; color: inherit; }
+.sn-choice-more { font-weight: 900; }
+
+/* 이름표 줄(FormRow): 이름표 칸 6em(회색 굵은 글) + 내용. 자리만 남기는 줄은 보이지 않는다(창 높이 그대로). */
+.sn-form-row { display: grid; grid-template-columns: 6em minmax(0, 1fr); align-items: center; column-gap: var(--sn-space-m); min-height: var(--sn-target); }
+.sn-form-row.is-top { align-items: start; }
+.sn-form-row.is-top > .sn-form-label { display: flex; align-items: center; height: var(--sn-target); }
+.sn-form-row.is-blank { visibility: hidden; }
+.sn-form-label { font-size: var(--sn-font-min); font-weight: 800; color: var(--sn-ink-muted); white-space: nowrap; }
+.sn-form-value { min-width: 0; }
+
+/* 수량 −/+ 칸(QtyStepper): 한 줄에 둘. 0은 옅은 먹. */
+.sn-steps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sn-space-s) var(--sn-space-l); }
+.sn-step {
+  display: flex; align-items: center; gap: var(--sn-space-s); min-width: 0; height: var(--sn-target);
+  padding-left: var(--sn-space-s); border-radius: var(--sn-radius-s); background: var(--sn-paper-shade);
+}
+.sn-step-name { display: flex; flex-direction: column; justify-content: center; flex: 1 1 0; min-width: 0; line-height: 1.15; }
+.sn-step-name > b { font-size: var(--sn-font-body); font-weight: 900; white-space: nowrap; }
+.sn-step-name > small { display: block; min-width: 0; font-size: var(--sn-font-min); font-weight: 700; color: var(--sn-ink-muted); white-space: nowrap; }
+.sn-step .sn-qty-value { min-width: calc(var(--sn-target) * 1.1); }
+.sn-qty-value.is-zero { color: var(--sn-ink-muted); }
+
+/* 글 조각 줄(RichLine) · 요약 두 줄(변경 · 유지): 위에 가는 선, 굵은 본문 글자. */
+.sn-rich { display: block; min-width: 0; white-space: nowrap; }
+.sn-rich > b { font-weight: 900; }
+.sn-summary {
+  display: flex; flex-direction: column; justify-content: center; padding-top: var(--sn-space-s);
+  font-size: var(--sn-font-body); font-weight: 700; line-height: 1.25; box-shadow: inset 0 var(--sn-line) 0 var(--sn-rule);
+}
+.sn-summary-row { display: grid; grid-template-columns: 3.5em minmax(0, 1fr); align-items: baseline; white-space: nowrap; }
+.sn-summary-row > b { font-weight: 900; }
+.sn-summary-row.is-alert > .sn-rich { justify-self: start; background: var(--sn-now-wash); border-radius: var(--sn-radius-s); padding: 0 var(--sn-space-s); }
+
+/* 틀이 따로인 확인 창(DialogFrame): 바닥줄은 닫기 · 쪽 넘김 · 주 버튼. 긴 주 버튼은 남는 폭을 쓴다. */
+.sn-dialog-foot .sn-dialog-primary { display: flex; justify-content: flex-end; flex: 0 1 auto; min-width: 0; }
+.sn-dialog-foot .sn-dialog-primary .sn-primary { flex: 0 1 auto; min-width: 0; }
+.sn-dialog-pager { flex: none; }
+
+/* 반납 창의 품목 칸(ReturnPieces, spec 3-1 ②): 한 줄에 칸 둘(넓은 칸은 한 줄 전체), 줄 수는 부르는 쪽이 남긴 자리 그대로
+   (부품이 grid-template-rows를 줄 수 × --sn-target으로 둔다).
+   칸은 옅은 종이색, 품목 이름은 굵은 22px(주 버튼 글자 + 2), 둘째 줄은 회색 16px. 번호 버튼은 고르기 버튼(고른 번호는 남색).
+   하나도 고르지 않은 칸은 이름이 옅은 먹. */
+.sn-piece-lines {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: var(--sn-target);
+  gap: var(--sn-space-s) calc(var(--sn-space-l) + var(--sn-space-s));
+}
+.sn-piece-line {
+  display: flex; align-items: center; gap: var(--sn-space-m); min-width: 0; height: var(--sn-target);
+  padding-left: var(--sn-space-m); border-radius: var(--sn-radius-s); background: var(--sn-paper-shade);
+}
+.sn-piece-line.is-wide { grid-column: 1 / -1; }
+.sn-piece-name { display: flex; flex-direction: column; justify-content: center; flex: 1 1 0; min-width: 0; line-height: 1.1; }
+.sn-piece-name > .sn-fit { flex: none; }
+.sn-piece-title { font-size: var(--sn-font-name); font-weight: 900; }
+.sn-piece-note { font-size: var(--sn-font-min); font-weight: 700; color: var(--sn-ink-muted); }
+.sn-piece-line.is-muted .sn-piece-title { color: var(--sn-ink-muted); }
+.sn-pieces { display: flex; align-items: center; gap: var(--sn-space-s); flex: none; }
+.sn-piece { min-width: calc(var(--sn-target) + var(--sn-space-m)); padding: 0 var(--sn-space-s); }
+
+/* 처리 현황의 누르는 줄(Checklist onItemPress): 줄 전체가 버튼(높이 = 줄 높이, 등급의 누르는 곳 이상). 모양은 줄 그대로. */
+.sn-check.is-pressable { padding: 0; }
+.sn-check.is-later.is-pressable { color: var(--sn-ink); }
+.sn-check-go { display: inline-flex; flex: none; align-items: center; color: var(--sn-ink-soft); }
+.sn-check-press {
+  display: flex; align-items: center; gap: var(--sn-space-s); flex: 1 1 0; min-width: 0; align-self: stretch;
+  padding: 0 var(--sn-space-s); border: 0; border-radius: inherit; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+
+/* 새 접수 종류 타일(KindTile, spec 3-4): 칸 높이 = 누르는 곳 + 4, 첫 줄 굵은 이름(주 버튼 글자), 둘째 줄 회색, 오른쪽 끝 남색 둥근 수
+   (지름 = 제목 글자 + 8, 흰 주 버튼 글자). 연 종류는 '고름'(남색 바탕)과 다른 모양: 옅은 바탕 + 안쪽 굵은 테두리 + 아래 띠. */
+.sn-kind {
+  justify-content: space-between; gap: var(--sn-space-s); width: 100%; min-width: 0;
+  min-height: calc(var(--sn-target) + var(--sn-space-xs)); padding: 0 var(--sn-space-m); text-align: left;
+}
+.sn-kind[aria-expanded='true'] {
+  background: var(--sn-paper-shade);
+  box-shadow: inset 0 0 0 var(--sn-line-strong) var(--sn-ink), inset 0 calc(var(--sn-space-xs) * -1) 0 var(--sn-ink);
+}
+.sn-kind-text { display: flex; flex-direction: column; justify-content: center; flex: 1 1 0; min-width: 0; line-height: 1.1; }
+.sn-kind-name { font-size: var(--sn-font-big); font-weight: 900; white-space: nowrap; }
+.sn-kind-second { font-size: var(--sn-font-min); font-weight: 700; color: var(--sn-ink-muted); }
+.sn-kind-end { display: flex; align-items: center; gap: var(--sn-space-xs); flex: none; }
+.sn-kind-end > .sn-icon { width: 1.5em; height: 1.5em; stroke-width: 3; }
+.sn-kind-count {
+  display: inline-grid; place-items: center; flex: none;
+  min-width: calc(var(--sn-font-title) + var(--sn-space-s)); height: calc(var(--sn-font-title) + var(--sn-space-s)); padding: 0 var(--sn-space-xs);
+  border-radius: var(--sn-font-title); background: var(--sn-ink); color: var(--sn-paper); font-size: var(--sn-font-big); font-weight: 900; line-height: 1;
+}
+
+/* 두 줄 목록 줄(ListRow2): 줄 높이 = 누르는 곳, 아래 가는 선(안쪽 그림자라 높이를 먹지 않는다). 누르는 줄은 줄 전체가 버튼. */
+.sn-list-rows { display: flex; flex-direction: column; }
+.sn-list-row { display: flex; flex: none; height: var(--sn-target); box-shadow: inset 0 calc(var(--sn-line) * -1) 0 var(--sn-rule-soft); }
+.sn-list-main { display: flex; flex-direction: column; justify-content: center; flex: 1 1 0; min-width: 0; padding: 0 var(--sn-space-s); line-height: 1.15; }
+.sn-list-press { border: 0; border-radius: var(--sn-radius-s); background: transparent; color: inherit; font: inherit; text-align: left; }
+.sn-list-top { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sn-space-s); min-width: 0; }
+.sn-list-title { flex: 1 1 0; font-size: var(--sn-font-base); font-weight: 800; }
+.sn-list-amount { flex: none; font-size: var(--sn-font-base); font-weight: 900; white-space: nowrap; }
+.sn-list-note { font-size: var(--sn-font-min); font-weight: 600; color: var(--sn-ink-soft); }
+
+/* 작은 이름표(Tag): 16px 글 한 칸, 누르는 곳이 아니다. 다른 팀이 낼 몫은 파랑, 차량이 할 일은 보라. */
+.sn-chip {
+  display: inline-flex; align-items: center; flex: none; width: fit-content; padding: 0 var(--sn-space-s);
+  border: var(--sn-line) solid var(--sn-rule); border-radius: var(--sn-radius-s); background: var(--sn-paper-shade);
+  font-size: var(--sn-font-min); font-weight: 700; color: var(--sn-ink-soft); white-space: nowrap;
+}
+.sn-chip.is-blue { border-color: var(--sn-blue); background: var(--sn-blue-wash); color: var(--sn-blue); }
+.sn-chip.is-purple { border-color: var(--sn-purple); background: var(--sn-purple-wash); color: var(--sn-purple-ink); }
+
+/* 숫자판(NumberPad): 끝 4자리 숫자판과 같은 키 · 표시 칸. 금액의 `입력`은 줄 전체, 표시 칸은 글자 사이를 띄우지 않는다(번호 · 금액). */
+.sn-numpad-display { letter-spacing: 0; }
+.sn-key.is-wide { grid-column: 1 / -1; }
+.sn-numpad.is-inline { border-radius: var(--sn-radius-paper); }
+/* 숫자 키만(값은 부르는 쪽이 따로 보임): 판 여백 없이 키 격자만. */
+.sn-numpad.is-keys { padding: 0; background: transparent; }
+
+/* 결제 칸(MethodRow, 확정 창 V4 · ui 4-5): 두 줄 칸 = 제목 줄(글만) + 수단 줄(누르는 곳) + 아래 틈(어느 수단 줄이 어느 칸 것인지 갈라 보이게),
+   한 줄 칸 = 버튼 없는 한 줄(누르는 곳 높이). 칸 사이의 가는 선은 안쪽 그림자라 높이를 먹지 않는다. 금액은 늘 오른쪽 끝. */
+.sn-method-row {
+  display: flex; flex-direction: column; flex: none; height: var(--sn-confirm-section-h); padding-bottom: var(--sn-space-m);
+  box-shadow: inset 0 calc(var(--sn-line) * -1) 0 var(--sn-rule);
+}
+.sn-method-row.is-single { flex-direction: row; align-items: center; gap: var(--sn-space-m); height: var(--sn-target); padding-bottom: 0; }
+.sn-method-top { display: flex; align-items: center; gap: var(--sn-space-m); flex: 1 1 auto; min-width: 0; min-height: 0; }
+.sn-method-name { flex: none; font-size: var(--sn-font-big); font-weight: 900; white-space: nowrap; }
+.sn-method-items { flex: 1 1 0; min-width: 0; font-size: var(--sn-font-base); font-weight: 700; color: var(--sn-ink-muted); }
+.sn-method-disc { flex: 0 1 auto; min-width: 0; font-size: var(--sn-font-base); font-weight: 700; color: var(--sn-ink-muted); }
+.sn-method-payer { flex: none; font-size: var(--sn-font-base); font-weight: 800; white-space: nowrap; }
+.sn-method-amount { flex: none; margin-left: auto; font-size: var(--sn-font-big); font-weight: 900; white-space: nowrap; text-align: right; }
+.sn-method-amount.is-later { color: var(--sn-ink-muted); }
+.sn-method-buttons { display: flex; align-items: center; gap: var(--sn-space-m); flex: none; height: var(--sn-target); min-width: 0; }
+.sn-method-buttons > .sn-choice { min-width: var(--sn-method-min); }
+.sn-method-buttons > .sn-method-discount { margin-left: auto; min-width: 0; }
+
+/* 고르는 칸(SelectCell, 일괄 수납 V5): 칸 전체(누르는 곳 + 여백 × 줄 높이)가 누르는 곳, 가운데 네모(제목 글자 + 여백 = 포스 28)에 체크.
+   고름 = 남색 바탕 · 크림 체크(주황 아님), 안 고름 = 빈 네모. */
+.sn-select-cell {
+  display: grid; place-items: center; width: 100%; min-width: var(--sn-target); height: var(--sn-row-h); min-height: var(--sn-target);
+  padding: 0; border: 0; background: transparent; color: var(--sn-paper); font-size: var(--sn-font-body);
+}
+.sn-select-box {
+  display: grid; place-items: center;
+  width: calc(var(--sn-font-title) + var(--sn-space-xs)); height: calc(var(--sn-font-title) + var(--sn-space-xs));
+  border: var(--sn-line-strong) solid var(--sn-ink); border-radius: var(--sn-radius-s); background: var(--sn-paper);
+}
+.sn-select-cell[aria-checked='true'] .sn-select-box { background: var(--sn-ink); }
+.sn-select-box .sn-icon { stroke-width: 3; }
+.sn-select-cell:disabled .sn-select-box { border-style: dashed; border-color: var(--sn-rule); }
+
+/* 결제 수단 2 × 2(MethodGrid, 일괄 수납 V5 오른쪽 판): 두 칸 격자, 버튼은 칸 폭 전체. */
+.sn-method-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sn-space-s); flex: none; }
+.sn-method-grid > .sn-choice { min-width: 0; padding: 0 var(--sn-space-s); }
+
+/* 큰 옆 버튼(BigButton, 기사 업무 판 V7): 선 그림 위 · 큰 굵은 글 아래, 둘째 줄은 본문 크기 회색(`야간권 재고 6매`). 높이는 부르는 쪽의 칸이
+   정하고(태블릿 2 × 2가 판을 채움), 휴대폰은 한 줄로 누운 누르는 곳 높이 버튼(is-row). */
+.sn-big-button { flex-direction: column; gap: var(--sn-space-s); min-width: 0; padding: 0 var(--sn-space-s); font-size: var(--sn-font-big); font-weight: 900; }
+.sn-big-button > .sn-icon { width: 1.75em; height: 1.75em; }
+.sn-big-text { display: flex; flex-direction: column; align-items: center; min-width: 0; max-width: 100%; line-height: 1.2; }
+.sn-big-text > .sn-fit { max-width: 100%; }
+.sn-big-second { font-size: var(--sn-font-body); font-weight: 700; color: var(--sn-ink-soft); }
+.sn-big-button:disabled .sn-big-second { color: var(--sn-ink-muted); }
+.sn-big-button.is-row { flex-direction: row; justify-content: flex-start; gap: var(--sn-space-xs); padding: 0 var(--sn-space-xs); font-size: var(--sn-font-body); }
+.sn-big-button.is-row > .sn-icon { width: 1.2em; height: 1.2em; }
+.sn-big-button.is-row .sn-big-text { flex: 1 1 0; align-items: flex-start; line-height: 1.1; }
+.sn-big-button.is-row .sn-big-second { font-size: var(--sn-font-min); }
+
+/* 운영 규칙 카드(RuleCard, 관리 화면 카드 목록 · 매장 설정 V8): 크림 바탕 · 굵은 옅은 테두리 · 모서리 · 안 여백(중간), 제목 줄(글자 × 1.75) ·
+   버튼 줄(누르는 곳, 사이 작게) · 안내 줄(글자 × 1.375), 묶음 사이 아주 작게. 높이는 ruleCardHeight(RuleCard.tsx)가 같은 값으로 센다.
+   고르기 버튼은 카드 폭을 나눠 채우고(글 폭보다 줄지 않음), 값 버튼은 제 폭. 한 줄 카드는 왼쪽 제목, 오른쪽 버튼(남는 폭). */
+.sn-rule-card {
+  display: flex; flex-direction: column; gap: var(--sn-space-xs); flex: none; min-width: 0;
+  padding: var(--sn-space-m); background: var(--sn-paper);
+  border: var(--sn-line-strong) solid var(--sn-rule); border-radius: var(--sn-radius-m);
+}
+.sn-rule-card.is-inline { flex-direction: row; align-items: center; gap: var(--sn-space-l); }
+.sn-rule-title { display: flex; align-items: center; justify-content: space-between; gap: var(--sn-space-s); flex: none; min-height: calc(var(--sn-font-min) * 1.75); }
+.sn-rule-title > h2 { font-size: var(--sn-font-body); font-weight: 900; white-space: nowrap; }
+.sn-rule-title > .sn-chip { line-height: 1.5; }
+.sn-rule-rows { display: flex; flex-direction: column; gap: var(--sn-space-s); min-width: 0; }
+.sn-rule-card.is-inline > .sn-rule-rows { flex: 1 1 0; }
+.sn-rule-row { min-height: var(--sn-target); }
+.sn-rule-card .sn-choices > .sn-choice { flex: 1 0 auto; }
+.sn-rule-value { flex: none; padding: 0 var(--sn-space-m); }
+.sn-rule-notes { display: flex; flex-direction: column; min-width: 0; }
+.sn-rule-note { font-size: var(--sn-font-min); font-weight: 700; line-height: 1.375; color: var(--sn-ink-soft); white-space: nowrap; }
+.sn-rule-note > b { font-weight: 900; color: var(--sn-ink); }

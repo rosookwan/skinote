@@ -1,0 +1,4 @@
+# 배포가 사이트 주소(IP가 든 sslip.io 이름)로 채운 Caddy 파일과 사본 점검 폴더는 올리지 않는다(공개 저장소).
+/skinote.caddy
+/stage/
+/.env.local

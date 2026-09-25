@@ -1,0 +1,82 @@
+# 스키노트 서버(API). deploy.sh가 /etc/systemd/system/skinote-server.service로 둔다(바뀐 때만).
+# 코드는 /srv/skinote/current(배포가 바꾸는 링크)에서 읽기만 하고, 쓰는 곳은 /var/lib/skinote(자료) · /var/log/skinote뿐이다.
+# 날마다 백업 폴더(/var/lib/skinote/backups)는 읽기만 한다: 서버 프로세스가 뚫리거나 잘못 써도 날마다 백업을 지우지 못하게.
+# 실행기의 적용 전 · 뒤 사본(backups/migrations)만 쓴다.
+# 설정 값은 /etc/skinote/skinote.env(비밀값 없음, deploy/skinote.env.example). 기록은 journald: journalctl -u skinote-server
+
+[Unit]
+Description=Skinote server (API, health)
+Documentation=file:///srv/skinote/current/deploy/README.md
+After=network-online.target
+Wants=network-online.target
+# 죽어도 포기하지 않고 늦춰 가며 다시 띄운다(2초에서 60초까지). 그래서 시작 횟수 제한은 끈다.
+# 설정 오류(끝 코드 78)처럼 다시 띄우지 않는 실패만 'failed'로 남고 알림 유닛이 돈다.
+StartLimitIntervalSec=0
+OnFailure=skinote-alert@%N.service
+
+[Service]
+Type=simple
+User=skinote
+Group=skinote
+EnvironmentFile=/etc/skinote/skinote.env
+Environment=NODE_ENV=production
+WorkingDirectory=/srv/skinote/current/server
+ExecStart=/usr/local/bin/node --disable-warning=ExperimentalWarning --max-old-space-size=256 src/main.js
+Restart=always
+RestartSec=2
+RestartSteps=6
+RestartMaxDelaySec=60
+# 78 = 설정 오류(src/main.js). 같은 설정으로 다시 띄워도 소용없으니 다시 시작하지 않는다.
+RestartPreventExitStatus=78
+# 죽을 때마다(다시 띄우기 전에도) journald에 crit 한 줄: 계속 죽는 것을 알아채는 자리. 알림 서비스를 붙이면 여기서도 보낸다.
+ExecStopPost=-/bin/sh -c 'if [ "$${SERVICE_RESULT:-success}" != success ]; then echo "<2>skinote-alert: skinote-server $${SERVICE_RESULT} $${EXIT_CODE:-} $${EXIT_STATUS:-}"; fi'
+KillSignal=SIGTERM
+KillMode=mixed
+# 시작 도중(마이그레이션 · VACUUM INTO 사본)에 멈추라고 해도 서버는 그 일을 마치고 끝난다(src/main.js). 그동안 SIGKILL로 끊지 않게
+# 넉넉히 둔다. 시작이 끝난 뒤의 멈춤은 서버가 15초 안에 스스로 끝낸다.
+TimeoutStopSec=10min
+SyslogIdentifier=skinote-server
+UMask=0077
+
+# 자원(2 GB를 여러 앱이 나눠 쓰는 VPS)
+MemoryHigh=384M
+MemoryMax=512M
+TasksMax=64
+LimitNOFILE=8192
+
+# 막기
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RemoveIPC=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# 지금은 앞단(Caddy, 127.0.0.1)만 붙고 바깥으로 나가는 연결이 없다. 저장소 복제 · 문자 같은 바깥 연결이 생기면 이 두 줄을 고친다.
+IPAddressAllow=localhost
+IPAddressDeny=any
+# 잡을 수 있는 포트는 3100 하나(SKINOTE_PORT와 Caddy의 reverse_proxy를 바꾸면 여기도).
+SocketBindAllow=tcp:3100
+SocketBindDeny=any
+ReadWritePaths=/var/lib/skinote -/var/log/skinote
+ReadOnlyPaths=-/var/lib/skinote/backups
+ReadWritePaths=-/var/lib/skinote/backups/migrations
+
+[Install]
+WantedBy=multi-user.target

@@ -99,3 +99,358 @@ html, body { margin: 0; height: 100%; overflow: hidden; }
   border-radius: var(--sn-radius-m); box-shadow: 0 var(--sn-space-m) calc(var(--sn-space-l) * 2) var(--sn-shadow);
 }
 .pos-phone-frame .sn-screen { height: 100%; }
+
+/* 일정 변경 창(V9, spec 3-2): 줄 사이 8, 변경 품목 칸은 두 줄 자리(52 + 8 + 52)를 늘 남긴다(창 높이가 흔들리지 않게). */
+.pos-promise .sn-dialog-body { gap: var(--sn-space-s); }
+.pos-promise .sn-steps.is-two-rows { grid-template-rows: var(--sn-target) var(--sn-target); }
+
+/* 반납 확인 창(V1, spec 3-1): 창 860 × 440 = 제목 56 + 본문 312 + 바닥 72. 본문 = 위 12 + ① 24 + ② 품목 칸(52 + 8 + 52) + ③ 40 + ④ 28
+   + ⑤ 52 + 사이 8 × 4 + 아래 12. 줄 높이는 모두 고정이라 번호를 빼도 · 쪽을 넘겨도 창 높이가 그대로다. */
+.pos-return .sn-dialog-body { gap: var(--sn-space-s); }
+.pos-return-lead { display: flex; align-items: center; height: calc(var(--sn-font-min) * 1.5); font-size: var(--sn-font-min); font-weight: 600; color: var(--sn-ink-muted); }
+.pos-return-lead > .sn-rich,
+.pos-return-left > .sn-rich,
+.pos-return-deposit > .sn-rich { flex: 1 1 0; }
+.pos-return-left {
+  display: flex; align-items: center; height: calc(var(--sn-target) - var(--sn-space-m)); padding-top: var(--sn-space-s);
+  box-shadow: inset 0 var(--sn-line) 0 var(--sn-rule); font-size: var(--sn-font-body); font-weight: 700;
+}
+.pos-return-left.is-alert > .sn-rich { flex: 0 1 auto; padding: 0 var(--sn-space-s); border-radius: var(--sn-radius-s); background: var(--sn-now-wash); }
+.pos-return-deposit { display: flex; align-items: center; height: calc(var(--sn-font-min) * 1.75); font-size: var(--sn-font-body); font-weight: 700; }
+.pos-return-refund { display: flex; align-items: center; gap: var(--sn-space-m); height: var(--sn-target); }
+.pos-return-refund > .sn-form-label { flex: none; }
+.pos-return-refund > .sn-choices { flex: 1 1 0; }
+.pos-return-refund .sn-choice { min-width: var(--sn-method-min); }
+/* 번호가 많은 줄의 작은 창: 번호 버튼 격자(칸 수는 창 폭으로 센 값). */
+.pos-picker-grid { display: grid; grid-template-columns: repeat(var(--pos-picker-columns, 4), minmax(0, 1fr)); gap: var(--sn-space-s); }
+
+/* 새 접수 ① 품목 · ② 일정(V2 · V3, spec 3-4 · 3-5): 접수증형 틀. 종이 머리 = 명조 `새 접수` + 이름표(`전화 예약`) + 단계 탭(머리 아래 선에
+   붙음). ① 대표자 줄 52 · 종류 격자(잰 높이, 타일 56) · 고르는 줄 둘(52 + 8 + 52, 옅은 바탕 띠), ② 묶음 넷(제목 줄 + 버튼 줄 52). */
+.pos-new-head { display: flex; align-items: center; gap: var(--sn-space-m); min-width: 0; }
+.pos-new-tabs { align-self: flex-end; }
+.pos-new-tabs .sn-tab:disabled { border-style: dashed; color: var(--sn-grey); }
+.pos-step-no { font-size: calc(var(--sn-font-big) + var(--sn-space-xs)); font-weight: 700; line-height: 1; vertical-align: -0.08em; }
+.pos-new-body { display: flex; flex-direction: column; gap: var(--sn-space-s); flex: 1 1 0; min-height: 0; padding: var(--sn-space-s) 0; }
+
+.pos-new-rep { display: flex; align-items: center; gap: var(--sn-space-s); flex: none; min-width: 0; height: var(--sn-target); }
+.pos-new-field { justify-content: flex-start; gap: var(--sn-space-s); padding: 0 var(--sn-space-m); border-color: var(--sn-rule); text-align: left; }
+.pos-new-field.is-name { flex: 1 1 0; min-width: 0; }
+.pos-new-field.is-phone { flex: none; }
+.pos-new-label { flex: none; font-size: var(--sn-font-min); font-weight: 700; color: var(--sn-ink-muted); }
+.pos-new-value { font-size: var(--sn-font-big); font-weight: 900; }
+.pos-new-field.is-name .pos-new-value { flex: 0 1 auto; }
+.pos-new-value.is-empty { color: var(--sn-ink-muted); font-weight: 700; }
+/* 품목은 있는데 이름이 없으면 대표자 칸을 주황 테두리로(주 버튼 위 까닭 줄 `대표자 이름 필요`와 짝). 빨강은 늦음에만. */
+.pos-new-field.is-missing { border-color: var(--sn-orange); box-shadow: inset 0 0 0 var(--sn-line-strong) var(--sn-orange); }
+.pos-new-icon { display: inline-flex; color: var(--sn-ink-muted); }
+.pos-new-people { display: flex; align-items: center; gap: var(--sn-space-s); flex: none; padding-left: var(--sn-space-s); }
+.pos-new-people .sn-qty-value { min-width: calc(var(--sn-target) * 1.25); }
+/* 좁으면(좁은 포스) 뺄 차례: 숫자판 그림 → 인원 이름표 → 연락처 이름표 → 대표자 이름표(값이 있을 때만, 읽는 이름은 남음). */
+.pos-new-rep.drop-icon .pos-new-icon,
+.pos-new-rep.drop-party .pos-new-people > .pos-new-label,
+.pos-new-rep.drop-contact .is-phone.has-value > .pos-new-label,
+.pos-new-rep.drop-leader .is-name.has-value > .pos-new-label { display: none; }
+
+.pos-new-kinds {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: calc(var(--sn-target) + var(--sn-space-xs));
+  align-content: start; gap: var(--sn-space-s); flex: none;
+}
+.pos-new-open {
+  display: flex; flex-direction: column; gap: var(--sn-space-s); flex: none; height: calc(var(--sn-target) * 2 + var(--sn-space-s));
+  padding: 0 var(--sn-space-s); border-radius: var(--sn-radius-m); background: var(--sn-paper-shade);
+}
+.pos-new-pick { display: flex; align-items: center; gap: var(--sn-space-s); flex: none; min-width: 0; height: var(--sn-target); }
+.pos-new-pick-label { flex: none; width: 7em; font-size: var(--sn-font-body); font-weight: 900; white-space: nowrap; }
+.pos-new-pick > .sn-choices { flex: 1 1 0; }
+.pos-new-pick .sn-choice { min-width: calc(var(--sn-target) * 1.5); }
+.pos-new-pick .sn-qty-value { min-width: calc(var(--sn-target) * 1.5); }
+.pos-new-pick-note { flex: 1 1 0; padding-left: var(--sn-space-s); font-size: var(--sn-font-min); font-weight: 600; color: var(--sn-ink-muted); }
+.pos-new-hint { display: flex; align-items: center; height: var(--sn-target); font-size: var(--sn-font-min); font-weight: 700; color: var(--sn-ink-muted); }
+
+/* 오른쪽 판: 제목 40 · 줄(잰 높이, 넘치면 판 안의 쪽 넘김) · 합계 104(선 위 8 + 20 · 20 · 24 · 20) · 주 버튼 56(판 폭 전체). */
+.pos-new-panel-title {
+  display: flex; align-items: center; flex: none; height: calc(var(--sn-target) - var(--sn-space-m));
+  font-size: var(--sn-font-body); font-weight: 900; box-shadow: inset 0 calc(var(--sn-line-strong) * -1) 0 var(--sn-ink);
+}
+.pos-new-rows { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; }
+.pos-new-rows-pager { display: flex; justify-content: center; margin-top: auto; }
+.pos-new-sum {
+  display: flex; flex-direction: column; justify-content: flex-end; gap: var(--sn-space-xs); flex: none;
+  height: calc(var(--sn-target) * 2); padding-top: var(--sn-space-s); box-shadow: inset 0 var(--sn-line) 0 var(--sn-rule);
+  font-size: var(--sn-font-base); font-weight: 700; line-height: 1.25;
+}
+.pos-new-sum.is-compact { height: auto; }
+.pos-new-sum-line { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sn-space-s); padding: 0 var(--sn-space-s); white-space: nowrap; }
+.pos-new-sum-line > span:last-child { font-weight: 900; }
+.pos-new-sum-line.is-total { font-size: var(--sn-font-big); font-weight: 900; line-height: 1.2; }
+.pos-new-sum-line.is-muted { color: var(--sn-ink-muted); font-weight: 800; }
+.pos-new-note { flex: none; padding: var(--sn-space-xs) var(--sn-space-xs) 0; font-size: var(--sn-font-min); font-weight: 600; line-height: 1.35; color: var(--sn-ink-muted); }
+.pos-new-side .sn-primary.pos-new-go { flex: none; width: 100%; padding: 0 var(--sn-space-m); }
+.pos-new-reason { flex: none; font-size: var(--sn-font-min); font-weight: 700; line-height: 1.35; color: var(--sn-ink-muted); text-align: center; }
+
+/* ② 일정: 묶음 = 제목 줄(회색 굵은 16px) + 버튼 줄 52, 묶음 사이 8. 높이가 모자라면 제목을 왼쪽 6em 칸으로(is-compact). */
+.pos-new-schedule { padding-top: var(--sn-space-m); padding-bottom: var(--sn-space-m); }
+.pos-new-block { display: flex; flex-direction: column; flex: none; min-width: 0; }
+.pos-new-block-title {
+  display: flex; align-items: center; min-height: calc(var(--sn-font-min) * 1.75);
+  font-size: var(--sn-font-min); font-weight: 800; color: var(--sn-ink-muted); white-space: nowrap;
+}
+.pos-new-block > .sn-choices { height: var(--sn-target); }
+.pos-new-block .sn-choice { min-width: calc(var(--sn-target) * 2); }
+.pos-new-block.is-place .sn-choice { min-width: calc(var(--sn-target) * 1.75); }
+.pos-new-schedule.is-compact { padding-top: var(--sn-space-s); padding-bottom: var(--sn-space-s); }
+.pos-new-schedule.is-compact .pos-new-block { display: grid; grid-template-columns: 6em minmax(0, 1fr); align-items: center; column-gap: var(--sn-space-m); }
+/* 작은 창(전화 예약 · 차량 배달): 이름표 줄 사이 8. */
+.pos-new-window .sn-dialog-body { gap: var(--sn-space-s); }
+
+/* 글자 입력 판(대표자 이름): 아래에서 올라오는 판, 칸 하나(주 버튼 글자) + 닫기 · 입력(남색, 주 버튼 아님). */
+.pos-text-sheet {
+  display: flex; flex-direction: column; gap: var(--sn-space-s); width: 100%; max-width: calc(var(--sn-keypad-side) * 2);
+  padding: var(--sn-space-m); background: var(--sn-paper); border-radius: var(--sn-radius-m) var(--sn-radius-m) 0 0;
+}
+.pos-text-sheet-title { display: flex; align-items: center; height: var(--sn-keypad-title); font-size: var(--sn-font-body); font-weight: 900; }
+.pos-text-input {
+  height: var(--sn-keypad-display); min-width: 0; padding: 0 var(--sn-space-m);
+  border: var(--sn-line-strong) solid var(--sn-ink); border-radius: var(--sn-radius-m); background: var(--sn-paper); color: var(--sn-ink);
+  font-family: inherit; font-size: var(--sn-font-big); font-weight: 900;
+}
+.pos-text-input::placeholder { color: var(--sn-ink-muted); font-weight: 700; }
+.pos-text-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--sn-space-s); }
+.pos-text-go { background: var(--sn-ink); color: var(--sn-paper); }
+
+/* V4 접수 확정 창(spec 3-3, ui 4-5): 본문 위 여백 12 · 아래 여백 없음 · 줄 사이 없음(두 줄 칸 104 × 2 + 보증금 52 + 결제 팀 64 + 받을 금액 40,
+   창 504 — 1024×529의 한도 505 안). 결제 팀 줄은 `후불`인 칸이 없으면 자리만 남는다(창 높이가 그대로). */
+.pos-checkout .sn-dialog-body { gap: 0; padding-bottom: 0; }
+.pos-checkout-payer { display: flex; align-items: center; gap: var(--sn-space-m); flex: none; height: var(--sn-confirm-payer-h); min-width: 0; }
+.pos-checkout-payer.is-blank { visibility: hidden; }
+.pos-checkout-payer-label { flex: none; font-size: var(--sn-font-min); font-weight: 800; color: var(--sn-ink-muted); white-space: nowrap; }
+.pos-checkout-payer > .sn-choices { flex: 0 1 auto; }
+.pos-checkout-find { flex: none; gap: var(--sn-space-s); }
+.pos-checkout-due {
+  display: flex; align-items: center; flex: none; height: calc(var(--sn-target) - var(--sn-space-m)); min-width: 0;
+  box-shadow: inset 0 var(--sn-line) 0 var(--sn-rule); white-space: nowrap;
+}
+/* 받을 금액 줄의 조각(`받을 금액` · `현금 160,000원` · `= …`) 사이는 틈으로 띄운다(시안 v4-now). */
+.pos-checkout-due > .sn-rich { display: flex; align-items: baseline; gap: var(--sn-space-m); flex: 1 1 0; }
+.pos-checkout-due.is-alert > .sn-rich { flex: 0 1 auto; background: var(--sn-now-wash); border-radius: var(--sn-radius-s); padding: 0 var(--sn-space-s); }
+
+/* V5 일괄 수납(spec 3-6, ui 6-7): 접수증형 틀. 왼쪽은 접수증 테두리가 없는 장부 종이(제목 · 탭 60 · 표 머리 40 · 줄 52, 한 쪽의 줄 수는
+   잰 높이), 오른쪽 판은 제목 40 · 금액(28px) · 수단 제목 · 수단 2 × 2 · 빈칸 · 주 버튼(판 폭 전체). 칸 폭(글 폭 668): 선택 56 · 팀 150 ·
+   품목 나머지 · 받을 금액 112 · 부분 결제 164. 좁은 포스(is-compact)는 팀 120 · 받을 금액 96 · 부분 결제 128로 줄이고 품목은 '외 N종', 부분 금액은 `165,000원 ›`. */
+.pos-group-body { flex: 1 1 0; min-height: 0; }
+.pos-group-table { width: 100%; }
+.pos-group-table col.is-check { width: calc(var(--sn-target) + var(--sn-space-xs)); }
+.pos-group-table col.is-team { width: calc(var(--sn-target) * 3 - var(--sn-space-s) * 0.75); }
+.pos-group-table col.is-due { width: calc(var(--sn-target) * 2 + var(--sn-space-s)); }
+.pos-group-table col.is-pay { width: calc(var(--sn-target) * 3 + var(--sn-space-s)); }
+.pos-group-table.is-compact col.is-team { width: calc(var(--sn-target) * 2 + var(--sn-space-l)); }
+.pos-group-table.is-compact col.is-due { width: calc(var(--sn-target) * 2 - var(--sn-space-s)); }
+.pos-group-table.is-compact col.is-pay { width: calc(var(--sn-target) * 2 + var(--sn-space-l) + var(--sn-space-s)); }
+.pos-group-table .sn-row > td { font-size: var(--sn-font-body); font-weight: 700; }
+.pos-group-table .sn-row.is-off > td { color: var(--sn-ink-muted); }
+.pos-group-team { align-items: flex-start; gap: calc(var(--sn-space-xs) / 2); }
+.pos-group-team > .sn-fit { max-width: 100%; font-size: var(--sn-font-body); font-weight: 900; }
+.pos-group-items { font-size: var(--sn-font-body); font-weight: 700; }
+.pos-group-due { font-weight: 900; white-space: nowrap; }
+/* 부분 결제 칸: 칸 전체가 누르는 곳, 보이는 버튼 얼굴은 줄 선 안쪽(버튼은 누르면 일어나는 일 `부분 결제 ›` · `부분 · 165,000원 ›`). */
+.pos-group-part {
+  display: grid; place-items: center; width: 100%; height: var(--sn-row-h); min-height: var(--sn-target);
+  padding: 0 var(--sn-space-s); border: 0; background: transparent;
+}
+.pos-group-part-face {
+  display: flex; align-items: center; justify-content: center; width: 100%; min-width: 0; height: calc(var(--sn-target) - var(--sn-space-m));
+  padding: 0 var(--sn-space-xs); border: var(--sn-line-strong) solid var(--sn-ink); border-radius: var(--sn-radius-s);
+  font-size: var(--sn-font-body); font-weight: 800;
+}
+.pos-group-part-face > .sn-fit { flex: 0 1 auto; }
+.pos-group-side { gap: var(--sn-space-s); }
+.pos-group-money { display: flex; flex-direction: column; justify-content: center; gap: var(--sn-space-xs); flex: none; min-height: calc(var(--sn-target) + var(--sn-space-m)); padding: 0 var(--sn-space-xs); }
+.pos-group-total { font-size: calc(var(--sn-font-title) + var(--sn-space-xs)); font-weight: 900; line-height: 1.1; white-space: nowrap; }
+.pos-group-note { font-size: var(--sn-font-body); font-weight: 800; color: var(--sn-ink-soft); }
+.pos-group-methods-title { flex: none; padding: 0 var(--sn-space-xs); font-size: var(--sn-font-min); font-weight: 800; color: var(--sn-ink-muted); }
+.pos-group-side .sn-primary.pos-group-go { flex: none; width: 100%; margin-top: auto; padding: 0 var(--sn-space-xs); }
+
+/* V5 부분 결제 판: 품목 칸(한 줄에 둘, 연 때의 줄 수만큼 자리) · 묶음 버튼 줄 52 · 합계 줄. 창 높이는 연 동안 그대로다. */
+.pos-partial .sn-dialog-body { gap: var(--sn-space-s); }
+.pos-partial-presets { display: flex; align-items: center; gap: var(--sn-space-s); flex: none; height: var(--sn-target); }
+.pos-partial-presets .sn-choice { min-width: calc(var(--sn-target) * 3); }
+.pos-partial-sum {
+  display: flex; align-items: center; flex: none; height: calc(var(--sn-target) - var(--sn-space-m)); min-width: 0;
+  box-shadow: inset 0 var(--sn-line) 0 var(--sn-rule); font-size: var(--sn-font-body); white-space: nowrap;
+}
+.pos-partial-sum.is-alert > .sn-rich { background: var(--sn-now-wash); border-radius: var(--sn-radius-s); padding: 0 var(--sn-space-s); }
+
+/* V7 기사 업무 판 · 한 팀(spec 3-8): 왼쪽 종이(제목 · 팀 64 · 품목 표 · 돈 줄 48) + 오른쪽 판(2 × 2 큰 버튼 · 반납 일정). 종이와 판은 3 : 2
+   (1024 폭에서 시안의 604 · 396). 품목 줄 높이(--pos-task-row)와 큰 버튼 높이는 화면이 DeviceProfile 값으로 센다(연결 띠를 늘 뺀 높이).
+   품목 표 칸: 품목(나머지) · 수량(누르는 곳 + 여백 둘 = 기사 88) · 도장(누르는 곳 두 칸 − 사이 = 기사 104). 도장은 줄이 크면 조금 커진다. */
+.pos-task-sheet { flex: 3 1 0; }
+.pos-task-body { display: flex; flex-direction: column; gap: var(--sn-space-s); flex: 1 1 0; min-height: 0; }
+.pos-task-team { display: flex; flex-direction: column; justify-content: center; gap: var(--sn-space-xs); flex: none; height: var(--sn-pin-h); padding: 0 var(--sn-space-s); min-width: 0; }
+.pos-task-team-name { font-size: calc(var(--sn-font-big) + var(--sn-space-s)); font-weight: 900; line-height: 1.1; }
+.pos-task-team-line { font-size: var(--sn-font-body); font-weight: 700; color: var(--sn-ink-soft); line-height: 1.2; }
+.pos-task-items {
+  --pos-task-stamp: clamp(var(--sn-stamp), var(--pos-task-row) - var(--sn-space-l) * 2, var(--sn-stamp) + var(--sn-space-s));
+  flex: none; width: 100%;
+}
+.pos-task-items col.is-qty { width: calc(var(--sn-target) + var(--sn-space-l) * 2); }
+.pos-task-items col.is-stamp { width: calc(var(--sn-target) * 2 - var(--sn-space-s)); }
+.pos-task-items thead th { height: var(--sn-group-h); }
+.pos-task-items .sn-row > td { height: var(--pos-task-row); }
+.pos-task-items .sn-stamp-cell { height: var(--pos-task-row); }
+.pos-task-items .sn-stamp { width: var(--pos-task-stamp); height: var(--pos-task-stamp); }
+.pos-task-items .sn-stamp.is-done.is-dated { width: calc(var(--pos-task-stamp) * 1.4); }
+.pos-task-item { font-size: var(--sn-font-big); font-weight: 800; }
+.pos-task-qty { font-size: var(--sn-font-big); font-weight: 900; white-space: nowrap; }
+/* 돈 줄(48, 둘째 줄이 있으면 두 줄): 위에 가는 선, 종이 바닥에 붙는다. 미수 없음은 끝난 돈(초록), 늦은 미수만 빨강. */
+.pos-task-money {
+  display: flex; flex-direction: column; justify-content: center; flex: none; height: var(--sn-keypad-load); margin-top: auto; padding: 0 var(--sn-space-s);
+  font-size: var(--sn-font-body); font-weight: 800; line-height: 1.25; box-shadow: inset 0 var(--sn-line) 0 var(--sn-rule);
+}
+.pos-task-side {
+  display: flex; flex-direction: column; gap: var(--sn-space-m); flex: 2 1 0; min-width: 0; min-height: 0;
+  padding: var(--sn-space-m); background: var(--sn-paper);
+  border-radius: var(--sn-radius-paper) var(--sn-radius-paper) 0 0; box-shadow: 0 var(--sn-line-strong) var(--sn-space-m) var(--sn-shadow);
+}
+.pos-task-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sn-space-s); flex: none; }
+/* 반납 일정(판 바닥, 위 가는 선): 이름 한 줄 + 일정 한 줄(권이 있으면 한 줄 더). 배달하면서 손님께 말할 것. */
+.pos-task-plan {
+  display: flex; flex-direction: column; gap: var(--sn-space-xs); flex: none; min-width: 0; margin-top: auto;
+  padding: var(--sn-space-s) var(--sn-space-xs) 0; box-shadow: inset 0 var(--sn-line) 0 var(--sn-rule);
+}
+.pos-task-plan-label { font-size: var(--sn-font-min); font-weight: 800; color: var(--sn-ink-muted); line-height: 1.25; white-space: nowrap; }
+.pos-task-plan-line { font-size: var(--sn-font-body); font-weight: 900; line-height: calc(4 / 3); }
+.pos-task-footer > .pos-footer-back { flex: 1 1 0; }
+.pos-task-footer.is-one > .pos-footer-back { flex: none; }
+/* 휴대폰(한 칸 세로, ui 6-5): 사이 4, 표 머리 없음(도장 동그라미 안에 단계 이름), 2 × 2 버튼은 누르는 곳 높이, 쪽 넘김은 표 아래 한 줄. */
+.pos-task-sheet.is-one .pos-task-body { gap: var(--sn-space-xs); }
+.pos-task-sheet.is-one .pos-task-money { margin-top: 0; }
+.pos-task-sheet.is-one .pos-task-actions { grid-auto-rows: var(--sn-target); }
+/* 휴대폰 표: 도장은 커지지 않고(등급 도장 크기), 도장 칸은 시각을 한 줄로 찍은 넓은 도장(수거 22:10, 도장 × 1.6)이 들어가는 폭. */
+.pos-task-items.is-bare { --pos-task-stamp: var(--sn-stamp); }
+.pos-task-items.is-bare col.is-qty { width: var(--sn-target); }
+.pos-task-items.is-bare col.is-stamp { width: calc(var(--sn-stamp) * 1.6 + var(--sn-space-xs)); }
+.pos-task-pager { display: flex; justify-content: center; flex: none; }
+
+/* V7 아래 판(현장 수납 · 리프트권 추가, ui 6-5): 아래에서 올라오는 종이(높이 ≤ --sn-panel-max), 휴대폰은 전체 화면. 스크롤 없음. */
+.pos-panel {
+  display: flex; flex-direction: column; max-width: 100%; max-height: var(--sn-panel-max); background: var(--sn-paper);
+  border-radius: var(--sn-radius-m) var(--sn-radius-m) 0 0; box-shadow: 0 var(--sn-space-m) calc(var(--sn-space-l) * 2) var(--sn-shadow);
+}
+.pos-panel.is-full { height: 100%; max-height: none; border-radius: 0; }
+.pos-panel-body { display: flex; flex-direction: column; gap: var(--sn-space-s); flex: 1 1 auto; min-height: 0; padding: var(--sn-space-m) var(--sn-confirm-pad); font-size: var(--sn-font-body); font-weight: 700; }
+.pos-panel .sn-dialog-foot .sn-dialog-primary { display: flex; justify-content: flex-end; flex: 0 1 auto; min-width: 0; }
+.pos-panel .sn-dialog-foot .sn-primary { flex: 0 1 auto; min-width: 0; }
+.pos-panel.is-full .sn-dialog-foot .sn-dialog-primary { flex: 1 1 0; }
+.pos-panel.is-full .sn-dialog-foot .sn-primary { flex: 1 1 0; }
+.pos-field-pay-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--sn-space-m); }
+.pos-panel.is-full .pos-field-pay-grid { grid-template-columns: minmax(0, 1fr); gap: var(--sn-space-s); }
+.pos-field-pay-side { display: flex; flex-direction: column; gap: var(--sn-space-s); min-width: 0; }
+.pos-field-pay-due { display: flex; align-items: center; gap: var(--sn-space-s); min-height: var(--sn-target); min-width: 0; }
+.pos-field-pay-due > .sn-rich { flex: 1 1 0; }
+.pos-field-pay-amount { display: flex; align-items: center; gap: var(--sn-space-s); min-width: 0; }
+.pos-field-pay-amount > .sn-keypad-display { flex: 1 1 0; min-width: 0; letter-spacing: 0; }
+.pos-field-pay-label { flex: none; font-size: var(--sn-font-min); font-weight: 800; color: var(--sn-ink-muted); white-space: nowrap; }
+.pos-add-ticket-row { display: flex; align-items: center; gap: var(--sn-space-s); min-width: 0; }
+.pos-add-ticket-row > .sn-choices { flex: 1 1 0; }
+.pos-add-ticket-lines { display: flex; flex-direction: column; gap: var(--sn-space-xs); min-width: 0; }
+
+/* V6 하루 마감(spec 3-7, ui 6-8): 장부형 틀. 제목줄 오른쪽 기준 띠(높이 = 표 머리 40, 옅은 노랑 · 왼쪽 금색 선), 본문 = 위 8 + 두 칸 + 아래 16.
+   두 칸은 600 : 348(1024 폭의 시안, 사이 16)을 늘리고 줄인 것이고, 줄 높이(--pos-closing-row · --pos-closing-carry-row)는 화면이
+   DeviceProfile 값으로 센다(fillRows 52 ~ 88). 왼쪽 표 칸: 이름 196 · 건수 72 · 금액(나머지), 현금 점검은 이름 196 · 예상 · 실제 · 끝 칸 112. */
+.pos-closing-band {
+  display: flex; align-items: center; gap: var(--sn-space-s); flex: 0 1 auto; min-width: 0;
+  height: var(--sn-thead-h); margin-bottom: var(--sn-space-s); padding: 0 var(--sn-space-m) 0 var(--sn-space-s);
+  border-radius: var(--sn-radius-s); background: var(--sn-now-wash); box-shadow: inset var(--sn-line-stamp) 0 0 var(--sn-now);
+}
+.pos-closing-band .sn-now-label { margin-left: var(--sn-space-xs); }
+.pos-closing-band-text { flex: 0 1 auto; font-size: var(--sn-font-body); font-weight: 800; color: var(--sn-now-ink); }
+.pos-closing .sn-title { flex: 1 1 auto; }
+.pos-closing-body { display: flex; gap: var(--sn-space-l); flex: 1 1 0; min-height: 0; padding: var(--sn-space-s) 0 var(--sn-space-l); }
+.pos-closing-left { display: flex; flex-direction: column; gap: var(--sn-space-m); flex: 50 1 0; min-width: 0; }
+.pos-closing-right { display: flex; flex-direction: column; flex: 29 1 0; min-width: 0; }
+.pos-closing-table { width: 100%; }
+.pos-closing-table col.is-name { width: calc(var(--sn-target) * 4 - var(--sn-space-s) * 1.5); }
+.pos-closing-table col.is-count { width: calc(var(--sn-target) + var(--sn-space-l) + var(--sn-space-xs)); }
+.pos-closing-table col.is-end { width: calc(var(--sn-target) * 2 + var(--sn-space-s)); }
+.pos-closing-table .sn-row > td { height: var(--pos-closing-row); font-size: var(--sn-font-body); font-weight: 700; }
+.pos-closing-table .sn-cell-action,
+.pos-closing-table .sn-stamp-cell { height: var(--pos-closing-row); }
+.pos-closing-table .sn-cell-action { color: var(--sn-ink); }
+.pos-closing-table th.align-end:last-child { padding-right: var(--sn-space-s); }
+.pos-closing-table td.is-stamp .sn-stamp.is-done.is-dated { width: calc(var(--sn-stamp) * 1.4); }
+/* 지금 할 일 줄: 처리 현황의 현재 줄과 같은 옅은 주황. */
+.pos-closing-table .sn-row.is-now > td { background: var(--sn-orange-wash); }
+.pos-closing-name { font-size: var(--sn-font-body); font-weight: 900; white-space: nowrap; }
+.pos-closing-sub { font-size: var(--sn-font-min); font-weight: 700; color: var(--sn-ink-muted); }
+.pos-closing-count { font-weight: 800; white-space: nowrap; }
+.pos-closing-amount { font-size: var(--sn-font-big); font-weight: 900; white-space: nowrap; }
+.pos-closing-line { font-size: var(--sn-font-body); font-weight: 700; }
+.pos-closing-wait { font-size: var(--sn-font-min); font-weight: 700; color: var(--sn-ink-muted); white-space: nowrap; }
+/* 이월 항목: 머리 40(아래 2px 남색 선, 쪽이 넘으면 누르는 곳 높이의 쪽 넘김) + 두 줄 줄(누르면 접수증 · 장부 탭, 오른쪽 끝 `›`). */
+.pos-closing-carry-head {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sn-space-s); flex: none;
+  height: var(--pos-closing-carry-head); padding: 0 var(--sn-space-s); box-shadow: inset 0 calc(var(--sn-line-strong) * -1) 0 var(--sn-ink);
+}
+.pos-closing-carry-title { font-size: var(--sn-font-body); font-weight: 900; white-space: nowrap; }
+.pos-closing-carry { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.pos-closing-carry-row { display: flex; flex: none; height: var(--pos-closing-carry-row); box-shadow: inset 0 calc(var(--sn-line) * -1) 0 var(--sn-rule-soft); }
+.pos-closing-carry-row.is-late { box-shadow: inset var(--sn-line-stamp) 0 0 var(--sn-late), inset 0 calc(var(--sn-line) * -1) 0 var(--sn-rule-soft); }
+.pos-closing-carry-press {
+  display: flex; align-items: center; gap: var(--sn-space-s); width: 100%; min-width: 0; min-height: var(--sn-target); height: 100%;
+  padding: 0 var(--sn-space-s); border: 0; background: transparent; color: var(--sn-ink); font: inherit; text-align: left;
+}
+.pos-closing-carry-press > .sn-icon { color: var(--sn-ink-muted); }
+.pos-closing-carry-main { display: flex; flex-direction: column; justify-content: center; flex: 1 1 0; min-width: 0; line-height: 1.15; }
+.pos-closing-carry-name { font-size: var(--sn-font-body); font-weight: 900; }
+.pos-closing-carry-name > span { font-weight: 900; }
+.pos-closing-carry-note { font-size: var(--sn-font-min); font-weight: 600; color: var(--sn-ink-soft); }
+/* 바닥줄 왼쪽: `‹ 장부` · 굵은 요약(막힘 · 마감 완료 한 줄은 그 아래) · 마감 뒤 `마감표 인쇄`(보통 버튼). */
+.pos-closing-foot { flex: 1 1 0; }
+.pos-closing-sum { display: flex; flex-direction: column; justify-content: center; flex: 1 1 0; min-width: 0; line-height: 1.2; }
+.pos-closing-foot .pos-closing-sum-main { font-size: var(--sn-font-body); font-weight: 800; }
+.pos-closing-foot .pos-closing-sum-note { font-size: var(--sn-font-min); font-weight: 900; color: var(--sn-ink); }
+.pos-closing-print { flex: none; }
+
+/* V6 점검 판(차량 현금 점검 · 돈통 점검 · 재점검): 왼쪽 예상 · 실제 · 차액 · 사유, 오른쪽 숫자 키. 사유 줄은 차액이 0이면 자리만. */
+.pos-cash-check-line { display: flex; align-items: center; min-height: var(--sn-thead-h); min-width: 0; font-size: var(--sn-font-body); }
+.pos-cash-check-line > .sn-rich,
+.pos-cash-check-line > .sn-fit { flex: 1 1 0; }
+.pos-cash-check-line.is-alert { padding: 0 var(--sn-space-s); border-radius: var(--sn-radius-s); background: var(--sn-now-wash); font-weight: 800; }
+.pos-cash-check-reasons { min-width: 0; }
+.pos-cash-check-reasons.is-hidden { visibility: hidden; }
+.pos-closing-sum > .sn-fit { flex: none; }
+/* 좁은 포스의 현금 점검 표(is-compact, closingColumns): 이름 138 · 끝 칸 96으로 줄여 `실제 540,000원 · 차액 −5,000원`이 들어가게. */
+.pos-closing-table.is-compact col.is-name { width: calc(var(--sn-target) * 2.5 + var(--sn-space-s)); }
+.pos-closing-table.is-compact col.is-end { width: calc(var(--sn-target) * 2 - var(--sn-space-s)); }
+
+/* 관리(카드 목록, ui 3-6 · 6-9): 장부형 틀의 본문 = 위 12 + 카드 두 칸(사이 16 · 8). 카드 전체가 누르는 곳(두 줄 줄 높이), 크림 바탕 · 2px 옅은
+   테두리 · 모서리 10(운영 규칙 카드와 같은 모양), 굵은 이름 + 오른쪽 `›`. */
+.pos-manage-body {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: var(--sn-row2-h); align-content: start; gap: var(--sn-space-s) var(--sn-space-l);
+  flex: 1 1 0; min-height: 0; padding-top: var(--sn-space-m);
+}
+.pos-manage-card {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sn-space-s); min-width: 0; min-height: var(--sn-target);
+  padding: 0 var(--sn-space-l); background: var(--sn-paper); color: var(--sn-ink); font: inherit; text-align: left;
+  border: var(--sn-line-strong) solid var(--sn-rule); border-radius: var(--sn-radius-m);
+}
+.pos-manage-card > .sn-icon { flex: none; color: var(--sn-ink-muted); }
+.pos-manage-title { font-size: var(--sn-font-big); font-weight: 900; white-space: nowrap; }
+
+/* V8 매장 설정 · 운영 규칙(spec 3-9, ui 6-9): 본문 = 위 12 + 카드 칸(--pos-rules-cols, 사이 16). 한 칸 안의 카드는 위에서 아래로(사이 8).
+   카드 · 쪽은 화면이 ruleCardHeight · packCards로 나눈다(카드를 자르지 않음). 준비 중인 탭은 한 줄. */
+.pos-rules-body { display: flex; gap: var(--sn-space-l); flex: 1 1 0; min-height: 0; padding-top: var(--sn-space-m); }
+.pos-rules-body.is-soon { flex-direction: column; }
+.pos-rules-col { display: flex; flex-direction: column; gap: var(--sn-space-s); flex: 1 1 0; min-width: 0; }
+/* 저장 확인 창: 바뀐 곳 목록(줄 높이 = 장부 줄, 한 쪽 줄 수만큼 자리를 늘 둔다) + 한 줄 안내(거절되면 까닭, 굵게). */
+.pos-rules-save-list {
+  display: flex; flex-direction: column; flex: none; height: calc(var(--pos-rules-save-rows) * var(--sn-row-h)); margin: 0; padding: 0; list-style: none;
+}
+.pos-rules-save-row {
+  display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: center; column-gap: var(--sn-space-l); flex: none;
+  height: var(--sn-row-h); box-shadow: inset 0 calc(var(--sn-line) * -1) 0 var(--sn-rule-soft);
+}
+.pos-rules-save-label { font-size: var(--sn-font-body); font-weight: 900; white-space: nowrap; }
+.pos-rules-save-value { font-size: var(--sn-font-body); font-weight: 700; white-space: nowrap; text-align: right; }
+.pos-rules-save-note { font-size: var(--sn-font-body); font-weight: 700; color: var(--sn-ink-soft); white-space: nowrap; }
+.pos-rules-save-note.is-refused { font-weight: 900; color: var(--sn-ink); }

@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
     "test": "vitest run",
-    "rules": "node scripts/check-ui-rules.mjs"
+    "rules": "node scripts/check-ui-rules.mjs",
+    "match": "node scripts/check-v2-match.mjs"
   },
   "dependencies": {
     "react": "^19.3.0",

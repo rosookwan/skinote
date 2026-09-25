@@ -30,6 +30,8 @@ const CASES: { key: string; deviceClass: DeviceClassKey }[] = [
   { key: 'collection_list', deviceClass: 'driver_phone' },
   { key: 'collection_list', deviceClass: 'pos' },
   { key: 'collection_list', deviceClass: 'pos_narrow' },
+  { key: 'delivery_list', deviceClass: 'driver_tablet' },
+  { key: 'delivery_list', deviceClass: 'driver_phone' },
 ];
 
 describe('기본 설정이 모든 대상 크기에 들어간다', () => {

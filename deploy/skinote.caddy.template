@@ -1,0 +1,61 @@
+# 스키노트 매장 앱(PWA) + API. deploy.sh가 아래 사이트 주소 자리를 SKINOTE_SITE 값으로 채워 /etc/caddy/sites/skinote.caddy로 둔다.
+# 공통 Caddyfile은 고치지 않는다: 그 파일의 static_app(압축 · file_server · 기본 머리)을 가져다 쓰고, 이 파일만 스키노트의 것이다.
+# deploy.sh는 배포 전에 static_app 조각을 읽어 root · {args}가 없는지 보고, 배포 뒤 릴리스의 다른 파일(server/ · deploy/ · RELEASE)이
+# 바깥에서 보이지 않는지 확인한다.
+# 인증서는 Caddy가 사이트 주소마다 자동으로 받는다(임시 주소는 sslip.io, 도메인이 정해지면 주소만 바꾼다).
+
+__SKINOTE_SITE__ {
+	root * /srv/skinote/current/app
+
+	# 모든 답에 붙는 안전 머리(deployment 3절). 앱은 인라인 스크립트 · 스타일 태그 · 바깥 주소가 없다.
+	# Trusted Types(require-trusted-types-for)는 서비스 워커 등록(register)이 정책을 요구하므로 앱에 정책을 넣은 뒤 켠다.
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+		Cross-Origin-Opener-Policy "same-origin"
+		-Server
+	}
+
+	# 서비스 워커 · manifest · 첫 화면은 늘 새로 확인한다(새 판이 바로 보이게). defer = 공통 static_app의 머리보다 나중에 적용.
+	@fresh path / /index.html /sw.js /manifest.webmanifest
+	header @fresh {
+		Cache-Control "no-cache"
+		defer
+	}
+	# 이름에 내용 해시가 든 빌드 파일은 오래 둔다. 정말 있는 파일에만(없는 파일의 404나 첫 화면 대신 답이 1년 동안 캐시되지 않게).
+	@hashed {
+		path /assets/*
+		file
+	}
+	header @hashed {
+		Cache-Control "public, max-age=31536000, immutable"
+		defer
+	}
+
+	# 자세한 상태(/api/health: 판 · 매장 id · 크기 · 백업 시각 · 디스크)는 서버 안에서만 본다(curl 127.0.0.1:3100/api/health,
+	# deploy.sh --status). 바깥 가동 확인에는 /api/health/live만 연다. 한 경로 matcher라 아래 handle @api보다 먼저 고른다.
+	handle /api/health {
+		respond 404
+	}
+
+	# API는 같은 서버의 스키노트 서버(127.0.0.1:3100)로. 그 밖은 정적 파일(빌드한 앱).
+	@api path /api /api/*
+	handle @api {
+		request_body {
+			max_size 1MB
+		}
+		reverse_proxy 127.0.0.1:3100 {
+			transport http {
+				keepalive 30s
+			}
+		}
+	}
+
+	handle {
+		import static_app
+	}
+}

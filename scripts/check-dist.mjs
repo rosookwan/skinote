@@ -9,6 +9,7 @@
 // 이 검사는 Pages 배포(.github/workflows/pages.yml)와 CI가 빌드 바로 뒤에 돈다.
 //   환경 변수: SKINOTE_DIST(다른 빌드 폴더를 볼 때, 기본 apps/pos/dist)
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { gzipSync } from 'node:zlib';
 import { join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -111,6 +112,19 @@ function main() {
   const phones = textFiles.flatMap((file) => [...read(file).matchAll(/\b01[016789]-?(\d{3,4})-?\d{4}\b/g)]
     .filter((m) => m[1] !== '0000').map((m) => file + ': ' + m[0]));
   check('휴대폰 번호는 가짜(010-0000-xxxx)뿐', phones.length === 0, [...new Set(phones)].slice(0, 5).join(', '));
+
+  // ④ 묶음 크기(gzip): 첫 화면 묶음(index.html이 부르는 스크립트) · 가장 큰 묶음 · 스크립트 전체의 한도. 넘으면 CI가 멈춘다(나중의 커짐을 잡는다).
+  // 지금(2026-09-25): 첫 묶음 ~126 kB · 체험 자료 묶음 ~54 kB · 전체 ~205 kB(화면 묶음 여섯은 각 3 ~ 7 kB). 한도는 그보다 조금 넉넉히.
+  const gz = (file) => gzipSync(readFileSync(join(DIST, file))).length;
+  const kb = (n) => (n / 1024).toFixed(1) + ' kB';
+  const entry = htmlUrls.filter((url) => url.endsWith('.js')).map((url) => url.replace(/^\.\//, ''));
+  const entryGz = entry.reduce((sum, file) => sum + (files.includes(file) ? gz(file) : 0), 0);
+  const sizes = scripts.map((file) => ({ file, size: gz(file) })).sort((a, b) => b.size - a.size);
+  const totalGz = sizes.reduce((sum, x) => sum + x.size, 0);
+  const BUDGET = { entry: 140 * 1024, chunk: 140 * 1024, total: 260 * 1024 };
+  check('첫 화면 묶음(gzip) ' + kb(entryGz) + ' ≤ ' + kb(BUDGET.entry), entryGz <= BUDGET.entry);
+  check('가장 큰 묶음(gzip) ' + kb(sizes[0]?.size ?? 0) + ' ≤ ' + kb(BUDGET.chunk), (sizes[0]?.size ?? 0) <= BUDGET.chunk, sizes[0]?.file ?? '');
+  check('스크립트 전체(gzip) ' + kb(totalGz) + ' ≤ ' + kb(BUDGET.total), totalGz <= BUDGET.total);
 
   const bytes = files.reduce((sum, file) => sum + statSync(join(DIST, file)).size, 0);
   for (const name of passed) console.log('✓ ' + name);

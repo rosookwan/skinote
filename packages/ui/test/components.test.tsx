@@ -6,7 +6,7 @@ import type { ReactElement } from 'react';
 import { describe, expect, it } from 'vitest';
 import {
   AppHeader, Checklist, ConfirmDialog, ConnectionStrip, DeviceProfileProvider, FooterBar, IndexTabs, Keypad, Ledger, Pager, PinBar,
-  PrimaryButton, RowActionBar, Slip, Stamp, fillTitle, rowBarSteps, type RowAction,
+  PrimaryButton, RowActionBar, Slip, Stamp, fillTitle, fitLines, keypadKeyAction, rowBarSteps, typingIn, type RowAction,
 } from '../src/index.ts';
 import type { DeviceRole, Size } from '../src/device-profile.ts';
 import { collectionList, dayLedger, NOW_MS, kst, orderSlip } from './fixtures.ts';
@@ -171,6 +171,15 @@ describe('접수증 · 처리 현황 · 확인 창', () => {
     expect(html).not.toContain('>미수 150,000원<');
   });
 
+  it('접수증: 맡은 보증금은 청구 · 미수와 따로 한 조각(보증금 15,000원), 없으면 조각이 없다', () => {
+    const slip = { ...orderSlip, money: { ...orderSlip.money, depositHeld: 15_000 } };
+    const html = render(<Slip slip={slip} view={slipView} steps={steps} nowMs={NOW_MS} itemsPage={0} tableSize={{ width: 668, height: 248 }} />);
+    expect(html).toMatch(/청구 225,000원 · 수납 105,000원 · 계좌이체 12\/24 · 보증금 15,000원</);
+    expect(html).toContain('<span class="sn-slip-due">미수 120,000원</span>');
+    const none = render(<Slip slip={orderSlip} view={slipView} steps={steps} nowMs={NOW_MS} itemsPage={0} tableSize={{ width: 668, height: 248 }} />);
+    expect(none).not.toContain('보증금');
+  });
+
   it('접수증: 지연 반납은 일정 줄에 지연과 지연 색', () => {
     const slip = { ...orderSlip, promises: { distinct: 1, lines: [orderSlip.promises.lines[0]!, { ...orderSlip.promises.lines[1]!, lateAt: kst(15, 0) }] } };
     const html = render(<Slip slip={slip} view={slipView} steps={steps} nowMs={NOW_MS} itemsPage={0} tableSize={{ width: 668, height: 248 }} />);
@@ -226,6 +235,31 @@ describe('머리줄 · 탭 · 바닥줄 · 작은 부품', () => {
     expect(html).toContain('aria-label="알림 2건"');
     expect(html).not.toContain('새 접수');
     expectPlainKorean(html);
+  });
+
+  it('끝 4자리 숫자판의 자판(카운터 PC, NumberPad와 같음): 숫자 넣기(네 자리까지) · 지우기 · 네 자리면 찾기 · 닫기, 다른 키는 가져가지 않음', () => {
+    expect(keypadKeyAction('0', '')).toEqual({ kind: 'press', digit: '0' });
+    expect(keypadKeyAction('2', '0022')).toEqual({ kind: 'ignore' });
+    expect(keypadKeyAction('Backspace', '002')).toEqual({ kind: 'erase' });
+    expect(keypadKeyAction('Enter', '002')).toEqual({ kind: 'ignore' });
+    expect(keypadKeyAction('Enter', '0022')).toEqual({ kind: 'submit' });
+    expect(keypadKeyAction('Escape', '')).toEqual({ kind: 'close' });
+    expect(keypadKeyAction('a', '')).toBeNull();
+    expect(typingIn(null)).toBe(false);
+  });
+
+  it('두 줄 주 버튼(휴대폰 아래 판): 긴 이름부터 한 줄 또는 두 줄에 들어가는 첫 이름(돈을 빼는 짧은 이름보다 먼저)', () => {
+    const measure = (text: string) => text.length * 10;
+    const alts = ['리프트권 추가 · 1매 · 보증금 5,000원', '리프트권 추가 · 보증금 5,000원', '리프트권 추가'];
+    expect(fitLines({ mode: 'alts', alts }, 100, 1, measure)).toMatchObject({ text: '리프트권 추가', fits: true, wrapped: false });
+    expect(fitLines({ mode: 'alts', alts }, 130, 2, measure)).toEqual({ text: '리프트권 추가 · 보증금 5,000원', fits: true, wrapped: true });
+    expect(fitLines({ mode: 'alts', alts }, 400, 2, measure)).toEqual({ text: alts[0], fits: true, wrapped: false });
+  });
+
+  it('제목 · 탭: 마감한 영업일은 제목 옆 이름표(`마감 완료`)', () => {
+    const html = render(<IndexTabs title="12월 26일 (토) 대여 장부" tabs={ledgerView.tabs} counts={dayLedger.tabCounts} active="all" onSelect={noop} tag="마감 완료" />);
+    expect(html).toContain('>마감 완료<');
+    expect(html.match(/<h1/g)).toHaveLength(1);
   });
 
   it('제목 · 탭: 제목 하나, 켜진 탭, 개수', () => {

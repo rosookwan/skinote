@@ -11,7 +11,7 @@ import { confirmText } from '../src/components/ConfirmFlow.tsx';
 import { choicesPerPage } from '../src/components/NoticeDialog.tsx';
 import { laterThanNow } from '../src/components/VisitResultDialog.tsx';
 import { kstAt } from '../src/fixture/time.ts';
-import { hrefFor, parseHash } from '../src/app/router.ts';
+import { hrefFor, parseHash, screenRoute } from '../src/app/router.ts';
 import { keepPositions } from '../src/screens/keep-position.ts';
 
 describe('해시 경로', () => {
@@ -27,6 +27,40 @@ describe('해시 경로', () => {
     for (const hash of ['#/', '#/ledger/2026-12-26', '#/ledger', '#/orders/o22', '#/exit', '#/driver/2026-12-26', '#/driver/2026-12-26?device=phone', '#/collections/2026-12-26', '#/collections', '#/exit?from=driver']) {
       expect(hrefFor(parseHash(hash))).toBe(hash);
     }
+  });
+
+  it('둘째 판 화면의 경로(sys_screens 모양 + 화면 안의 하위 경로)', () => {
+    expect(parseHash('#/orders/new')).toEqual({ name: 'newOrder', step: 'items' });
+    expect(parseHash('#/orders/new/schedule')).toEqual({ name: 'newOrder', step: 'schedule' });
+    expect(parseHash('#/orders/o32/pay')).toEqual({ name: 'groupPay', orderId: 'o32' });
+    expect(parseHash('#/orders/new/pay')).toEqual({ name: 'unknown' });
+    expect(parseHash('#/closing')).toEqual({ name: 'closing', date: null });
+    expect(parseHash('#/closing/2026-12-26')).toEqual({ name: 'closing', date: '2026-12-26' });
+    expect(parseHash('#/closing/어제')).toEqual({ name: 'unknown' });
+    expect(parseHash('#/manage')).toEqual({ name: 'manage' });
+    expect(parseHash('#/manage/settings')).toEqual({ name: 'shopSettings', tab: 'rules' });
+    expect(parseHash('#/manage/settings/info')).toEqual({ name: 'shopSettings', tab: 'info' });
+    expect(parseHash('#/manage/settings/nothing')).toEqual({ name: 'unknown' });
+    expect(parseHash('#/driver/2026-12-26/deliveries')).toEqual({ name: 'deliveries', date: '2026-12-26', device: 'tablet' });
+    expect(parseHash('#/driver/tasks/deliver%3Ao26?device=phone')).toEqual({ name: 'task', taskId: 'deliver:o26', device: 'phone' });
+    for (const hash of [
+      '#/orders/new', '#/orders/new/schedule', '#/orders/o32/pay', '#/closing', '#/closing/2026-12-26', '#/manage', '#/manage/settings/rules',
+      '#/driver/2026-12-26/deliveries', '#/driver/2026-12-26/deliveries?device=phone', '#/driver/tasks/deliver%3Ao26', '#/driver/tasks/deliver%3Ao26?device=phone',
+    ]) {
+      expect(hrefFor(parseHash(hash))).toBe(hash);
+    }
+  });
+
+  it('화면 키(동작 · 메뉴의 screen_key)가 여는 경로: 새 접수 · 마감 · 관리 · 수거 목록, 없는 화면은 null', () => {
+    expect(screenRoute('new_order')).toEqual({ name: 'newOrder', step: 'items' });
+    expect(screenRoute('closing', { date: '2026-12-26' })).toEqual({ name: 'closing', date: '2026-12-26' });
+    expect(screenRoute('closing')).toEqual({ name: 'closing', date: null });
+    expect(screenRoute('management')).toEqual({ name: 'manage' });
+    expect(screenRoute('collection_list')).toEqual({ name: 'collection', date: null });
+    expect(screenRoute('order_slip', { orderId: 'o22' })).toEqual({ name: 'slip', orderId: 'o22' });
+    expect(screenRoute('order_slip')).toBeNull();
+    expect(screenRoute('lift_tickets')).toBeNull();
+    expect(screenRoute('review_list')).toBeNull();
   });
 
   it('수거 목록은 sys_screens 모양(/collections/:date)과 줄임 주소(/collection/:date), 기사 기기의 나가기', () => {
@@ -120,6 +154,16 @@ describe('앱 문구 표', () => {
     expect(say('notFound', { last4: '0030' })).toBe('끝 4자리 0030 · 해당 팀 없음');
     // @ts-expect-error 값이 빠진 자리
     expect(() => say('teamName')).toThrow('{name}');
+  });
+
+  it('문구 표(docs/design/wording.md)의 원칙: 약속 · 문장 끝 · 대화형 동사 없음', () => {
+    for (const text of Object.values(APP_STRINGS_KO)) {
+      expect(text).not.toContain('약속');
+      expect(text).not.toMatch(/합니다|주세요|드림|드립니다|하기|정하기|고르기|바꾸기/);
+    }
+    // 둘째 판 화면의 이름표는 채택한 시안의 말 그대로다.
+    expect([say('stepItems'), say('stepSchedule'), say('stepPay')]).toEqual(['① 품목', '② 일정', '③ 결제']);
+    expect([say('nextToSchedule'), say('nextToPay'), say('refundMethod'), say('perItemSchedule')]).toEqual(['다음 · 일정', '다음 · 결제', '반환 방법', '품목별 일정 · 접수 후 일정 변경']);
   });
 });
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  DomainError, MONEY_COMMANDS, domainErrorCode, draftToEnvelope, isRequestId, newRequestId, openCommandDraft, reusableDraft, statusTerm, uiDefaults,
-  type ConfirmCommand,
+  CHECKOUT_KEYS, DomainError, GROUP_PAY_TABS, MONEY_COMMANDS, chainDrafts, changedOrders, createdOrder, domainErrorCode, draftToEnvelope, envelopeFor, hasRequiredExpect,
+  isAccepted, isRequestId, newRequestId, openCommandDraft, reusableDraft, statusTerm, uiDefaults, type CommandOutcome, type ConfirmCommand,
 } from '../src/index.ts';
 
 describe('요청번호(ULID)', () => {
@@ -72,11 +72,77 @@ describe('확인 창 초안', () => {
   });
 });
 
+describe('보낼 봉투 · 이어진 명령 · 받아들임(화면들이 같이 쓰는 도우미)', () => {
+  const basis = { epoch: 'e1', rev: 7 };
+  const take: ConfirmCommand = { type: 'payment.take', payload: { orderIds: ['o1'], amount: 1_000, methodKey: 'card' } };
+
+  it('envelopeFor: 연 때의 초안(요청번호 · basis)에 지금 명령 본문과 바탕, 명령이 없거나 종류가 다르면 null', () => {
+    const draft = openCommandDraft(take, basis, { expect: { dueAmount: 1_000 } });
+    const now: ConfirmCommand = { type: 'payment.take', payload: { orderIds: ['o1'], amount: 2_000, methodKey: 'cash' } };
+    expect(envelopeFor(draft, now)).toMatchObject({ requestId: draft.requestId, basis, payload: now.payload, expect: { dueAmount: 1_000 } });
+    expect(envelopeFor(draft, now, { dueAmount: 2_000 })?.expect).toEqual({ dueAmount: 2_000 });
+    expect(envelopeFor(draft, undefined)).toBeNull();
+    expect(envelopeFor(draft, { type: 'stock.issue', payload: { orderId: 'o1', lines: [] } })).toBeNull();
+  });
+
+  it('chainDrafts: 명령마다 새 요청번호, 앞 명령에 dependsOn, basis는 첫 명령', () => {
+    const first = openCommandDraft({ type: 'stock.issue', payload: { orderId: 'o1', lines: [] } }, basis);
+    const [deposit] = chainDrafts(first, [{ command: { type: 'deposit.take', payload: { orderId: 'o1', ruleKey: 'r', lines: [], amount: 5_000, methodKey: 'cash' } }, expect: { depositHeld: 0 } }]);
+    expect(deposit).toMatchObject({ type: 'deposit.take', basis, dependsOn: [first.requestId], expect: { depositHeld: 0 } });
+    expect(deposit!.requestId).not.toBe(first.requestId);
+  });
+
+  it('isAccepted: 적용 · 일부 적용 · 보냄 대기만', () => {
+    expect((['applied', 'partially_applied', 'queued', 'superseded', 'conflict', 'rejected', 'blocked'] as const).map((outcome) => isAccepted({ outcome })))
+      .toEqual([true, true, true, false, false, false, false]);
+  });
+});
+
 describe('실패의 약속', () => {
   it('DomainError는 코드로 가르고, 모르는 실패는 연결 문제로 본다', () => {
     expect(domainErrorCode(new DomainError('NOT_FOUND', '없는 접수'))).toBe('NOT_FOUND');
     expect(domainErrorCode(new Error('fetch failed'))).toBe('NETWORK');
     expect(MONEY_COMMANDS.has('payment.take')).toBe(true);
+  });
+
+  it('돈 명령은 종류마다 정해진 바탕(expect)이 있어야 한다', () => {
+    expect([...MONEY_COMMANDS].sort()).toEqual([
+      'cash.transfer_confirm', 'closing.close', 'deposit.return', 'deposit.take', 'field.add_ticket', 'field.collect', 'field.deposit_return',
+      'order.create', 'payment.take',
+    ]);
+    expect(hasRequiredExpect('payment.take', { dueAmount: 120_000 })).toBe(true);
+    expect(hasRequiredExpect('payment.take', {})).toBe(false);
+    expect(hasRequiredExpect('deposit.return', { dueAmount: 10_000 })).toBe(false);
+    expect(hasRequiredExpect('deposit.return', { depositHeld: 15_000 })).toBe(true);
+    expect(hasRequiredExpect('stock.collect', undefined)).toBe(true);
+  });
+});
+
+describe('새 접수 확정(order.create)의 결과', () => {
+  it('적용된 결과의 새 접수(id · 접수 번호)만 읽고, 모양이 틀리거나 적용되지 않았으면 null', () => {
+    const base: CommandOutcome = { outcome: 'applied', requestId: 'r', rev: 2, asOfRev: 1, epoch: 'E', rebased: false, changes: [] };
+    expect(createdOrder({ ...base, result: { orderId: 'n19', receiptNo: '261226-019' } })).toEqual({ orderId: 'n19', receiptNo: '261226-019' });
+    expect(createdOrder({ ...base, result: { orderId: 19 } })).toBeNull();
+    expect(createdOrder(base)).toBeNull();
+    expect(createdOrder({ ...base, outcome: 'conflict', result: { orderId: 'n19', receiptNo: '261226-019' } })).toBeNull();
+    expect(CHECKOUT_KEYS).toEqual({ later: 'later', other: 'other', otherTeam: 'other_team', noDiscount: 'none', self: 'self' });
+    expect(hasRequiredExpect('order.create', {})).toBe(false);
+    expect(hasRequiredExpect('order.create', { quoteHash: 'quote:x' })).toBe(true);
+  });
+});
+
+describe('일괄 수납(payment.take + 결제 팀)의 충돌', () => {
+  it('충돌의 error.current.orderIds(그사이 받을 금액이 바뀐 팀)만 읽고, 충돌이 아니거나 모양이 틀리면 빈 목록', () => {
+    const base: CommandOutcome = { outcome: 'conflict', requestId: 'r', rev: 2, asOfRev: 1, epoch: 'E', rebased: false, changes: [] };
+    const error = (current: unknown) => ({ code: 'DUE_CHANGED', message: '강지은 팀 45,000원 수납 완료 · 다른 카운터', current });
+    expect(changedOrders({ ...base, error: error({ orderIds: ['n20'] }) })).toEqual(['n20']);
+    expect(changedOrders({ ...base, error: error({ orderIds: ['n20', 7] }) })).toEqual(['n20']);
+    expect(changedOrders({ ...base, error: error('n20') })).toEqual([]);
+    expect(changedOrders(base)).toEqual([]);
+    expect(changedOrders({ ...base, outcome: 'applied', error: error({ orderIds: ['n20'] }) })).toEqual([]);
+    expect(GROUP_PAY_TABS).toEqual({ group: 'group', unpaid: 'unpaid' });
+    expect(hasRequiredExpect('payment.take', { dueByOrder: { o32: 90_000 } })).toBe(false);
+    expect(hasRequiredExpect('payment.take', { dueAmount: 485_000, dueByOrder: { o32: 90_000 } })).toBe(true);
   });
 });
 

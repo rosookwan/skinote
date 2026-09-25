@@ -1,11 +1,12 @@
 // 포스 화면들의 머리줄(ui 3-6): 장부(홈) · 끝 4자리 찾기 · 메뉴(menu_entries, 등급 칸 수) · 더 보기 · 알림 · 관리 · 나가기.
 // 끝 4자리는 어느 화면에서든 숫자판(아래에서 올라오는 판)을 열고, 한 팀이면 그 접수증을 바로 연다(N10).
-// 수거 목록은 카운터의 수거 목록 화면(#/collections/:date)으로 가고, 아직 없는 화면(리프트권 · 확인 필요 · 관리)은 한 문장 알림으로 알린다.
+// 메뉴는 화면 키(screen_key)의 경로로 간다(router의 screenRoute: 수거 목록 #/collections/:date, 관리 #/manage).
+// 아직 없는 화면(리프트권 · 확인 필요 · 사이즈 요청)은 한 문장 알림으로 알린다.
 import { menuFor, type MenuEntryRow, type ReviewItem } from '@skinote/contract';
 import { AppHeader, Keypad, t, useDeviceProfile, type AppHeaderMore } from '@skinote/ui';
 import { useMemo, useState, type ReactNode } from 'react';
 import { useClient, useConfig, useLive } from '../app/client.tsx';
-import { go } from '../app/router.ts';
+import { go, screenRoute } from '../app/router.ts';
 import { say } from '../app/strings.ts';
 import { ChoiceSheet, NoticeDialog, type Choice } from './NoticeDialog.tsx';
 
@@ -19,8 +20,17 @@ export interface PosHeader {
 type Sheet = { title: string; choices: Choice[]; onPick: (key: string) => void };
 type Message = { title: string; lines: string[] };
 
-/** from: 지금 화면. 장부에서 연 접수증은 '‹ 장부'가 뒤로 가기로 그 자리에 돌아간다. */
-export function usePosHeader(from: 'ledger' | 'slip' | 'collection', currentKey?: string): PosHeader {
+/**
+ * 머리줄로 다른 화면에 가기 전에 묻는 곳(저장하지 않은 바꿈이 있는 매장 설정 V8: `미저장 변경 3건`). proceed를 부르면 간다.
+ * 끝 4자리 숫자판 · 알림 · 더 보기 판처럼 화면을 떠나지 않는 것은 묻지 않는다.
+ */
+export type LeaveGuard = (proceed: () => void) => void;
+
+/**
+ * from: 지금 화면. 장부에서 연 접수증은 '‹ 장부'가 뒤로 가기로 그 자리에 돌아간다. currentKey: 켜진 메뉴(관리 화면이면 'management').
+ * guard: 떠나기 전에 묻는 곳(없으면 바로 간다).
+ */
+export function usePosHeader(from: 'ledger' | 'slip' | 'collection' | 'other', currentKey?: string, guard?: LeaveGuard): PosHeader {
   const client = useClient();
   const config = useConfig();
   const profile = useDeviceProfile();
@@ -32,12 +42,13 @@ export function usePosHeader(from: 'ledger' | 'slip' | 'collection', currentKey?
   const reviews = useLive<ReviewItem[]>('reviews', (c) => c.query('reviewList', {}), finding || sheet !== null || message !== null);
   const menu = useMemo(() => (config ? menuFor(config.menuEntries, 'pos', profile.key, config.features, null) : []), [config, profile.key]);
 
+  const leave = (proceed: () => void) => (guard ? guard(proceed) : proceed());
   const openSlip = (orderId: string) => {
     setFinding(false);
     setSheet(null);
     setDigits('');
     setNote(undefined);
-    go({ name: 'slip', orderId }, { state: { fromLedger: from === 'ledger' } });
+    leave(() => go({ name: 'slip', orderId }, { state: { fromLedger: from === 'ledger' } }));
   };
 
   const find = (last4: string) => {
@@ -57,7 +68,8 @@ export function usePosHeader(from: 'ledger' | 'slip' | 'collection', currentKey?
 
   const soon = (label: string) => setMessage({ title: label, lines: [say('screenSoon')] });
   const openMenu = (entry: MenuEntryRow) => {
-    if (entry.screen_key === 'collection_list') go({ name: 'collection', date: null });
+    const route = screenRoute(entry.screen_key);
+    if (route) leave(() => go(route));
     else soon(entry.label);
   };
 
@@ -70,7 +82,7 @@ export function usePosHeader(from: 'ledger' | 'slip' | 'collection', currentKey?
       onPick: (key) => {
         setSheet(null);
         const entry = more.entries.find((e) => e.key === key);
-        if (key === '__exit') go({ name: 'exit' });
+        if (key === '__exit') leave(() => go({ name: 'exit' }));
         else if (entry) openMenu(entry);
       },
     });
@@ -83,12 +95,12 @@ export function usePosHeader(from: 'ledger' | 'slip' | 'collection', currentKey?
       menu={menu}
       alertCount={alerts.length}
       {...(currentKey ? { currentKey } : {})}
-      onHome={() => go({ name: 'ledger', date: null })}
+      onHome={() => leave(() => go({ name: 'ledger', date: null }))}
       onFind={() => { setDigits(''); setNote(undefined); setFinding(true); }}
       onMenu={openMenu}
       onMore={onMore}
       onAlerts={() => setMessage({ title: t('alerts'), lines: alerts.length ? alerts.map((a) => a.message) : [say('noAlerts')] })}
-      onExit={() => go({ name: 'exit' })}
+      onExit={() => leave(() => go({ name: 'exit' }))}
     />
   );
 

@@ -13,6 +13,13 @@ export const APP_STRINGS_KO = {
   titleCollection: '수거 목록 · 스키노트',
   titleExit: '나가기 · 스키노트',
   titleDriver: '야간 수거 목록 · 스키노트',
+  titleNewOrder: '새 접수 · 스키노트',
+  titleGroupPay: '일괄 수납 · 스키노트',
+  titleClosing: '마감 · 스키노트',
+  titleManage: '관리 · 스키노트',
+  titleShopSettings: '매장 설정 · 스키노트',
+  titleDeliveries: '배달 목록 · 스키노트',
+  titleTask: '업무 판 · 스키노트',
 
   // 처음 화면 · 나가기(체험판)
   demoData: '체험 자료',
@@ -26,6 +33,8 @@ export const APP_STRINGS_KO = {
   toStart: '처음 화면',
   toLedger: '장부',
   toList: '수거 목록',
+  /** 휴대폰 업무 판 바닥줄의 돌아가는 버튼(가는 곳의 짧은 말, 문구 표 3-16). */
+  toListShort: '목록',
   demoClock: '체험 시계',
   demoClockAt: '체험 시계 {time}',
   demoClockNote: '시각 이동 · 지연 반납 · 야간 수거 준비 확인용',
@@ -51,6 +60,7 @@ export const APP_STRINGS_KO = {
   back: '이전',
   noAlerts: '새 알림 없음',
   demoNoCall: '체험판 · 전화 연결 없음',
+  noPhone: '전화번호 없음',
   screenSoon: '준비 중인 화면',
   deviceUnavailable: '이 기기에서 사용 불가',
 
@@ -89,6 +99,8 @@ export const APP_STRINGS_KO = {
   listUnreadable: '연결 끊김 · 수거 목록 조회 실패 · 자동 재시도',
   onVan: '차량 재고',
   vanEmpty: '입고 대상 없음',
+  /** 차량 재고 창의 예비권 줄 이름(`예비권 · 야간권 6매`). */
+  spareTickets: '예비권',
   withCount: '{name} · {n}개',
   receiveShort: '입고 · {n}개',
   receiveShortName: '입고',
@@ -105,6 +117,133 @@ export const APP_STRINGS_KO = {
   visitReview: '기록 확인',
   visitAgain: '재방문 {when}',
   visitSave: '저장',
+
+  // ── 둘째 판 화면(docs/design/screens-v2 V1 ~ V9). 글은 채택한 시안 · 문구 표의 말 그대로다. 줄마다 다른 글(팀 · 금액 · 일정)은
+  //    읽기 모델(서버)이 쓰고, 여기에는 화면 틀의 이름표 · 버튼 · 읽는 이름만 둔다. 돌아가기 버튼은 가는 곳 이름(원칙 13).
+  toSlip: '접수증',
+  toDeliveries: '배달 목록',
+  toManage: '관리',
+
+  // V1 반납 확인 창 · 부분 반납
+  refundMethod: '반환 방법',
+  refundMethodGroup: '보증금 반환 방법',
+  piecesOf: '{item} 번호',
+
+  // V9 일정 변경 · 부분 품목
+  changeItems: '변경 품목',
+  returnTime: '반납 시각',
+  returnPlace: '반납 장소',
+  pickupVehicle: '수거 차량',
+  qtyOf: '{item} 수량',
+  summaryChanged: '변경',
+  summaryKept: '유지',
+  placeAgain: '{place} · 장소 다시 선택',
+  pickDay: '다른 날 · 날짜 선택',
+  /** 카운터가 끊겼을 때(sync 8-2: 일정 변경은 연결이 필요한 결정, 문구 표 3-5). */
+  promiseOffline: '일정 변경 불가 · 연결 끊김 · 종이 접수증에 기록',
+
+  // V2 · V3 새 접수
+  newOrder: '새 접수',
+  newOrderSteps: '새 접수 단계',
+  stepItems: '① 품목',
+  stepSchedule: '② 일정',
+  stepPay: '③ 결제',
+  newOrderItemsAria: '새 접수 · 품목',
+  newOrderScheduleAria: '새 접수 · 일정',
+  leader: '대표자',
+  leaderEmpty: '이름',
+  leaderInput: '대표자 {name} · 이름 입력',
+  contact: '연락처',
+  contactInput: '연락처 {phone} · 숫자판',
+  party: '인원',
+  kindGroup: '품목 종류',
+  kindPickHint: '품목 종류 선택',
+  kindPick: '{kind} 선택',
+  selectedItems: '선택 품목',
+  nextToSchedule: '다음 · 일정',
+  nextToPay: '다음 · 결제',
+  pickupMethod: '수령 방법',
+  returnDay: '반납일',
+  orderSummary: '접수 내용',
+  perItemSchedule: '품목별 일정 · 접수 후 일정 변경',
+  reserveAria: '예약 · 수령일 · 시각 선택(전화 예약)',
+  /** 빈 칸의 읽는 이름(대표자 · 연락처를 아직 넣지 않음). */
+  leaderPad: '대표자 · 이름 입력',
+  contactPad: '연락처 · 숫자판',
+  /** `예약 · 수령일 ›` 작은 창(제목은 구분 이름 `전화 예약`, 줄 이름표는 수령일 · 수령 시각 · 수령 장소). */
+  reserveTitle: '전화 예약',
+  pickupDay: '수령일',
+  pickupTime: '수령 시각',
+  pickupPlace: '수령 장소',
+  /** `차량 배달 ›` 작은 창(배달 시각 · 배달 장소). */
+  deliverTitle: '차량 배달',
+  deliverTime: '배달 시각',
+  deliverPlace: '배달 장소',
+
+  // V4 접수 확정 창 · 칸별 수납(칸의 `할인 적용 ›` · 읽는 이름은 부품 문구 t.discountApply · discountApplyFor · methodsFor)
+  payerGroup: '결제 팀',
+  findOtherTeam: '다른 팀 찾기 · 끝 4자리',
+
+  // V5 일괄 수납 · 여러 팀
+  groupPay: '일괄 수납',
+  colSelect: '선택',
+  colTeam: '팀',
+  colItems: '품목',
+  colDue: '받을 금액',
+  pickTeams: '선택 팀',
+  teamSelected: '{team} 선택',
+  partialPick: '부분 결제 품목 선택',
+  addTeam: '팀 추가 · 끝 4자리',
+  excludeAndPay: '제외 후 수납',
+
+  // V6 하루 마감
+  colMethod: '결제 수단',
+  colCount: '건수',
+  colAmount: '금액',
+  cashCheck: '현금 점검',
+  expectedActual: '예상 · 실제',
+  carryOver: '이월 항목 · {n}',
+  closingPrint: '마감표 인쇄',
+  /** 결제 수단 표의 건수 칸(`11건`). */
+  cases: '{n}건',
+  /** 점검 판: 친 금액 칸 이름, 차액 사유 버튼 줄 이름(문구 표 1-2 `예상` · `실제` · `차액` · `사유`). */
+  actual: '실제',
+  diffReason: '사유',
+  closingUnreadable: '연결 끊김 · 마감 조회 실패 · 자동 재시도',
+  /** 체험 자료에 없는 날의 마감(문구 표 1-4 `해당 없음`). */
+  closingNone: '해당 없음',
+  /** 카운터가 끊겼을 때(sync 8-2, 문구 표 3-9). */
+  closingOffline: '마감 · 연결 후 가능',
+  /** 마감표 인쇄(문구 표 3-1 · 3-3의 인쇄 `체험판 미지원`). */
+  demoUnsupported: '체험판 미지원',
+
+  // V7 기사 업무 판 · 배달 목록(판 · 버튼 · 표의 글은 읽기 모델이 쓴다)
+  taskOfTeam: '이 팀 업무',
+  returnPlan: '반납 일정',
+  taskMissing: '업무 없음',
+  taskUnreadable: '연결 끊김 · 업무 판 조회 실패 · 자동 재시도',
+  /** 리프트권 추가 판의 이름표(권종 버튼 줄 · 수량). */
+  ticketKind: '권종',
+  ticketQty: '수량',
+  /** 현장 수납 판의 금액 칸 이름(숫자판으로 넣는 금액). */
+  fieldAmount: '금액',
+
+  // V8 관리 · 매장 설정 · 운영 규칙(머리줄 버튼 `관리`는 부품 문구 t.manage, 카드의 이름표 `변경됨`은 t.changed). 카드 · 바뀐 곳 ·
+  // 바닥줄 · 저장 확인 창 제목(`변경 3건`) · 떠날 때 창 제목(`미저장 변경 3건`) · 거절 까닭은 읽기 모델(shopRules)이 쓴다.
+  shopSettings: '매장 설정',
+  closing: '마감',
+  tabInfo: '매장 정보',
+  tabPlaces: '장소',
+  tabSlots: '반납 타임',
+  tabPricing: '요금 · 할인',
+  tabFleet: '차량 · 직원',
+  tabRules: '운영 규칙',
+  dontSave: '저장 안 함',
+  /** 저장 확인 창의 한 줄(문구 표 3-11). */
+  saveNote: '다음 기록부터 적용 · 지난 기록 · 접수 유지',
+  /** 카운터가 끊겼을 때(ui 6-9, 문구 표 3-11). */
+  settingsOffline: '설정 변경 · 연결 후 가능',
+  settingsUnreadable: '연결 끊김 · 설정 조회 실패 · 자동 재시도',
 } as const;
 
 /** 앱 화면 문구를 부르고 {이름} 자리를 채운다. */

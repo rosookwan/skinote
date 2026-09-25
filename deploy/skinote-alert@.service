@@ -1,0 +1,17 @@
+# 스키노트 알림 자리. skinote-server · skinote-backup이 'failed'가 되면 OnFailure=skinote-alert@%N.service로 부른다
+# (%i = 실패한 유닛 이름). 지금은 journald에 crit 한 줄과 /var/log/skinote/alerts에 한 줄만 남긴다.
+# 감시 · 전화 알림(deployment 8절)을 붙일 때 이 유닛에서 보낸다. deploy.sh --status가 alerts의 마지막 줄을 보인다.
+
+[Unit]
+Description=Skinote alert for %i
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'echo "$$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ) %i failed" >>/var/log/skinote/alerts; echo "<2>skinote-alert: %i failed"'
+SyslogIdentifier=skinote-alert
+NoNewPrivileges=true
+PrivateNetwork=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=-/var/log/skinote

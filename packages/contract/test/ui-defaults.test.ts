@@ -115,6 +115,24 @@ describe('ui-defaults.json', () => {
     expect(featureVisible({ feature_key: null }, {})).toBe(true);
   });
 
+  it('기사 메뉴(plan §8 D4): 배달 목록 · 수거 목록(화면 driver_list) · 차량 재고, 휴대폰은 한 칸이라 우선순위 높은 차량 재고가 남는다', () => {
+    const driver = menuFor(uiDefaults.menu_entries, 'driver', 'driver_tablet', { vehicles: true }, null);
+    expect(driver.map((m) => m.label)).toEqual(['배달 목록', '수거 목록', '차량 재고']);
+    expect(driver.filter((m) => m.screen_key === 'driver_list').map((m) => m.key)).toEqual(['delivery_list', 'collection_list']);
+    const van = driver.find((m) => m.key === 'van_stock')!;
+    for (const list of driver.filter((m) => m.screen_key === 'driver_list')) expect(list.priority).toBeLessThan(van.priority);
+    expect(menuFor(uiDefaults.menu_entries, 'driver', 'driver_tablet', { vehicles: false }, null)).toEqual([]);
+  });
+
+  it('배달 목록(ui 6-5): 기사 태블릿 판 + 휴대폰 판(바탕 태블릿), 배달 도장 사슬 적재 → 지급(칸 머리 배달)', () => {
+    const tablet = resolveLedgerView(uiDefaults.ledger_views, 'delivery_list', 'driver_tablet')!;
+    const phone = resolveLedgerView(uiDefaults.ledger_views, 'delivery_list', 'driver_phone')!;
+    expect(tablet.columns[0]).toMatchObject({ column_key: 'stamp:deliver', header_label: '배달', step_keys: ['load', 'issue'], stamp_rollup_key: 'first_open' });
+    expect(tablet.reorderable).toBe(0);
+    expect(phone.columns.filter((c) => c.column_key !== 'items').reduce((sum, c) => sum + c.min_width_em * 16, 0)).toBe(328);
+    expect(visibleView(tablet, { vehicles: false }).columns.map((c) => c.column_key)).toEqual(['stamp:deliver', 'team', 'items', 'action:call']);
+  });
+
   it('기본 UiConfig', () => {
     const config = defaultUiConfig({ shopName: '체험 매장' });
     expect(config.defaultsRev).toBe(uiDefaults.rev);

@@ -25,18 +25,19 @@
   font-display: block;
 }
 
-/* ── 기기 등급의 크기 변수: profileCssVars(DEVICE_PROFILES[key]) 그대로(2026-09-24에 옮김) ───────────── */
+/* ── 기기 등급의 크기 변수: profileCssVars(DEVICE_PROFILES[key]) 그대로(2026-09-24에 옮김, 2026-09-25 구현 9단계에서 --sn-font-name ·
+   --sn-confirm-section-h · --sn-confirm-payer-h · --sn-panel-max를 더함) ───────────── */
 .sn-root[data-device='pos'],
 .sn-root[data-device='pos_narrow'] {
-  --sn-font-min: 16px; --sn-font-base: 16px; --sn-font-body: 17px; --sn-line-body: 1.45; --sn-font-title: 24px; --sn-font-big: 20px;
+  --sn-font-min: 16px; --sn-font-base: 16px; --sn-font-body: 17px; --sn-line-body: 1.45; --sn-font-title: 24px; --sn-font-big: 20px; --sn-font-name: 22px;
   --sn-target: 52px; --sn-target-repeat: 64px; --sn-primary-h: 56px;
   --sn-header-h: 60px; --sn-title-h: 60px; --sn-footer-h: 72px; --sn-strip-h: 32px; --sn-thead-h: 40px;
   --sn-row-h: 52px; --sn-row2-h: 88px; --sn-group-h: 40px; --sn-now-h: 24px; --sn-pin-h: 64px;
   --sn-inset: 30px; --sn-card-max: 672px; --sn-choice-h: 72px; --sn-desk-gap: 12px; --sn-paper-pad: 18px;
   --sn-slip-title-h: 60px; --sn-slip-fields-h: 40px; --sn-slip-promise-h: 32px; --sn-slip-money-h: 40px; --sn-slip-side: 280px; --sn-slip-gap: 16px;
-  --sn-confirm-title-h: 56px; --sn-confirm-primary-h: 72px; --sn-confirm-pad: 24px; --sn-method-min: 110px;
+  --sn-confirm-title-h: 56px; --sn-confirm-primary-h: 72px; --sn-confirm-pad: 24px; --sn-confirm-section-h: 104px; --sn-confirm-payer-h: 64px; --sn-method-min: 110px;
   --sn-key: 56px; --sn-keypad-display: 56px; --sn-keypad-title: 40px; --sn-keypad-load: 48px; --sn-keypad-side: 268px;
-  --sn-stamp: 48px; --sn-stamp-mini: 24px;
+  --sn-stamp: 48px; --sn-panel-max: 440px; --sn-stamp-mini: 24px;
   --sn-space-xs: 4px; --sn-space-s: 8px; --sn-space-m: 12px; --sn-space-l: 16px;
   --sn-radius-s: 8px; --sn-radius-m: 10px; --sn-radius-paper: 4px;
   --sn-line: 1px; --sn-line-strong: 2px; --sn-line-stamp: 3px;
@@ -44,22 +45,22 @@
 }
 .sn-root[data-device='driver_tablet'],
 .sn-root[data-device='driver_phone'] {
-  --sn-font-min: 16px; --sn-font-base: 16px; --sn-font-body: 18px; --sn-line-body: 1.45; --sn-font-title: 22px; --sn-font-big: 22px;
+  --sn-font-min: 16px; --sn-font-base: 16px; --sn-font-body: 18px; --sn-line-body: 1.45; --sn-font-title: 22px; --sn-font-big: 22px; --sn-font-name: 24px;
   --sn-target: 56px; --sn-target-repeat: 72px; --sn-primary-h: 72px;
   --sn-header-h: 60px; --sn-title-h: 56px; --sn-footer-h: 80px; --sn-strip-h: 32px; --sn-thead-h: 0px;
   --sn-row-h: 60px; --sn-row2-h: 88px; --sn-group-h: 40px; --sn-now-h: 24px; --sn-pin-h: 64px;
   --sn-inset: 16px; --sn-card-max: 672px; --sn-choice-h: 72px; --sn-desk-gap: 8px; --sn-paper-pad: 8px;
   --sn-slip-title-h: 60px; --sn-slip-fields-h: 40px; --sn-slip-promise-h: 32px; --sn-slip-money-h: 40px; --sn-slip-side: 280px; --sn-slip-gap: 16px;
-  --sn-confirm-title-h: 56px; --sn-confirm-primary-h: 80px; --sn-confirm-pad: 16px; --sn-method-min: 110px;
+  --sn-confirm-title-h: 56px; --sn-confirm-primary-h: 80px; --sn-confirm-pad: 16px; --sn-confirm-section-h: 104px; --sn-confirm-payer-h: 0px; --sn-method-min: 110px;
   --sn-key: 56px; --sn-keypad-display: 56px; --sn-keypad-title: 40px; --sn-keypad-load: 48px; --sn-keypad-side: 268px;
-  --sn-stamp: 48px; --sn-stamp-mini: 24px;
+  --sn-stamp: 48px; --sn-panel-max: 440px; --sn-stamp-mini: 24px;
   --sn-space-xs: 4px; --sn-space-s: 8px; --sn-space-m: 12px; --sn-space-l: 16px;
   --sn-radius-s: 8px; --sn-radius-m: 10px; --sn-radius-paper: 4px;
   --sn-line: 1px; --sn-line-strong: 2px; --sn-line-stamp: 3px;
   --sn-accent: var(--sn-purple);
 }
 /* 휴대폰은 이번 판에 없지만 값이 다른 것만 덮어 둔다(profileCssVars(driverPhone)). */
-.sn-root[data-device='driver_phone'] { --sn-font-title: 20px; --sn-font-big: 20px; --sn-primary-h: 64px; --sn-header-h: 56px; --sn-footer-h: 72px; --sn-row-h: 64px; }
+.sn-root[data-device='driver_phone'] { --sn-font-title: 20px; --sn-font-big: 20px; --sn-font-name: 22px; --sn-primary-h: 64px; --sn-header-h: 56px; --sn-footer-h: 72px; --sn-row-h: 64px; }
 
 /* 확인 창 크기(ui 4-5, DeviceProfile의 confirm: 창 폭 = min(화면 폭 − 2 × 옆 여백, 최대 폭), 창 높이 ≤ 화면 높이 − 2 × 위아래 여백).
    앱은 confirmWindow()의 값을 style로 넣는다(ConfirmDialog). measure.mjs가 같은 계산으로 창 폭 · 높이를 확인한다. */

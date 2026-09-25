@@ -129,7 +129,8 @@ export function DayLedgerScreen({ date }: { date: string | null }) {
   // 주 버튼 하나(조건으로 고른 설정 행): 동작 종류로 가른다(새 접수 · 마감은 화면).
   const primary = view && result ? pickPrimaryAction(view.primary_actions, result.activeConditions) : null;
   const onPrimary = () => {
-    if (primary) dispatchAction(primary.action_key, { flow, target: {} });
+    // 마감은 이 장부의 영업일을 연다(자정을 넘겨도 26일 장부면 26일 마감).
+    if (primary) dispatchAction(primary.action_key, { flow, target: {}, date: result?.titleValues.date ?? result?.currentBusinessDate ?? date });
   };
 
   const metrics: FooterMetric[] = view && result
@@ -154,6 +155,7 @@ export function DayLedgerScreen({ date }: { date: string | null }) {
                 active={shown.activeTabKey}
                 onSelect={selectTab}
                 onMore={setTabSheet}
+                {...(shown.closedTag ? { tag: shown.closedTag } : {})}
               />
               <Ledger
                 view={view}

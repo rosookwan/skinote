@@ -7,8 +7,11 @@
 // 끝 4자리 숫자판은 높이 600px 이상 기사 태블릿에서 오른쪽 판, 그보다 낮거나 휴대폰이면 머리줄 '끝 4자리'로 아래 판.
 // 바닥줄: '완료 4 · 전송 대기 0 · 잔여 7 · 차량 재고 …'(카운터는 전송 대기 없음), 쪽 넘김, 주 버튼 하나(기사 보라 '매장 입고 · 14개', 카운터 주황 '인쇄').
 // 화면은 규칙을 계산하지 않는다: 순서 · 도장 · 숫자 · 긴급 · 누를 수 있는지는 읽기 모델 그대로이고, 누르면 명령을 보낸다.
+// 기사의 배달 목록(delivery_list, ui 6-5, #/driver/:date/deliveries)도 같은 틀이다: 배달 시각 묶음, 배달 도장(적재 → 배달), 줄의 팀 칸을
+// 누르면 줄 고르기 대신 업무 판(V7, plan §8 D2)을 열고, 끝 4자리로 찾은 팀도 업무 판으로 간다. 머리줄 메뉴 `배달 목록` · `수거 목록`은
+// 지금 목록이 아닌 쪽만 보인다(plan §8 D4).
 import {
-  ACTION_LABELS, availableActions, draftToEnvelope, menuFor, openCommandDraft, pickPrimaryAction, resolveLedgerView, stampStepMap, visibleView,
+  ACTION_LABELS, availableActions, draftToEnvelope, isAccepted, menuFor, openCommandDraft, pickPrimaryAction, resolveLedgerView, stampStepMap, visibleView,
   type ActionKey, type ConfirmCommand, type LedgerCell, type LedgerRow, type LedgerTabRow, type LedgerViewResult, type PinRow, type StampCell,
   type StampStepRow,
 } from '@skinote/contract';
@@ -19,7 +22,8 @@ import {
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { dispatchAction } from '../app/actions.ts';
 import { useClient, useConfig, useConnection, useLive, usePointerDown } from '../app/client.tsx';
-import { go } from '../app/router.ts';
+import { figureText } from '../app/labels.ts';
+import { go, navState, patchNavState, type DeviceShape } from '../app/router.ts';
 import { say } from '../app/strings.ts';
 import { pressStamp, useConfirmFlow } from '../components/ConfirmFlow.tsx';
 import { ChoiceSheet, NoticeDialog, type Choice } from '../components/NoticeDialog.tsx';
@@ -29,12 +33,25 @@ import { VisitResultDialog } from '../components/VisitResultDialog.tsx';
 
 type Workspace = 'driver' | 'pos';
 
-const tabStorageKey = (workspace: Workspace) => 'skinote.' + workspace + '.collectionTab';
-function storedTab(workspace: Workspace): string | null {
-  try { return window.localStorage.getItem(tabStorageKey(workspace)); } catch { return null; }
+/** 기사 목록의 화면 설정 키: 야간 수거 목록 · 배달 목록(같은 틀, 같은 메뉴 키). */
+export type DriverListKey = 'collection_list' | 'delivery_list';
+
+const tabStorageKey = (workspace: Workspace, viewKey: DriverListKey) => 'skinote.' + workspace + (viewKey === 'delivery_list' ? '.deliveryTab' : '.collectionTab');
+function storedTab(workspace: Workspace, viewKey: DriverListKey): string | null {
+  try { return window.localStorage.getItem(tabStorageKey(workspace, viewKey)); } catch { return null; }
 }
-function storeTab(workspace: Workspace, tab: string): void {
-  try { window.localStorage.setItem(tabStorageKey(workspace), tab); } catch { /* 저장이 막혀도 탭은 돈다 */ }
+function storeTab(workspace: Workspace, viewKey: DriverListKey, tab: string): void {
+  try { window.localStorage.setItem(tabStorageKey(workspace, viewKey), tab); } catch { /* 저장이 막혀도 탭은 돈다 */ }
+}
+
+/**
+ * 기사 머리줄 메뉴의 목록 행(화면 driver_list)이 여는 경로: 메뉴 키 = 목록의 화면 설정 키. 지금 목록은 메뉴에서 빠진다.
+ * 없는 키면 null(부르는 쪽이 `준비 중인 화면`).
+ */
+export function driverListRoute(menuKey: string, date: string, device: DeviceShape): { name: 'driver' | 'deliveries'; date: string; device: DeviceShape } | null {
+  if (menuKey === 'collection_list') return { name: 'driver', date, device };
+  if (menuKey === 'delivery_list') return { name: 'deliveries', date, device };
+  return null;
 }
 
 /** 줄의 팀 칸(이름 · 끝 4자리). */
@@ -65,17 +82,20 @@ interface CollectionScreenParts {
   overlays: ReactNode;
 }
 
-function useCollectionScreen(workspace: Workspace, date: string | null, externalHold: boolean): CollectionScreenParts {
+function useCollectionScreen(workspace: Workspace, viewKey: DriverListKey, date: string | null, externalHold: boolean, device: DeviceShape = 'tablet'): CollectionScreenParts {
   const client = useClient();
   const config = useConfig();
   const profile = useDeviceProfile();
   const { timezone } = useUi();
   const driver = workspace === 'driver';
+  const deliveries = viewKey === 'delivery_list';
   const placement = useKeypadPlacement();
   const sideKeypad = driver && placement === 'side';
+  // 업무 판에서 돌아왔으면 그 쪽 · 그 줄(배달 목록, N9).
+  const restored = useMemo(() => (deliveries ? navState().list ?? null : null), []);
 
-  const [tab, setTab] = useState<string>(() => storedTab(workspace) ?? 'all');
-  const [page, setPage] = useState<number | null>(null);
+  const [tab, setTab] = useState<string>(() => storedTab(workspace, viewKey) ?? 'all');
+  const [page, setPage] = useState<number | null>(restored?.page ?? null);
   const [paging, setPaging] = useState<LedgerPaging | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [pick, setPick] = useState<PendingPick | null>(null);
@@ -93,8 +113,8 @@ function useCollectionScreen(workspace: Workspace, date: string | null, external
   const hold = externalHold || flow.active || pointer || findOpen || visit !== null || call !== null || sheet !== null || vanOpen;
 
   const live = useLive<LedgerViewResult>(
-    ['collection', workspace, date ?? '', tab, profile.key].join(':'),
-    (c) => c.ledgerView('collection_list', { ...(date ? { date } : {}), tabKey: tab, deviceClass: profile.key }),
+    [viewKey, workspace, date ?? '', tab, profile.key].join(':'),
+    (c) => c.ledgerView(viewKey, { ...(date ? { date } : {}), tabKey: tab, deviceClass: profile.key }),
     hold,
   );
   const result = live.data;
@@ -106,9 +126,9 @@ function useCollectionScreen(workspace: Workspace, date: string | null, external
   }, [date, result]);
 
   const view = useMemo(() => {
-    const resolved = config ? resolveLedgerView(config.ledgerViews, 'collection_list', profile.key) : undefined;
+    const resolved = config ? resolveLedgerView(config.ledgerViews, viewKey, profile.key) : undefined;
     return resolved && config ? visibleView(resolved, config.features) : null;
-  }, [config, profile.key]);
+  }, [config, profile.key, viewKey]);
   const steps = useMemo(() => (config ? stampStepMap(config.stampSteps, config.features) : new Map<string, StampStepRow>()), [config]);
   const nowMs = useServerNow(result?.serverTime);
   const rows = useMemo(() => result?.rows ?? [], [result]);
@@ -118,7 +138,15 @@ function useCollectionScreen(workspace: Workspace, date: string | null, external
   const vehicleId = result?.vehicle?.id;
   const vehicleName = result?.vehicle?.label ?? say('vehicle');
 
+  /** 배달 목록: 줄의 팀 칸 · 끝 4자리로 찾은 팀 → 업무 판(V7). 돌아올 쪽 · 줄을 기록에 남긴다. */
+  const openTask = (row: LedgerRow) => {
+    if (!row.taskId) return;
+    patchNavState({ list: { page: shownPage, selected: row.id } });
+    go({ name: 'task', taskId: row.taskId, device }, { state: { fromList: true } });
+  };
+
   const choose = (row: LedgerRow) => {
+    if (deliveries) { openTask(row); return; }
     setSelected(row.id);
     setPage(null); // 고른 줄이 있는 쪽으로(Ledger가 처음 여는 쪽을 고른 줄로 정한다).
   };
@@ -130,7 +158,7 @@ function useCollectionScreen(workspace: Workspace, date: string | null, external
     setSelected(null);
     if (key === tab) return;
     setTab(key);
-    storeTab(workspace, key);
+    storeTab(workspace, viewKey, key);
     setPage(null);
   };
 
@@ -176,7 +204,7 @@ function useCollectionScreen(workspace: Workspace, date: string | null, external
   const send = (command: ConfirmCommand, title: string): Promise<void> => {
     if (!result) return Promise.resolve();
     return client.command(draftToEnvelope(openCommandDraft(command, result.basis))).then((outcome) => {
-      if (outcome.outcome === 'applied' || outcome.outcome === 'partially_applied' || outcome.outcome === 'queued') return;
+      if (isAccepted(outcome)) return;
       flow.notify({ title, lines: [outcome.error?.message ?? say('commandFailed')] });
     }, () => {
       flow.notify({ title, lines: [say('sendFailed')] });
@@ -212,6 +240,7 @@ function useCollectionScreen(workspace: Workspace, date: string | null, external
   };
 
   const toggleRow = (row: LedgerRow) => {
+    if (deliveries) { openTask(row); return; }
     setSelected((current) => (current === row.id ? null : row.id));
   };
 
@@ -245,22 +274,36 @@ function useCollectionScreen(workspace: Workspace, date: string | null, external
   // 주 버튼 하나: 기사 '매장 입고 · 14개'(연결이 필요), 카운터 '인쇄'. 이름은 동작 이름(sys_actions)과 서버가 준 수.
   const primaryRow = view && result ? pickPrimaryAction(view.primary_actions, result.activeConditions) : null;
   const count = result?.primaryFigure?.count ?? 0;
+  // 차량 재고의 수(개 + 권 매, 서버가 센 것). 확인 창의 '매장 입고 · 6개 · 1매'와 같은 셈.
+  const figure = figureText(result?.primaryFigure);
   const primary: PrimaryButtonProps | null = primaryRow ? (() => {
     const key = primaryRow.action_key;
     const name = ACTION_LABELS[key];
     const target = vehicleId ? { vehicleId } : {};
     if (key === 'receive_to_shop') {
-      const alts = count > 0 ? [say('withCount', { name, n: count }), say('receiveShort', { n: count }), name, say('receiveShortName')] : [name, say('receiveShortName')];
+      const full = figure ? name + ' · ' + figure : null;
+      const counted = count > 0 ? [say('withCount', { name, n: count }), say('receiveShort', { n: count })] : [];
+      const alts = [...(full && full !== counted[0] ? [full] : []), ...counted, name, say('receiveShortName')];
       return {
-        label: alts[0],
+        label: alts[0]!,
         alts,
         // 차에 받은 것이 없으면 누를 일이 없다(회색).
-        disabled: count === 0,
+        disabled: !figure,
         onPress: () => {
           // 매장 입고는 연결이 있어야 한다(sync 8-4): 끊겼으면 창을 열지 않고 한 문장.
           if (!connection.online) flow.notify({ title: name, lines: [say('receiveNeedsLink')] });
           else dispatchAction(key, { flow, target });
         },
+      };
+    }
+    // 다음 할 업무(배달 목록: 아직 건네지 않은 첫 배달의 `배달 처리 · 6개`): 읽기 모델의 nextTask 동작을 그 업무로 연다.
+    const task = result?.nextTask;
+    if (key === 'next_step' && task) {
+      return {
+        label: task.label,
+        alts: task.alts,
+        disabled: !task.enabled,
+        onPress: () => { if (task.taskId) dispatchAction(task.actionKey, { flow, target: { ...target, taskId: task.taskId } }); },
       };
     }
     return { label: name, onPress: () => dispatchAction(key, { flow, target }) };
@@ -322,7 +365,7 @@ function useCollectionScreen(workspace: Workspace, date: string | null, external
         nowMs={nowMs}
         page={shownPage}
         onPaging={setPaging}
-        selectedRowId={selected}
+        selectedRowId={deliveries ? restored?.selected ?? null : selected}
         {...(pinSlot ? { pinSlot } : {})}
         onRowPress={toggleRow}
         onStampPress={onStamp}
@@ -351,10 +394,16 @@ function useCollectionScreen(workspace: Workspace, date: string | null, external
     />
   ) : null;
 
-  const menu = useMemo(() => (config && driver ? menuFor(config.menuEntries, 'driver', profile.key, config.features, null) : []), [config, driver, profile.key]);
+  // 지금 목록은 메뉴에서 뺀다(배달 목록에서는 `수거 목록`, 수거 목록에서는 `배달 목록`).
+  const menu = useMemo(
+    () => (config && driver ? menuFor(config.menuEntries, 'driver', profile.key, config.features, null).filter((m) => m.key !== viewKey) : []),
+    [config, driver, profile.key, viewKey],
+  );
   const waitingPins = pins.filter((p) => p.status === 'requested');
   const openDriverMenu = (key: string) => {
+    const listRoute = date ? driverListRoute(key, date, device) : null;
     if (key === 'van_stock') setVanOpen(true);
+    else if (listRoute) go(listRoute);
     else flow.notify({ title: menu.find((m) => m.key === key)?.label ?? '', lines: [say('screenSoon')] });
   };
   const exit = () => go({ name: 'exit', from: 'driver' }, { state: { fromDriver: true } });
@@ -412,8 +461,25 @@ function useCollectionScreen(workspace: Workspace, date: string | null, external
 }
 
 /** 기사 태블릿 · 휴대폰의 오늘 야간 수거 목록(#/driver/:date). */
-export function DriverListScreen({ date }: { date: string }) {
-  const parts = useCollectionScreen('driver', date, false);
+export function DriverListScreen({ date, device = 'tablet' }: { date: string; device?: DeviceShape }) {
+  const parts = useCollectionScreen('driver', 'collection_list', date, false, device);
+  return (
+    <div className="sn-screen">
+      {parts.header}
+      {parts.strip}
+      <div className="sn-desk">
+        <section className="sn-sheet">{parts.sheet}</section>
+        {parts.sidePad}
+      </div>
+      {parts.footer}
+      {parts.overlays}
+    </div>
+  );
+}
+
+/** 기사 태블릿 · 휴대폰의 오늘 배달 목록(#/driver/:date/deliveries, ui 6-5). 줄의 팀 칸 → 업무 판(V7). */
+export function DeliveryListScreen({ date, device = 'tablet' }: { date: string; device?: DeviceShape }) {
+  const parts = useCollectionScreen('driver', 'delivery_list', date, false, device);
   return (
     <div className="sn-screen">
       {parts.header}
@@ -431,7 +497,7 @@ export function DriverListScreen({ date }: { date: string }) {
 /** 카운터의 수거 목록(#/collections/:date, N3): 같은 설정의 pos 판. 순서 바꾸기 · 빨리 확인 · 접수증 · 전화. */
 export function PosCollectionScreen({ date }: { date: string | null }) {
   const header = usePosHeader('collection', 'collection_list');
-  const parts = useCollectionScreen('pos', date, header.active);
+  const parts = useCollectionScreen('pos', 'collection_list', date, header.active);
   return (
     <div className="sn-screen">
       {header.element}

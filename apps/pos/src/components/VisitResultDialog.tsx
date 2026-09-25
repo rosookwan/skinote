@@ -1,5 +1,5 @@
-// 방문 결과 판(ui 6-3 · N11): 기사가 줄을 고르고 '수거 실패'를 누르면 연다. 모두 버튼이다(장갑, 고령):
-//   ① 사유: 고객 부재 · 장소 변경 · 물품 미준비
+// 방문 결과 판(ui 6-3 · N11): 기사가 줄을 고르고 '수거 실패'를 누르면 연다(업무 판 V7에서는 '배달 실패' · '수거 실패'). 모두 버튼이다(장갑, 고령):
+//   ① 사유: 고객 부재 · 장소 변경 · 물품 미준비(배달은 고객 부재 · 장소 변경 · 기타, 읽기 모델이 업무 종류로 거름)
 //   ② 재방문: 오늘 · 내일 · 날짜(→ 재방문 날짜: 모레부터 날짜 버튼)
 //   ③ 재방문 시각: 목록의 반납 타임 시각 · 직접 입력(→ 숫자판으로 시 · 분, 숫자 칸 왼쪽에 '재방문 시각 · 직접 입력')
 //   ④ 기록 확인: 한 줄 요약과 보라 주 버튼 '저장' → task.visit(오프라인이면 전송 대기).
@@ -34,6 +34,8 @@ export interface VisitResultDialogProps {
   slotTimes: readonly string[];
   onSubmit: (payload: CommandPayloads['task.visit']) => void;
   onClose: () => void;
+  /** 판 제목의 동작 이름(업무 종류로: 수거 `수거 실패` · 배달 `배달 실패`, ACTION_LABELS). 없으면 수거 실패. */
+  title?: string;
 }
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
@@ -48,7 +50,7 @@ export function laterThanNow(date: BusinessDate, hhmm: string, nowMs: number, ti
   return Date.parse(zonedTimeToIso(date, Number(h), Number(m), timezone)) >= nowMs + leadMs;
 }
 
-export function VisitResultDialog({ taskId, teamName, last4, today, nowMs, reasons, slotTimes, onSubmit, onClose }: VisitResultDialogProps) {
+export function VisitResultDialog({ taskId, teamName, last4, today, nowMs, reasons, slotTimes, onSubmit, onClose, title }: VisitResultDialogProps) {
   const { profile, viewport, timezone } = useUi();
   const titleId = useId();
   const [trail, setTrail] = useState<Step[]>(['reason']);
@@ -162,7 +164,7 @@ export function VisitResultDialog({ taskId, teamName, last4, today, nowMs, reaso
     <div className="sn-overlay">
       <div className="sn-dialog pos-visit" role="dialog" aria-modal="true" aria-labelledby={titleId} style={{ width: size.widthPx, maxHeight: size.heightPx }}>
         <header className="sn-dialog-head">
-          <h2 id={titleId} className="sn-dialog-title"><TextFit input={{ mode: 'parts', parts: [{ text: t('notCollected'), drop: 0 }, { text: teamName, drop: 1, words: true }, { text: last4, drop: 2 }] }} /></h2>
+          <h2 id={titleId} className="sn-dialog-title"><TextFit input={{ mode: 'parts', parts: [{ text: title ?? t('notCollected'), drop: 0 }, { text: teamName, drop: 1, words: true }, { text: last4, drop: 2 }] }} /></h2>
         </header>
         <div className="sn-dialog-body">
           {question ? <p className="pos-visit-question">{question}</p> : null}

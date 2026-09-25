@@ -94,24 +94,37 @@ export function Slip({ slip, view, steps, nowMs, itemsPage, onItemsPaging, onSta
   // 지연된 일정(반납이 일정 시각을 넘김)은 종류 말에 '지연'을 붙이고('반납 지연 12:00 · 매장', 시각과 한 조각이라 빠지지 않음)
   // 일정 줄을 지연 색으로.
   const promiseLate = slip.promises.lines.some((line) => isLate(line.lateAt, nowMs));
-  const promiseParts: TextPart[] = slip.promises.distinct > 1
+  // 한 종류의 일정이 품목 · 수량으로 나뉘었으면(일정 변경) 그 종류는 '반납 일정 2건 ›'(수는 읽기 모델의 count).
+  const perKind = slip.promises.lines.some((line) => line.count !== undefined);
+  const promiseParts: TextPart[] = slip.promises.distinct > 1 && !perKind
     ? [{ text: t('promisesMany', { n: slip.promises.distinct }), drop: 0 }]
     : slip.promises.lines.flatMap((line) => {
         const kind = t(line.kind === 'pickup' ? 'pickup' : 'giveBack');
         const word = isLate(line.lateAt, nowMs) ? t('lateKind', { label: kind }) : kind;
+        if ((line.count ?? 1) > 1) return [{ text: t('promisesKind', { label: word, n: line.count ?? 1 }), drop: 0 }];
+        // 날 말 + 시각은 읽기 모델의 글(영업일로 센 것, 심야 `24:00`)이 있으면 그것, 없으면 at에서 센다.
         return [
-          { text: word + ' ' + dayOf(line.at) + formatTime(line.at, timezone), drop: 0 },
+          { text: word + ' ' + (line.when ?? dayOf(line.at) + formatTime(line.at, timezone)), drop: 0 },
           ...line.parts.map((p) => ({ ...p, drop: Math.max(1, p.drop) })),
         ];
       });
 
   // 돈 줄: 미수는 늘 이 팀 몫이다. 이 팀이 다른 팀 몫까지 낼 때만 굵은 글이 '받을 돈'(합)이고, 나눔은 앞 글에 적는다.
+  // 맡은 보증금은 청구 · 미수와 따로 한 조각('보증금 15,000원'). 좁으면 수단(계좌이체 12/24) → 청구 → 보증금 → 수납 순으로 빠진다.
   const money = slip.money;
+  const others = money.paidForOthers;
   const moneyParts: TextPart[] = [
-    { text: t('charged', { amount: formatWon(money.charged) }), drop: 3 },
+    { text: t('charged', { amount: formatWon(money.charged) }), drop: 4 },
     { text: t('paid', { amount: formatWon(money.paid) }), drop: 2 },
-    // 오늘 받은 돈은 수단만, 다른 날 받은 돈(선입금)은 날짜를 붙인다('계좌이체 12/24').
-    ...money.payments.slice(0, 1).map((p) => ({ text: p.date === slip.businessDate ? p.methodLabel : p.methodLabel + ' ' + p.date.slice(5).replace('-', '/'), drop: 4 })),
+    // 다른 팀 몫까지 낸 팀: `대납 395,000원 · 카드 485,000원`(한 번에 낸 실제 금액). 아니면 오늘 받은 돈은 수단만, 다른 날 받은 돈(선입금)은
+    // 날짜를 붙인다('계좌이체 12/24').
+    ...(others
+      ? [
+        { text: t('forOthers', { amount: formatWon(others.amount) }), drop: 3 },
+        { text: t('methodAmount', { method: others.methodLabel, amount: formatWon(others.total) }), drop: 5 },
+      ]
+      : money.payments.slice(0, 1).map((p) => ({ text: p.date === slip.businessDate ? p.methodLabel : p.methodLabel + ' ' + p.date.slice(5).replace('-', '/'), drop: 5 }))),
+    ...(money.depositHeld ? [{ text: t('depositHeld', { amount: formatWon(money.depositHeld) }), drop: 3 }] : []),
     ...(money.promisedBy ? [{ text: t('promisedBy', { team: money.promisedBy.teamName, amount: formatWon(money.promisedBy.amount) }), drop: 1 }] : []),
     ...(money.collectTotal !== undefined && money.due > 0 ? [{ text: t('due', { amount: formatWon(money.due) }), drop: 1 }] : []),
     ...(money.collectForOthers ? [{ text: t('forOthers', { amount: formatWon(money.collectForOthers) }), drop: 1 }] : []),

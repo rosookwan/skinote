@@ -22,15 +22,17 @@ coverage/
 
 # 가져오기 · 내보내기 · 암호화한 백업 파일(운영 자료는 저장소 밖 폴더에서만, deployment.md 8절)
 /data/
+/packages/server/data/
 /exports/
 *.csv
 *.xlsx
 *.age
 *.enc
 
-# 비밀 · 개인 설정
+# 비밀 · 개인 설정(deploy/.env.local: 배포할 서버 · 주소, 저장소에 올리지 않음)
 .env
 .env.*
+deploy/.env.local
 .claude/settings.local.json
 
 # 운영체제 · 편집기

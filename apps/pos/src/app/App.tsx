@@ -2,11 +2,20 @@
 // 기사 화면을 '휴대폰 모양으로 보기'(#/driver/:date?device=phone)로 넓은 화면에서 열면, 휴대폰 검사 크기(360×640) 틀 안에
 // 휴대폰 등급으로 그린다(창이 그 틀보다 작으면 잰 크기 그대로).
 import { DEVICE_PROFILES, DeviceProfileProvider, pickDeviceClass, useViewportSize } from '@skinote/ui';
-import { useEffect, type ReactNode } from 'react';
-import { PosCollectionScreen, DriverListScreen } from '../screens/CollectionListScreen.tsx';
+import { lazy, Suspense, useEffect, type ReactNode } from 'react';
+import { DeliveryListScreen, DriverListScreen, PosCollectionScreen } from '../screens/CollectionListScreen.tsx';
 import { DayLedgerScreen } from '../screens/DayLedgerScreen.tsx';
 import { OrderSlipScreen } from '../screens/OrderSlipScreen.tsx';
 import { ExitScreen, StartScreen } from '../screens/PlainScreens.tsx';
+
+// 둘째 판 화면(새 접수 · 일괄 수납 · 마감 · 관리 · 매장 설정 · 기사 업무 판)은 따로 묶어 처음 열 때 받는다(첫 화면 묶음을 작게, 설치한 앱은
+// 서비스 워커가 모두 미리 받아 둔다). 장부 · 접수증 · 수거 목록 · 처음 · 나가기는 첫 묶음이다.
+const NewOrderScreen = lazy(() => import('../screens/NewOrderScreen.tsx').then((m) => ({ default: m.NewOrderScreen })));
+const GroupPayScreen = lazy(() => import('../screens/GroupPayScreen.tsx').then((m) => ({ default: m.GroupPayScreen })));
+const ClosingScreen = lazy(() => import('../screens/ClosingScreen.tsx').then((m) => ({ default: m.ClosingScreen })));
+const ManageScreen = lazy(() => import('../screens/ManageScreen.tsx').then((m) => ({ default: m.ManageScreen })));
+const ShopSettingsScreen = lazy(() => import('../screens/ShopSettingsScreen.tsx').then((m) => ({ default: m.ShopSettingsScreen })));
+const TaskSheetScreen = lazy(() => import('../screens/TaskSheetScreen.tsx').then((m) => ({ default: m.TaskSheetScreen })));
 import { useClient, useConfig } from './client.tsx';
 import { go, useRoute, type Route } from './router.ts';
 import { say } from './strings.ts';
@@ -16,20 +25,48 @@ const TITLES: Record<Route['name'], string> = {
   start: say('appName'),
   ledger: say('titleLedger'),
   slip: say('titleSlip'),
+  newOrder: say('titleNewOrder'),
+  groupPay: say('titleGroupPay'),
+  closing: say('titleClosing'),
+  manage: say('titleManage'),
+  shopSettings: say('titleShopSettings'),
   collection: say('titleCollection'),
   exit: say('titleExit'),
   driver: say('titleDriver'),
+  deliveries: say('titleDeliveries'),
+  task: say('titleTask'),
   unknown: say('appName'),
 };
 
+/** 기사 기기의 화면(역할 driver: 기사 등급 · 기사 기기의 연결 · 전송 대기). */
+const isDriverRoute = (route: Route) => route.name === 'driver' || route.name === 'deliveries' || route.name === 'task' || (route.name === 'exit' && route.from === 'driver');
+
 function Screen({ route }: { route: Route }) {
+  // 따로 받는 화면을 받는 동안은 빈 화면(로컬 파일이라 한순간).
+  return <Suspense fallback={null}><RouteScreen route={route} /></Suspense>;
+}
+
+function RouteScreen({ route }: { route: Route }) {
   switch (route.name) {
     case 'start': return <StartScreen />;
     case 'ledger': return <DayLedgerScreen key={'ledger:' + (route.date ?? '')} date={route.date} />;
     case 'slip': return <OrderSlipScreen key={'slip:' + route.orderId} orderId={route.orderId} />;
+    // 새 접수 ① 품목 · ② 일정(V2 · V3): 두 단계가 한 화면이라 단계를 오가도 초안 · 연 종류가 그대로다(key 하나).
+    case 'newOrder': return <NewOrderScreen key="new" step={route.step} />;
+    // 일괄 수납(V5): 다른 팀 몫까지 받을 팀의 접수증에서 연다.
+    case 'groupPay': return <GroupPayScreen key={'pay:' + route.orderId} orderId={route.orderId} />;
+    // 하루 마감(V6): 장부의 주 버튼 `마감`(마지막 반납 타임 뒤) · 관리 → 마감.
+    case 'closing': return <ClosingScreen key={'closing:' + (route.date ?? '')} date={route.date} />;
+    // 관리(카드 목록: 매장 설정 · 마감)와 매장 설정(V8은 운영 규칙 탭, 다른 탭은 준비 중인 화면). 탭마다 새로 그린다(저장하지 않은 바꿈은
+    // 떠나기 전에 `미저장 변경 N건` 창이 묻는다).
+    case 'manage': return <ManageScreen />;
+    case 'shopSettings': return <ShopSettingsScreen key={'settings:' + route.tab} tab={route.tab} />;
+    // 기사 배달 목록(ui 6-5)과 업무 판(V7): 목록의 팀 칸 → 업무 판, 바닥줄 `‹ 배달 목록`으로 그 쪽 그 줄에 돌아온다.
+    case 'deliveries': return <DeliveryListScreen key={'deliveries:' + route.date} date={route.date} device={route.device} />;
+    case 'task': return <TaskSheetScreen key={'task:' + route.taskId} taskId={route.taskId} device={route.device} />;
     case 'collection': return <PosCollectionScreen key={'collection:' + (route.date ?? '')} date={route.date} />;
     case 'exit': return <ExitScreen from={route.from ?? 'pos'} />;
-    case 'driver': return <DriverListScreen key={'driver:' + route.date} date={route.date} />;
+    case 'driver': return <DriverListScreen key={'driver:' + route.date} date={route.date} device={route.device} />;
     case 'unknown': return null;
   }
 }
@@ -52,7 +89,7 @@ export function App() {
   const config = useConfig();
   const client = useClient();
   const viewport = useViewportSize(PHONE);
-  const driverSide = route.name === 'driver' || (route.name === 'exit' && route.from === 'driver');
+  const driverSide = isDriverRoute(route);
   // 이 화면이 어느 기기의 것인지 클라이언트에 알린다(체험판: 기사 기기의 보냄 대기 · 연결은 기사 화면에서만 보인다).
   // 화면이 처음 읽기 전에 알아야 하므로 그리는 중에 부른다(같은 값이면 아무 일도 없다).
   client.setDevice?.(driverSide ? 'driver' : 'counter');
@@ -62,7 +99,8 @@ export function App() {
   }, [route.name]);
   const timezone = config?.timezone ?? 'Asia/Seoul';
   // 휴대폰 틀은 창이 휴대폰보다 넓을 때만(기사 역할로 잰 크기가 태블릿 등급일 때, DeviceProfile의 등급 고르기와 같은 기준).
-  const phoneFrame = route.name === 'driver' && route.device === 'phone' && pickDeviceClass(viewport, 'driver') !== 'driver_phone' && viewport.height >= PHONE.height;
+  const phoneShape = (route.name === 'driver' || route.name === 'deliveries' || route.name === 'task') && route.device === 'phone';
+  const phoneFrame = phoneShape && pickDeviceClass(viewport, 'driver') !== 'driver_phone' && viewport.height >= PHONE.height;
   if (phoneFrame) {
     return (
       <PhoneStage timezone={timezone}>

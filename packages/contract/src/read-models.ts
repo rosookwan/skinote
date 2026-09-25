@@ -49,6 +49,11 @@ export interface StampCell {
   stepKey: string;
   state: StampStateKey;
   /**
+   * 이 도장을 이 자리에서 부르는 이름(도장 글자 · 읽는 이름). 없으면 단계 설정의 이름 · 도장 글자. 기사 기기의 차량 배달은 매장의 `지급`과
+   * 같은 단계지만 `배달`이다(sys_movement_kinds deliver `지급·배달`, 문구 표 결정 4: 도장 `배달` / `16:57`, 읽는 이름 `배달 미처리`).
+   */
+  label?: string;
+  /**
    * done: 도장을 찍은 시각. shows_time 단계는 한 줄('받음 21:42', 칸 5.5em), 그 밖의 단계는 도장 안 두 줄(지급 / 15:42, 칸 4em).
    * delegated: 약속 시각('차량 22:00').
    */
@@ -224,6 +229,13 @@ export interface LedgerViewResult extends ReadModelHead {
   vehicle?: { id: string; label: string };
   vehicleLoad?: VehicleLoad;
   nightPrep?: NightPrepNotice;
+  /**
+   * 다음 할 업무(주 버튼 next_step, 배달 목록): 아직 건네지 않은 첫 배달 업무와 그 동작 · 이름(`배달 처리 · 6개`). 실은 것이 없거나 남은
+   * 배달이 없으면 enabled false(`배달 처리`, taskId 없음).
+   */
+  nextTask?: { taskId?: string; actionKey: ActionKey; label: string; alts: string[]; enabled: boolean };
+  /** 이 영업일을 이미 마감했으면 제목 옆 이름표(`마감 완료`): 마감 뒤의 기록은 다음 날 마감에 든다. */
+  closedTag?: string;
   /** 방문 결과 판(못 받음)의 이유(reason_codes의 visit_result, 매장 설정). 수거 목록에만. */
   visitReasons?: ReasonCode[];
 }
@@ -261,9 +273,24 @@ export interface SlipLine {
 
 /** 약속 요약 한 줄: '받기 16:00 매장 · 돌려주기 22:00 설천 · 1호차'. */
 export interface PromiseSummary {
-  /** 줄마다 약속이 다르면 몇 가지인지('약속 3가지 ›'). 1이면 lines를 그대로 쓴다. */
+  /** 줄마다 일정이 다르면 몇 가지인지('일정 3건'). 1이면 lines를 그대로 쓴다. */
   distinct: number;
-  lines: { kind: 'pickup' | 'return'; at: IsoTime; parts: FitPart[]; lateAt?: IsoTime }[];
+  /**
+   * 종류마다 한 줄(수령 · 반납). 한 종류의 일정이 품목 · 수량으로 나뉘었으면(일정 변경 N2) count가 그 수이고, 화면은 그 종류를
+   * '반납 일정 2건 ›'으로 줄여 쓴다(at · parts는 가장 이른 일정).
+   */
+  lines: {
+    kind: 'pickup' | 'return';
+    at: IsoTime;
+    /**
+     * 날 말 + 시각 글(영업일로 센 것: 오늘이면 `22:00`, 심야 반납은 `24:00`, 다른 날이면 `내일 09:00`). 있으면 화면은 at에서 세지 않고 이
+     * 글을 쓴다(기준 시각 전의 새벽이 `오늘 00:00`으로 아침처럼 읽히지 않게).
+     */
+    when?: string;
+    parts: FitPart[];
+    lateAt?: IsoTime;
+    count?: number;
+  }[];
 }
 
 /** 접수증의 돈 줄: '청구 225,000원 · 수납 105,000원(계좌이체 12/24) · 미수 120,000원'. */
@@ -278,6 +305,13 @@ export interface SlipMoney {
   collectForOthers?: number;
   /** 대신 낼 몫이 있을 때 이 창구에서 받을 돈(이 팀 미수 + 대신 낼 몫, '받을 돈 150,000원'). 미수는 늘 이 팀 몫만이다. */
   collectTotal?: number;
+  /** 맡고 있는 보증금(청구 · 미수에 넣지 않고 따로: '보증금 15,000원', data-model 4-12). 없으면 조각이 없다. */
+  depositHeld?: number;
+  /**
+   * 이 팀이 이미 다른 팀 몫까지 낸 돈(일괄 수납 뒤): `대납 395,000원 · 카드 485,000원`(대납한 몫 · 그 결제의 수단과 실제 금액). 다시 인쇄하거나
+   * 손님께 설명할 때 한 번에 낸 돈이 보인다. 없으면 조각이 없다.
+   */
+  paidForOthers?: { amount: number; methodLabel: string; total: number };
   /** 이 시각이 지나면 미수가 빨강. */
   lateAt?: IsoTime;
 }
@@ -292,8 +326,18 @@ export interface ChecklistItem {
   figure?: PrimaryFigure;
   /** 둘째 줄 품목 요약('스키 2 · 보드 1 · 헬멧 3 · 야간권 3매', 넘치면 '외 N종'). */
   items?: ItemCount[];
+  /**
+   * 둘째 줄 조각(품목이 아닌 것): 반납의 장소 · 방법('설천 주차장 · 차량 수거', 일정이 둘이면 '설천 주차장 · 솔마을 두솔동').
+   * items가 있으면 items를 쓴다.
+   */
+  second?: FitPart[];
   /** 이 시각이 지나면 이 일이 늦음(빨강, '늦음'). */
   lateAt?: IsoTime;
+  /**
+   * 이 단계의 접수 단위 도장(장부의 팀 한 줄 도장과 같은 모음). 있으면 처리 현황의 줄을 눌러 그 단계를 접수 전체로 연다
+   * (차량이 할 반납이면 먼저 '1호 차량 수거 예정 · 22:00'과 '매장 반납 처리', 매장 반납이면 모든 줄의 반납 창 — spec 3-1).
+   */
+  stamp?: StampCell;
 }
 
 /** 다음 할 일(주황 큰 버튼 하나): '지급 도장 · 6개', '차량 적재 6개', '수납 · 120,000원'. */
@@ -320,6 +364,11 @@ export interface OrderSlip extends ReadModelHead {
   nextStep: NextStep | null;
   /** 접수 단위 능력(열린 차량 업무 등). */
   activeConditions: ConditionKey[];
+  /**
+   * 이 팀이 다른 팀 몫까지 받을 팀이면(결제 예정 팀이 딸림): 수납은 보통 수납 창이 아니라 일괄 수납 화면(V5)을 연다(ui 6-7).
+   * teams는 이 팀을 포함한 팀 수, amount는 처음 고른 합(받을 금액).
+   */
+  groupPay?: { teams: number; amount: number };
 }
 
 /** 끝 4자리 찾기 결과. 하나면 그 접수증을 바로 연다. */

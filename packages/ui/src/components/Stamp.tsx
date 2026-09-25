@@ -1,6 +1,7 @@
 // 도장 칸(ui 3-2, 5 Stamp · StampGroup). 칸 전체가 누르는 곳이고, 동그라미는 그림일 뿐이다.
 // 일곱 상태: todo 빈 동그라미 · partial 주황 테두리 · done 도장 주홍 · na — · blocked 회색 자물쇠 · scheduled 파란 예정 ·
 // delegated 보라 '차량 22:00'. 전송 대기(연결 끊김 중 처리한 도장)는 점선 도장이다. 도장 주홍은 지연 빨강이 아니다.
+// 도장 글자 · 읽는 이름은 단계 설정에서 오고, 읽기 모델이 그 자리의 이름(StampCell.label, 기사 기기의 `배달`)을 주면 그것이다.
 import type { StampCell, StampStepRow } from '@skinote/contract';
 import type { MouseEvent } from 'react';
 import { useUi } from '../context.tsx';
@@ -29,7 +30,7 @@ export type StampSize = 'full' | 'mini' | 'word';
  * 상태 이름(pay_state.partial '부분 수납')과 같은 순서로 쓰고, 읽는 이름(stampLabel)은 단계 이름이 앞이다('수납 부분').
  */
 export function stampWord(cell: StampCell, step: StampStepRow | undefined): string {
-  const label = step?.stamp_text ?? step?.label ?? '';
+  const label = cell.label ?? step?.stamp_text ?? step?.label ?? '';
   switch (cell.state) {
     case 'todo':
     case 'blocked': return label;
@@ -38,13 +39,13 @@ export function stampWord(cell: StampCell, step: StampStepRow | undefined): stri
     case 'na': return '—';
     // 예정은 장부 도장 칸과 같은 '예정' 한 말(앞 글이 이미 '이정호 팀 결제 예정'이라 '수납 예정'을 겹쳐 쓰지 않는다).
     case 'scheduled': return t('scheduled');
-    case 'delegated': return t('stampDelegated', { label });
+    case 'delegated': return cell.progress ? t('stampDelegatedPartial', { label, done: cell.progress.done, total: cell.progress.total }) : t('stampDelegated', { label });
   }
 }
 
 /** 도장 칸의 읽는 이름('반납 완료', '지급 2 / 4'). */
 export function stampLabel(cell: StampCell, step: StampStepRow | undefined): string {
-  const label = step?.label ?? '';
+  const label = cell.label ?? step?.label ?? '';
   switch (cell.state) {
     case 'todo': return t('stampTodo', { label });
     case 'partial': return cell.progress ? t('stampPartial', { label, done: cell.progress.done, total: cell.progress.total }) : t('stampPartialSome', { label });
@@ -52,14 +53,15 @@ export function stampLabel(cell: StampCell, step: StampStepRow | undefined): str
     case 'na': return t('stampNa', { label });
     case 'blocked': return t('stampBlocked', { label });
     case 'scheduled': return t('stampScheduled', { label });
-    case 'delegated': return t('stampDelegated', { label });
+    case 'delegated': return cell.progress ? t('stampDelegatedPartial', { label, done: cell.progress.done, total: cell.progress.total }) : t('stampDelegated', { label });
   }
 }
 
 /** 도장 그림만(누르는 곳은 부르는 쪽의 칸). */
 export function StampMark({ cell, step, size = 'full', labelled = false }: { cell: StampCell; step: StampStepRow | undefined; size?: StampSize; labelled?: boolean }) {
   const { timezone } = useUi();
-  const text = step?.stamp_text ?? step?.label ?? '';
+  // 이 자리에서 부르는 이름이 있으면 그것(기사 기기의 차량 배달 = `배달`), 없으면 단계의 도장 글자.
+  const text = cell.label ?? step?.stamp_text ?? step?.label ?? '';
   const classes = ['sn-stamp', 'is-' + cell.state, size === 'mini' ? 'is-mini' : size === 'word' ? 'is-word' : '', cell.pending ? 'is-pending' : '', cell.processing ? 'is-processing' : '']
     .filter(Boolean)
     .join(' ');
@@ -90,10 +92,10 @@ export function StampMark({ cell, step, size = 'full', labelled = false }: { cel
     case 'scheduled':
       return <span className={classes}>{size === 'mini' ? null : t('scheduled')}</span>;
     case 'delegated':
-      // '차량 22:00'을 두 줄로(도장 칸 4em 안에 들어가게).
+      // '차량 22:00'을 두 줄로(도장 칸 4em 안에 들어가게). 일부가 이미 돌아왔으면 윗줄이 돌아온 수('2/3', 부분 반납 뒤 나머지는 차량).
       return (
-        <span className={classes}>
-          {size === 'mini' ? null : <span className="sn-stamp-text">{t('vehicle')}</span>}
+        <span className={classes + (cell.progress ? ' has-progress' : '')}>
+          {size === 'mini' ? null : <span className="sn-stamp-text">{cell.progress ? cell.progress.done + '/' + cell.progress.total : t('vehicle')}</span>}
           {size === 'mini' ? null : <span className="sn-stamp-time">{cell.at ? formatTime(cell.at, timezone) : (cell.delegatedTo ?? '')}</span>}
         </span>
       );
@@ -146,7 +148,7 @@ export function StampGroup({ members, nextStepKey, onPress }: StampGroupProps) {
   const classes = 'sn-stamp-cell is-collapsed is-' + shown.cell.state;
   const body = (
     <>
-      <span className="sn-stamp-name">{shown.step?.short_label ?? shown.step?.label ?? ''}</span>
+      <span className="sn-stamp-name">{shown.cell.label ?? shown.step?.short_label ?? shown.step?.label ?? ''}</span>
       <StampMark cell={shown.cell} step={shown.step} size="mini" />
     </>
   );

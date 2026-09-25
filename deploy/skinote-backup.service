@@ -1,0 +1,51 @@
+# 스키노트 날마다 백업(한 번 돌고 끝남). skinote-backup.timer가 새벽 04:00(Asia/Seoul)에 부른다.
+# 모든 데이터베이스를 /var/lib/skinote/backups/<날짜>/에 VACUUM INTO 사본 + quick_check + sha256으로 남기고 가장 새 14일을 둔다.
+# 디스크 여유가 모자라면 쓰지 않고 실패한다(SKINOTE_BACKUP_RESERVE_MB). 실패하면 알림 유닛(skinote-alert@)이 돈다.
+# 손으로: sudo systemctl start skinote-backup.service && journalctl -u skinote-backup -n 20
+
+[Unit]
+Description=Skinote daily database backup
+Documentation=file:///srv/skinote/current/deploy/README.md
+After=skinote-server.service
+OnFailure=skinote-alert@%N.service
+
+[Service]
+Type=oneshot
+User=skinote
+Group=skinote
+EnvironmentFile=/etc/skinote/skinote.env
+Environment=NODE_ENV=production
+WorkingDirectory=/srv/skinote/current/server
+ExecStart=/usr/local/bin/node --disable-warning=ExperimentalWarning bin/backup.js
+SyslogIdentifier=skinote-backup
+UMask=0077
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=30min
+MemoryMax=384M
+
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+PrivateNetwork=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RemoveIPC=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+ReadWritePaths=/var/lib/skinote

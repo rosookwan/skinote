@@ -6,6 +6,8 @@ import type { LedgerViewResult } from '@skinote/contract';
 import { formatDateTitle, formatTime, useUi } from '@skinote/ui';
 import { useEffect, useState } from 'react';
 import { useClient, useConfig, useConnection, useLive } from '../app/client.tsx';
+import { clearClosingDraft } from '../app/closing-draft.ts';
+import { clearNewOrder } from '../app/new-order-draft.ts';
 import { back, go, navState } from '../app/router.ts';
 import { say } from '../app/strings.ts';
 import { NoticeDialog } from '../components/NoticeDialog.tsx';
@@ -95,6 +97,9 @@ export function ExitScreen({ from = 'pos' }: { from?: 'pos' | 'driver' }) {
             primary: true,
             onPress: () => {
               client.reset?.();
+              // 이 기기에 둔 화면 초안(새 접수 · 마감 셈)도 옛 자료의 것이라 함께 버린다.
+              clearNewOrder();
+              clearClosingDraft();
               setAsking(false);
               setDone(say('resetDone'));
             },
