@@ -6,6 +6,8 @@
  *   그래서 한 번 연 뒤에는 연결이 없어도 앱이 열린다(자료는 FixtureClient가 브라우저 저장소에 둔다).
  * - 새 판: 새 서비스 워커는 받아 둔 뒤 기다리고(열린 창이 모두 닫히면 바뀐다), 옛 판의 저장은 바뀔 때 지운다.
  *   앱이 '지금 바꾸기'를 보내면({ type: 'skinote:apply-update' }) 바로 바꾼다(열린 창이 없고 보냄 대기가 0일 때만 보내기로, ui 7절).
+ * - 서버 API(범위 안의 api/ 아래, 계획 work/impl-server/plan.md 6-5)는 건드리지 않는다: 저장하지도 감싸지도 않는다(세션 · 조회는 늘
+ *   서버에서, 알림 연결(SSE)은 서비스 워커를 거치지 않고 바로).
  */
 const VERSION = '__SKINOTE_VERSION__';
 const FILES = __SKINOTE_FILES__;
@@ -43,6 +45,7 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   const scope = self.registration.scope;
   if (url.origin !== self.location.origin || !url.href.startsWith(scope)) return;
+  if (url.pathname.startsWith(new URL('api/', scope).pathname)) return;
   const bare = url.origin + url.pathname;
   const shell = request.mode === 'navigate' && (bare === scope || bare === SHELL);
   event.respondWith((async () => {

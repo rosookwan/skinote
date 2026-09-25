@@ -190,7 +190,7 @@ export function TaskSheetScreen({ taskId, device }: { taskId: string; device: De
         <div className="pos-plain">
           <main className="pos-card">
             <h1 className="pos-card-title">{say('taskOfTeam')}</h1>
-            {live.error ? <p className="pos-card-line" role="status">{live.error === 'NOT_FOUND' ? say('taskMissing') : say('taskUnreadable')}</p> : null}
+            {live.error ? <p className="pos-card-line" role="status">{live.error === 'NOT_FOUND' ? say('taskMissing') : live.error === 'FORBIDDEN' ? say('deviceUnavailable') : say('taskUnreadable')}</p> : null}
             <div className="pos-card-row">
               <button type="button" className="sn-button" onClick={toList}><Icon name="left" /><span>{backLabel}</span></button>
             </div>

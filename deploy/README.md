@@ -1,6 +1,7 @@
-# 서버 배포(첫 판: 상태 확인 · 마이그레이션 · 날마다 백업)
+# 서버 배포(상태 확인 · 마이그레이션 · 날마다 백업 · 장부 API · 매장 명령줄)
 
-작성 2026-09-25. 스키노트 중앙 서버의 **첫 뼈대**를 여러 앱이 함께 쓰는 VPS 한 대에 올리는 방법이다. 설계는 [deployment.md](../docs/architecture/deployment.md)(ADR-19 클라우드 중심)이고, 이 문서는 그 가운데 지금 만든 부분만 다룬다. 서버 주소 · IP · 계정 정보는 저장소에 적지 않는다(공개 저장소). 주소는 배포할 때 환경 변수로 준다.
+작성 2026-09-25. 고침 2026-09-26: 서버 장부(API · 저장소)가 붙었다 — 릴리스에 저장소 · 도메인 · 계약 패키지와 서버 표시를 찍은 앱 뼈대, 비밀값 파일,
+앱 주소(`SKINOTE_PUBLIC_ORIGIN`), 앞단 표, 관리 소켓 자리(`/run/skinote`), 배포 전 끝까지 시험 기록, 매장 명령줄(`--shop-cli`, 9절). 스키노트 중앙 서버의 **첫 뼈대**를 여러 앱이 함께 쓰는 VPS 한 대에 올리는 방법이다. 설계는 [deployment.md](../docs/architecture/deployment.md)(ADR-19 클라우드 중심)이고, 이 문서는 그 가운데 지금 만든 부분만 다룬다. 서버 주소 · IP · 계정 정보는 저장소에 적지 않는다(공개 저장소). 주소는 배포할 때 환경 변수로 준다.
 
 > **이 서버에는 아직 실제 손님 자료를 넣지 않는다.** 백업이 같은 서버의 같은 디스크에만 있고 암호화 · 다른 구역 복제가 없다(7절). 시험 · 체험 자료만 둔다. 실제 매장이 쓰기 전에 deployment 6-1의 복제 · 암호화와 sync 10-2의 되살리기 순서를 먼저 만든다.
 
@@ -9,23 +10,25 @@
 | 무엇 | 어디(서버) | 하는 일 |
 |---|---|---|
 | 매장 앱(PWA) | `/srv/skinote/current/app` | `apps/pos/dist`를 그대로 올린 정적 파일. Caddy가 내준다 |
-| 스키노트 서버 | `skinote-server.service`(계정 `skinote`), `127.0.0.1:3100` | 시작할 때 control · 매장 파일 마이그레이션, `GET /api/health` · `GET /api/health/live`. 그 밖의 API는 아직 없다(404) |
+| 스키노트 서버 | `skinote-server.service`(계정 `skinote`), `127.0.0.1:3100` | 시작할 때 control · 매장 파일 마이그레이션, `GET /api/health` · `GET /api/health/live`, 기기 등록 · 직원 로그인 · 장부 API(`/api/v2/*`, 알림 연결), 관리 소켓(`/run/skinote/admin.sock`: 서버가 도는 동안 등록 번호 · 비밀번호 새로 · 기기 끊기) |
 | 데이터베이스 | `/var/lib/skinote/db/control.sqlite`, `/var/lib/skinote/db/shops/<매장 id>.sqlite` | 매장마다 파일 하나(deployment 2-1). WAL · `synchronous = FULL` |
 | 날마다 백업 | `skinote-backup.timer` → `skinote-backup.service`, 새벽 04:00(한국 시간) | `/var/lib/skinote/backups/<날짜>/`에 `VACUUM INTO` 사본 + `quick_check` + sha256, 가장 새 14일 |
 | 마이그레이션 백업 | `/var/lib/skinote/backups/migrations/` | 실행기가 적용 전 · 뒤에 남기는 사본. 파일 · 종류마다 가장 새 판 2개, 판마다 3개 |
 | 알림 자리 | `skinote-alert@.service` | 서버 · 백업 유닛이 실패하면 journald에 crit 한 줄과 `/var/log/skinote-ops/alerts`에 한 줄. 감시 서비스를 붙일 곳 |
 | 앞단 | Caddy(공통 설정) + `/etc/caddy/sites/skinote.caddy` | HTTPS 인증서, `/api/*` → `127.0.0.1:3100`(`/api/health`는 바깥에서 404), 나머지는 정적 파일, 안전 머리(CSP · HSTS …) |
-| 설정 | `/etc/skinote/skinote.env`(root:skinote 0640) | 자료 폴더 · 포트 · 매장 id · 시간대 · 하루 기준 시각 · 백업 여유. 비밀값 없음([skinote.env.example](skinote.env.example)) |
+| 설정 | `/etc/skinote/skinote.env`(root:skinote 0640) | 자료 폴더 · 포트 · 앱 주소 · 매장 id · 시간대 · 하루 기준 시각 · 백업 여유. 비밀값 없음([skinote.env.example](skinote.env.example)) |
+| 비밀값 | `/etc/skinote/secrets.env`(root:skinote 0640) | 배포가 없을 때 한 번 만든다: `SKINOTE_PIN_PEPPER` · `SKINOTE_SESSION_KEY` · `SKINOTE_FINGERPRINT_KEY` · `SKINOTE_IP_KEY` · `SKINOTE_PROXY_TOKEN`(앞단 표). 값은 이 파일에만 있다(저장소 · 기록 · 화면 · 백업에 없음) |
 | 기록 | journald, `/var/log/skinote-ops/deploy/` | `journalctl -u skinote-server` · `-u skinote-backup` · `-u caddy`, 배포 작업마다 `<작업>.log` |
 
 릴리스 폴더(`/srv/skinote/releases/<UTC 시각>-<커밋>`)는 다음으로 이루어진다.
 
 ```text
-app/                         빌드한 매장 앱
+app/                         빌드한 매장 앱. index.html에만 서버 표시(<meta name="skinote-runtime" content="server">)를 찍는다
 server/                      packages/server(시험 폴더 빼고) + RELEASE(릴리스 이름)
 schema/                      packages/schema(시험 · 도구 빼고)
-node_modules/@skinote/schema -> ../../schema
-deploy/                      유닛 · Caddy 틀 · 설정 예시 · 이 문서, 그리고 채운 skinote.caddy
+contract/ domain/ store/     packages/*의 TypeScript 원본 그대로(시험 빼고). Node 22.18+가 형을 지우고 읽는다
+node_modules/@skinote/<이름> -> ../../<이름>   (schema · contract · domain · store)
+deploy/                      유닛 · Caddy 틀 · 설정 예시 · 이 문서 · 매장 명령줄 입구(shop-cli.sh), 그리고 사이트 주소만 채운 skinote.caddy
 RELEASE
 ```
 
@@ -33,7 +36,7 @@ RELEASE
 
 ## 2. 처음 한 번
 
-서버 쪽은 이미 준비되어 있어야 한다: Ubuntu 24.04(systemd 255), `/usr/local/bin/node`(22.13 이상), Caddy 2와 공통 Caddyfile(`static_app` 조각 + `import /etc/caddy/sites/*.caddy`), `rsync`, 계정 `skinote`, 폴더 `/srv/skinote`(755) · `/var/lib/skinote`(750, 주인 skinote) · `/var/log/skinote`. **공통 Caddyfile은 고치지 않는다.** 스키노트는 `/etc/caddy/sites/skinote.caddy` 하나만 가진다. 배포 스크립트는 배포 전에 공통 Caddyfile의 `(static_app)` 조각을 읽어 보여 주고(고치지 않음), 그 조각이 `root`를 정하거나 인자(`{args…}`)를 받으면 멈춘다: 스키노트의 `root`를 덮어 릴리스의 다른 파일을 내줄 수 있기 때문이다.
+서버 쪽은 이미 준비되어 있어야 한다: Ubuntu 24.04(systemd 255), `/usr/local/bin/node`(**22.18 이상**: 저장소 · 도메인 패키지를 TypeScript 원본 그대로 읽는다), Caddy **2.5 이상**과 `caddy` 그룹(사이트 파일을 root:caddy 0640으로 둔다), 공통 Caddyfile(`static_app` 조각 + `import /etc/caddy/sites/*.caddy`), `rsync`, 계정 `skinote`, 폴더 `/srv/skinote`(755) · `/var/lib/skinote`(750, 주인 skinote) · `/var/log/skinote`. **공통 Caddyfile은 고치지 않는다.** 스키노트는 `/etc/caddy/sites/skinote.caddy` 하나만 가진다. 배포 스크립트는 배포 전에 공통 Caddyfile의 `(static_app)` 조각을 읽어 보여 주고(고치지 않음), 그 조각이 `root`를 정하거나 인자(`{args…}`)를 받으면 멈춘다: 스키노트의 `root`를 덮어 릴리스의 다른 파일을 내줄 수 있기 때문이다.
 
 맥에서:
 
@@ -46,32 +49,37 @@ RELEASE
    ```
 
    환경 변수로 줘도 된다(환경 변수가 이긴다). sslip.io는 이름 안의 IP로 풀리는 공개 DNS라 도메인 없이도 인증서를 받는다. 도메인이 정해지면(열린 질문 21) `SKINOTE_SITE`만 바꿔 다시 배포한다. **앱 출처가 바뀌면 기기의 보냄 대기가 따라오지 않는다**(deployment 3절): 실제 매장이 쓰기 전에 주소를 정한다.
-3. 첫 배포(아래 3절)가 `/etc/skinote/skinote.env`를 만들고 첫 매장 id(ULID)를 새로 넣는다. 그 id는 배포 기록과 서버 안의 `/api/health`에 보인다. 첫 배포는 날마다 백업도 한 번 돌린다.
+3. 첫 배포(아래 3절)가 `/etc/skinote/skinote.env`를 만들고 첫 매장 id(ULID)를 새로 넣는다. 그 id는 배포 기록과 서버 안의 `/api/health`에 보인다. 같은 배포가 `/etc/skinote/secrets.env`(비밀값 넷 + 앞단 표)를 만들고, 설정에 `SKINOTE_PUBLIC_ORIGIN=https://<SKINOTE_SITE>`를 넣는다(이미 있는 설정에도 없으면 더하고, 사이트 주소가 바뀌면 따라 고친다). 첫 배포는 날마다 백업도 한 번 돌린다.
+4. 배포가 끝나면 매장을 만든다(9절: `deploy/deploy.sh --shop-cli provision …`). 만들기 전에는 기기가 등록 화면에서 멈춘다.
 
 ## 3. 배포
 
 ```sh
 npm run build            # apps/pos/dist(배포 스크립트는 빌드하지 않는다)
+npm run test:e2e         # 서버 끝까지 시험: 끝 코드 0이어야 한다(기록 work/e2e/<시각>/report.json을 배포가 본다)
 deploy/deploy.sh         # 커밋한 것만. 커밋하지 않은 시험 배포는 deploy/deploy.sh --allow-dirty
 ```
 
 차례:
 
-1. 로컬 확인: 커밋하지 않은 변경이 있으면 멈춘다(`--allow-dirty`면 이름 끝에 `-dirty`). `apps/pos/dist`가 있고 원본(apps/pos · ui · contract · layout)보다 새것인지, `check-dist`, 서버 시험(`packages/server`).
-2. 서버 확인(ssh): Node 판, sudo, rsync · caddy · systemd-run · flock · runuser, 계정 · 폴더, 공통 `static_app` 조각.
-3. 릴리스 사본을 임시 폴더에 만들고 **그 사본으로 서버를 한 번 띄워 본다**(`server/bin/smoke.js`: 두 상태 확인 길, 앞단을 거친 요청에는 `{ok}`만, 백업 명령, SIGTERM 종료).
-4. `rsync`로 `releases/.incoming-<이름>`에 올린다.
-5. 설치는 **서버에서 떼어 낸 작업**(`systemd-run`, 유닛 `skinote-deploy-<이름>`)으로 돈다. ssh가 끊기거나 Ctrl-C를 눌러도 서버에서는 끝까지 돌고, 맥은 기록(`/var/log/skinote-ops/deploy/deploy-<이름>.log`)을 이어 보여 준다. 한 번에 하나만 돈다(`/run/skinote-deploy.lock`). 끊겼으면 `deploy/deploy.sh --status`가 마지막 작업의 기록과 끝 코드를 보인다.
-6. 서버에서: `/etc/skinote/skinote.env`가 없으면 만든다(있으면 그대로). 자료 폴더(`db` · `db/shops` · `backups` · `backups/migrations`)를 skinote 0700으로 맞춘다.
-7. systemd 유닛을 `systemd-analyze verify`로 검사하고 **바뀐 때만** 바꾼다. 바꾸기 전의 유닛은 `/etc/skinote/units.prev/`에 남긴다. 백업 타이머를 켠다.
-8. Caddy 사이트 파일이 바뀐 때만 바꾸고 `caddy validate`나 `systemctl reload caddy`에 걸리면 되돌린다(다른 프로젝트의 다음 reload가 스키노트 파일에 걸리지 않게).
-9. `current`를 새 릴리스로 바꾸고 서버를 다시 시작한다(`reset-failed` 먼저). 새 마이그레이션이 없으면 60초, 있으면 15분까지 기다린다(마이그레이션 동안 서버는 답하지 않는다). `/api/health/live`가 답하고 **서버 안의 `/api/health`가 `ok: true`이고 릴리스 이름이 맞아야** 켜진 것이다.
+1. 로컬 확인: 커밋하지 않은 변경이 있으면 멈춘다(`--allow-dirty`면 이름 끝에 `-dirty`). `apps/pos/dist`가 있고 원본(apps/pos · ui · contract · layout)보다 새것인지, `check-dist`, 시험(`packages/server` · `store` · `schema` · `domain`).
+2. **서버 끝까지 시험 기록:** `work/e2e/`의 가장 새 `report.json`이 지금 빌드(`apps/pos/dist/index.html`)와 서버 코드(server · store · domain · contract · schema)보다 새롭고 모든 확인이 `ok`여야 한다(실패 · 막힘이 하나라도 있으면 멈춤). 시험 배포만 `--allow-no-e2e`로 넘긴다.
+3. 서버 확인(ssh): Node 판(22.18 이상), Caddy 판(2.5 이상) · `caddy` 그룹, sudo, rsync · caddy · systemd-run · flock · runuser, 계정 · 폴더, 공통 `static_app` 조각.
+4. 릴리스 사본을 임시 폴더에 만든다: 앱의 `index.html`에 서버 표시를 찍고(`server/bin/stamp-runtime.js`, dist는 그대로), 저장소 · 도메인 · 계약 패키지와 `node_modules/@skinote/*` 링크를 넣고, Caddy 파일에는 사이트 주소만 채운다(앞단 표 자리는 서버가 채운다). **그 사본으로 서버를 한 번 띄워 본다**(`server/bin/smoke.js`: 이 점검만의 새 비밀값 · 관리 소켓 끔, 두 상태 확인 길, 앞단을 거친 요청에는 `{ok}`만, 장부 API의 문 — 세션 없음 401 · Origin 없는 명령 403 · 세션 없는 명령 401, 백업 명령, SIGTERM 종료).
+5. `rsync`로 `releases/.incoming-<이름>`에 올린다.
+6. 설치는 **서버에서 떼어 낸 작업**(`systemd-run`, 유닛 `skinote-deploy-<이름>`)으로 돈다. ssh가 끊기거나 Ctrl-C를 눌러도 서버에서는 끝까지 돌고, 맥은 기록(`/var/log/skinote-ops/deploy/deploy-<이름>.log`)을 이어 보여 준다. 한 번에 하나만 돈다(`/run/skinote-deploy.lock`). 끊겼으면 `deploy/deploy.sh --status`가 마지막 작업의 기록과 끝 코드를 보인다.
+7. 서버에서: `/etc/skinote/skinote.env`가 없으면 만든다(있으면 그대로, `SKINOTE_PUBLIC_ORIGIN`만 사이트 주소에 맞춘다). `/etc/skinote/secrets.env`가 없으면 만들고(값은 찍지 않음), 앞단 표가 없는 옛 파일에는 표만 더한다. 자료 폴더(`db` · `db/shops` · `backups` · `backups/migrations`)를 skinote 0700으로 맞춘다.
+8. systemd 유닛을 `systemd-analyze verify`로 검사하고 **바뀐 때만** 바꾼다. 바꾸기 전의 유닛은 `/etc/skinote/units.prev/`에 남긴다. 백업 타이머를 켠다.
+9. Caddy 사이트 파일: 릴리스의 파일에 앞단 표를 채운 것(서버 안에서만)이 지금 파일과 다를 때만 바꾸고(root:caddy 0640) `caddy validate`나 `systemctl reload caddy`에 걸리면 되돌린다(다른 프로젝트의 다음 reload가 스키노트 파일에 걸리지 않게).
+10. `current`를 새 릴리스로 바꾸고 서버를 다시 시작한다(`reset-failed` 먼저). 새 마이그레이션이 없으면 60초, 있으면 15분까지 기다린다(마이그레이션 동안 서버는 답하지 않는다). `/api/health/live`가 답하고 **서버 안의 `/api/health`가 `ok: true`이고 릴리스 이름이 맞아야** 켜진 것이다.
    - 준비되지 않았고 **새 마이그레이션이 없으면**: 유닛 · Caddy 파일 · `current`를 모두 전 것으로 되돌리고 실패로 끝난다.
    - 준비되지 않았고 **새 마이그레이션이 있으면**: 되돌리지 않는다(파일이 이미 새 판일 수 있어 옛 코드는 그 파일을 거절한다). 기록을 보고 **앞으로 고친다**. 새 코드가 파일을 열기 전에 죽었다면(기록에 `적용` 줄이 없음) `deploy/deploy.sh --rollback --force`.
-10. 오래된 릴리스 · 한 시간 넘은 올림 폴더 · 오래된 작업 기록을 지운다. 날마다 백업이 하나도 없으면 한 번 돌린다.
-11. 바깥에서 확인한다(첫 배포는 인증서를 받는 동안 최대 2분 기다린다): `https://<SKINOTE_SITE>/api/health/live`가 `ok`, 바깥의 `/api/health`는 404, `/`에 CSP · HSTS · nosniff, `/sw.js`는 `no-cache`, 없는 `/assets` 파일에 1년 캐시가 붙지 않음, `/RELEASE` · `/server/src/main.js` · `/schema/package.json` · `/deploy/skinote.caddy` · `/../RELEASE`가 보이지 않음. 그다음 ssh로 서버 안의 `/api/health`(ok · 릴리스 · 경고)를 본다.
+11. 오래된 릴리스 · 한 시간 넘은 올림 폴더 · 오래된 작업 기록을 지운다. 날마다 백업이 하나도 없으면 한 번 돌린다.
+12. 바깥에서 확인한다(첫 배포는 인증서를 받는 동안 최대 2분 기다린다): `https://<SKINOTE_SITE>/api/health/live`가 `ok`, 바깥의 `/api/health`는 404, `/`에 CSP · HSTS · nosniff, `/sw.js`는 `no-cache`, 없는 `/assets` 파일에 1년 캐시가 붙지 않음, `/RELEASE` · `/server/src/main.js` · `/schema/package.json` · `/deploy/skinote.caddy` · `/../RELEASE`가 보이지 않음. 그다음 ssh로 서버 안의 `/api/health`(ok · 릴리스 · 경고)를 본다.
 
-그 밖의 선택: `--status`(릴리스 · 서비스 · 상태 · 경고 · 마지막 배포 작업 · 알림), `--stage <폴더>`(서버 없이 릴리스 사본만 만들고 점검. 저장소 밖이나 git이 무시하는 폴더만, 주소는 늘 `example.invalid`), `--allow-stale-dist`(낡은 빌드인 줄 알고 억지로).
+그 밖의 선택: `--status`(릴리스 · 서비스 · 상태 · 경고 · 마지막 배포 작업 · 알림), `--stage <폴더>`(서버 없이 릴리스 사본만 만들고 점검. 저장소 밖이나 git이 무시하는 폴더만, 주소는 늘 `example.invalid`), `--allow-stale-dist`(낡은 빌드인 줄 알고 억지로), `--allow-no-e2e`(끝까지 시험 기록 없이, 시험 배포만), `--shop-cli`(9절).
+
+**손님 주소와 앞단 표:** 사이트 파일은 `header_up X-Forwarded-For {remote_host}` · `header_up -Forwarded`로 손님 주소를 Caddy가 본 상대 주소 하나로 못 박고, `header_up X-Skinote-Proxy <표>`를 붙인다. 서버는 표가 맞는 요청의 `X-Forwarded-For`만 믿는다(로그인 제한 · 기록의 주소, IPv6은 /64로 셈). 같은 VPS의 다른 프로세스가 `127.0.0.1:3100`에 바로 붙으면 모두 한 통(`direct`)으로 센다.
 
 ## 4. 되돌리기
 
@@ -162,8 +170,8 @@ deploy/deploy.sh --status                        # 맥에서
 - **객체 저장소 복제 · 암호화:** WAL 복제(다른 구역), 작업 기록 구간(다른 회사), 올리기 전 공개 키 암호화, 버전 관리 · 객체 잠금(deployment 6-1). 지금 백업은 같은 서버의 같은 디스크에만 있다(그래서 실제 손님 자료를 넣지 않는다). 서버 유닛은 바깥으로 나가는 연결을 막아 두었다(`IPAddressDeny=any`): 복제를 붙일 때 함께 연다.
 - **백업을 따로 된 계정으로:** 날마다 백업을 `skinote-backup` 계정(db 폴더를 그룹으로 읽기, backups/daily의 유일한 쓰는 쪽)으로 돌리고 `migrationBackupDir`를 날마다 백업 폴더 밖으로 옮긴다. 백업 폴더만의 디스크 할당량이나 볼륨.
 - **좁은 배포 계정:** 지금은 배포 계정이 `sudo bash`로 무엇이든 돌린다. root 소유의 `/usr/local/sbin/skinote-install`과 그 명령 하나만 허락하는 sudoers로 바꾼다(deployment 7절).
-- **매장 개설(`shop.provision`):** 매장 파일은 마이그레이션만 한 빈 파일이다. control `tenants` · 매장 `shops` 행, 하루 기준 시각 시드, 직원 · 기기 등록이 없다. 매장 id는 설정(`SKINOTE_SHOP_IDS`)에서만 온다.
-- **상태 확인 밖의 API:** `/api/v2`(명령 · 동기화 · 부트스트랩 · 세션), SSE, 로그인 · 기기 인증, 라이선스, 쓰기 Worker. 쓰기 가능 여부 확인(`canWrite`)만 만들어 두었다.
+- **매장 끝내기 · 매장 id 늘리기:** 매장 id는 설정(`SKINOTE_SHOP_IDS`)에서만 온다. 새 매장은 설정에 id를 더하고 다시 시작한 뒤 `--shop-cli provision`.
+- **장부 API의 남은 몫:** 기사 기기의 보냄 대기(서버 판에는 없다: 명령은 바로 보내거나 거절), 카운터 오프라인 동작(LocalClient), 라이선스, 쓰기 Worker, 열린 날 창만 읽기(지금은 매장의 모든 접수를 읽는다).
 - **매장 파일마다 운영체제 잠금**(deployment 2-2): 지금은 systemd 한 인스턴스와 '포트를 먼저 잡고 파일을 연다'로만 막는다.
 - 감시 · 알림 보내기(알림 유닛은 자리만), 연습 서버(staging), 되살리기 연습, GitHub Actions 배포, 도메인, Trusted Types(앱에 정책을 넣은 뒤 CSP에 더함).
 - 백업 결과를 control `backups` 표에 적기, 매장 끝내기, 가게 보관용 내보내기.
@@ -172,11 +180,34 @@ deploy/deploy.sh --status                        # 맥에서
 
 | 파일 | 무엇 |
 |---|---|
-| [deploy.sh](deploy.sh) | 배포 · 되돌리기 · 상태 · 사본 점검 |
+| [deploy.sh](deploy.sh) | 배포 · 되돌리기 · 상태 · 사본 점검 · 매장 명령줄(`--shop-cli`) |
+| [shop-cli.sh](shop-cli.sh) | 서버 쪽 매장 명령줄 입구(릴리스와 함께 놓임, 표준 입력의 JSON → skinote 계정의 `bin/shop.js --stdin`, 혼자 쓰는 명령은 서버를 잠깐 멈춤) |
+| [shop-cli-request.mjs](shop-cli-request.mjs) | 맥 쪽: `bin/shop.js`와 같은 깃발을 요청 JSON 하나로(명세 파일은 객체로 넣음) |
 | [skinote-server.service](skinote-server.service) | 서버 유닛(막기 설정, 메모리 512 MB, 포트 3100만, 백업 폴더 읽기 전용, 늦춰 가며 다시 시작) |
 | [skinote-backup.service](skinote-backup.service) · [skinote-backup.timer](skinote-backup.timer) | 날마다 백업(네트워크 없음, 실패하면 알림) |
 | [skinote-alert@.service](skinote-alert@.service) | 알림 자리(journald crit + `/var/log/skinote-ops/alerts`) |
-| [skinote.caddy.template](skinote.caddy.template) | Caddy 사이트(`__SKINOTE_SITE__` 자리를 배포가 채움, `/api/health`는 바깥에서 404) |
-| [skinote.env.example](skinote.env.example) | 서버 설정 예시(비밀값 없음) |
+| [skinote.caddy.template](skinote.caddy.template) | Caddy 사이트(`__SKINOTE_SITE__` 자리는 배포가, 앞단 표 자리는 서버의 설치 작업이 채움, 손님 주소를 못 박음, `/api/health`는 바깥에서 404) |
+| [skinote.env.example](skinote.env.example) | 서버 설정 예시(비밀값 없음, 앱 주소는 예시) |
 | [.gitignore](.gitignore) | 채운 `skinote.caddy` · `stage/` · `.env.local`을 올리지 않음 |
-| [../packages/server](../packages/server) | 서버 코드(`src/main.js`, `bin/backup.js`, `bin/smoke.js`, `bin/new-shop-id.js`)와 시험 |
+| [../packages/server](../packages/server) | 서버 코드(`src/main.js`, `bin/shop.js`, `bin/backup.js`, `bin/smoke.js`, `bin/stamp-runtime.js`, `bin/new-shop-id.js`)와 시험(`test/deploy-files.test.js`가 이 폴더의 파일을 본다) |
+
+## 9. 매장 명령줄(`--shop-cli`)
+
+서버에서 `server/bin/shop.js`를 돌린다. 맥이 깃발을 요청 JSON 하나로 바꿔([shop-cli-request.mjs](shop-cli-request.mjs), `--spec` 파일은 객체로 넣음) **ssh 표준 입력**으로 보내고, 서버 쪽은 늘 같은 명령(`[sudo -n] bash /srv/skinote/current/deploy/shop-cli.sh`)이다: 직원 이름 · 매장 id가 서버의 프로세스 목록 · 명령 기록에 남지 않는다. 입구는 skinote 계정으로 `bin/shop.js --stdin`을 돌리고 설정 · 비밀값은 그 프로세스의 환경으로만 준다. **비밀번호 표 · 등록 번호는 부른 사람의 터미널에만 한 번 찍힌다**(서버 · 맥의 파일이나 기록에 남지 않음: 옮겨 적은 뒤 터미널을 지운다). 배포 작업과 같은 잠금을 잡는다.
+
+```sh
+# 시험 매장 만들기(견본 명세 · 직원). provision · load-sample은 서버를 잠깐 멈췄다가 다시 켠다.
+deploy/deploy.sh --shop-cli provision --shop <매장 id> --code <매장 코드> --name "<매장 이름>" --sample --test \
+  --staff "<이름>:manager" --staff "<이름>:counter" --staff "<이름>:driver:<차량 id>"
+#   → 직원 · 역할 · 비밀번호 표(한 번). 매장 id는 /etc/skinote/skinote.env의 SKINOTE_SHOP_IDS(배포 기록에도 보임).
+deploy/deploy.sh --shop-cli load-sample --shop <매장 id> --date today       # 시험 매장에만: 견본 하루(날짜마다 한 번)
+deploy/deploy.sh --shop-cli device-code --shop <매장 id> --kind pos --label "카운터 1"   # 등록 번호 1234-5678-9012(60분, 한 번)
+deploy/deploy.sh --shop-cli device-code --shop <매장 id> --kind driver_tablet --label "1호 차량 태블릿" --vehicle <차량 id>
+deploy/deploy.sh --shop-cli rotate-pin --shop <매장 id> --staff "<이름>"      # 새 비밀번호(한 번), 잠금 풀기
+deploy/deploy.sh --shop-cli revoke-device --shop <매장 id> --device "카운터 1" # 기기 끊기(세션 · 알림 연결이 끝남)
+deploy/deploy.sh --shop-cli status --shop <매장 id>                           # rev · 영업일 · 접수 수 · 기기 · 직원 수
+```
+
+- 서버가 도는 동안 `device-code` · `rotate-pin` · `revoke-device` · `status`는 관리 소켓(`/run/skinote/admin.sock`, 서버 유닛의 `RuntimeDirectory`)으로 서버에 보낸다. `provision` · `load-sample`은 매장 파일을 혼자 써야 해서 입구가 서버를 멈췄다가 끝나면(실패해도) 다시 켠다.
+- 끝 코드: 0 성공, 64 쓰는 법, 65 자료(명세 · 인자), 69 지금 못 함(매장 파일 없음 · 쓰는 사람 잠금 …), 70 처리 오류, 75 배포 작업이 도는 중, 77 입구를 부를 수 없음(root 아님 · 명령줄 없음), 78 설정 오류.
+- 시험 매장(`--test`)에만 견본 하루를 부른다. 실제 매장 자료는 이 서버에 넣지 않는다(맨 위의 주의).

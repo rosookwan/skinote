@@ -12,13 +12,8 @@ import { DEVICE_PROFILES, openOrRestoreDraft } from '@skinote/ui';
 import { describe, expect, it } from 'vitest';
 import { chainDrafts, chainGoesOn, confirmEnvelope, draftOptions, sendChain } from '../src/components/ConfirmFlow.tsx';
 import { withAmount } from '../src/components/TaskPanels.tsx';
-import { OFFLINE_ALLOWED } from '../src/fixture/commands.ts';
-import { depositOf, heldAmount } from '../src/fixture/deposits.ts';
-import { spareTickets } from '../src/fixture/driver.ts';
+import { depositOf, type FxState, heldAmount, kstAt, OFFLINE_ALLOWED, ownDue, spareTickets } from '@skinote/domain';
 import { FixtureClient } from '../src/fixture/fixture-client.ts';
-import type { FxState } from '../src/fixture/model.ts';
-import { ownDue } from '../src/fixture/rules.ts';
-import { kstAt } from '../src/fixture/time.ts';
 import { driverListRoute } from '../src/screens/CollectionListScreen.tsx';
 import { planPx, taskButtonPx, taskRowRoom } from '../src/screens/TaskSheetScreen.tsx';
 

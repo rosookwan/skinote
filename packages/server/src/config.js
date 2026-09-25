@@ -11,6 +11,12 @@
 //   SKINOTE_RELEASE    판 이름. 없으면 배포가 적어 둔 server/RELEASE 파일, 그것도 없으면 'dev'
 //   SKINOTE_BACKUP_KEEP_DAYS  날마다 백업 폴더를 몇 개 남길지, 기본 14
 //   SKINOTE_BACKUP_RESERVE_MB 백업 뒤에도 디스크에 남겨 둘 여유(MB), 기본 2048. 여러 앱이 나눠 쓰는 디스크를 백업이 채우지 않게
+//   SKINOTE_API        on(기본) · off. off는 상태 확인만 하는 비상용 서버(매장 기기는 '연결 끊김'을 보인다, 체험판으로 가지 않는다)
+//   SKINOTE_PUBLIC_ORIGIN  앱 주소(https://…, 경로 없음). Origin 확인과 기기 서명 문장에 쓴다. 바깥에 연 주소(SKINOTE_HOST가 루프백이
+//                      아님)로 API를 켜거나 운영(NODE_ENV=production, 유닛이 넣음)이면 꼭 있어야 한다. 루프백 로컬 실행에서 없으면 요청의
+//                      Host로 만든 주소와 맞춰 본다
+//   SKINOTE_ADMIN_SOCKET  관리 소켓 경로(기본 /run/skinote/admin.sock, 'off'면 열지 않음). 100바이트까지(macOS 104)
+// 비밀값 넷(SKINOTE_PIN_PEPPER · SKINOTE_SESSION_KEY · SKINOTE_FINGERPRINT_KEY · SKINOTE_IP_KEY)은 secrets.js가 따로 읽는다.
 
 import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
@@ -25,6 +31,8 @@ export const DEFAULTS = Object.freeze({
   release: 'dev',
   backupKeepDays: 14,
   backupReserveMb: 2048,
+  api: 'on',
+  adminSocket: '/run/skinote/admin.sock',
 });
 
 /** 매장 id: 파일 이름으로 안전한 모양(점 · 빗금 · 공백 없음). ULID(26자)도 이 모양이다. */
@@ -65,8 +73,31 @@ export class ConfigError extends Error {
  *   release: string,
  *   backupKeepDays: number,
  *   backupReserveBytes: number,
+ *   api: 'on' | 'off',
+ *   publicOrigin: string | null,
+ *   adminSocket: string | null,
+ *   secrets?: import('./secrets.js').Secrets | null,
  * }} ServerConfig
  */
+
+/** 관리 소켓 경로의 끝(macOS sun_path 104바이트). */
+export const ADMIN_SOCKET_MAX_BYTES = 100;
+
+/**
+ * 앱 주소(origin) 모양: http(s)://호스트[:포트], 경로 · 물음표 · 사용자 정보 없음. 맞으면 정규 모양(URL.origin), 아니면 undefined.
+ * @param {string} value
+ */
+export function parsePublicOrigin(value) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return undefined;
+    if (url.username || url.password || url.search || url.hash || (url.pathname !== '/' && url.pathname !== '')) return undefined;
+    if (value.replace(/\/$/, '') !== url.origin) return undefined;
+    return url.origin;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * 비어 있으면 undefined(설정하지 않은 것과 같다).
@@ -200,6 +231,27 @@ export function loadConfig(env = process.env, { cwd = process.cwd(), releaseFile
     ? DEFAULTS.backupReserveMb
     : parseInteger(reserveRaw, 'SKINOTE_BACKUP_RESERVE_MB', problems, { min: 0, max: 1_048_576 });
 
+  const apiRaw = (read(env, 'SKINOTE_API') ?? DEFAULTS.api).toLowerCase();
+  if (apiRaw !== 'on' && apiRaw !== 'off') problems.push(`SKINOTE_API는 on 또는 off입니다(${JSON.stringify(apiRaw)})`);
+  const api = apiRaw === 'off' ? 'off' : 'on';
+
+  const originRaw = read(env, 'SKINOTE_PUBLIC_ORIGIN');
+  const publicOrigin = originRaw === undefined ? null : parsePublicOrigin(originRaw) ?? null;
+  if (originRaw !== undefined && publicOrigin === null) {
+    problems.push('SKINOTE_PUBLIC_ORIGIN은 https://호스트[:포트] 모양이어야 합니다(경로 · 끝 빗금 없음)');
+  }
+  if (api === 'on' && originRaw === undefined && HOST_PATTERN.test(host) && !isLoopbackHost(host)) {
+    problems.push('SKINOTE_HOST가 루프백이 아니면 SKINOTE_PUBLIC_ORIGIN이 있어야 합니다(Origin 확인 · 기기 서명)');
+  } else if (api === 'on' && originRaw === undefined && read(env, 'NODE_ENV') === 'production') {
+    problems.push('운영(NODE_ENV=production)에서 API를 켜면 SKINOTE_PUBLIC_ORIGIN=https://<사이트 주소>가 있어야 합니다(Host로 만든 주소를 믿지 않게)');
+  }
+
+  const socketRaw = read(env, 'SKINOTE_ADMIN_SOCKET') ?? DEFAULTS.adminSocket;
+  const adminSocket = socketRaw.toLowerCase() === 'off' ? null : socketRaw;
+  if (adminSocket !== null && (!isAbsolute(adminSocket) || /[\0\n\r]/.test(adminSocket) || Buffer.byteLength(adminSocket) > ADMIN_SOCKET_MAX_BYTES)) {
+    problems.push(`SKINOTE_ADMIN_SOCKET은 절대 경로로 ${ADMIN_SOCKET_MAX_BYTES}바이트까지이거나 off입니다`);
+  }
+
   if (problems.length) throw new ConfigError(problems);
 
   const dbDir = join(dataDir, 'db');
@@ -219,6 +271,10 @@ export function loadConfig(env = process.env, { cwd = process.cwd(), releaseFile
     release,
     backupKeepDays: /** @type {number} */ (backupKeepDays),
     backupReserveBytes: /** @type {number} */ (backupReserveMb) * 1024 * 1024,
+    api: /** @type {'on' | 'off'} */ (api),
+    publicOrigin,
+    adminSocket,
+    secrets: null,
   });
 }
 

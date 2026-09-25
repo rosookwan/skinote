@@ -3,9 +3,13 @@
 // 마이그레이션 실행 명령.
 //   node packages/schema/bin/migrate.js <control|shop> <파일> [--backup-dir <폴더>] [--app-version <판>] [--status] [--json]
 // 끝 코드: 0 = 적용함 · 이미 최신(또는 --status로 문제 없음), 2 = 적용을 거절하고 읽기 전용(모르는 더 새 판, checksum 다름 …),
-// 1 = 적용 실패(되돌림) · 연결 설정 오류 · 잘못 부름.
+// 1 = 적용 실패(되돌림) · 연결 설정 오류 · 잘못 부름 · 서버가 매장 파일을 쓰는 중.
+// 서버 자료 폴더의 매장 파일(<자료 폴더>/db/shops/<매장 id>.sqlite)이면 서버 · 명령줄과 같은 쓰는 사람 잠금
+// (<자료 폴더>/locks/<매장 id>.writer, 저장소 lock.ts와 같은 방법)을 먼저 잡는다: 서버가 도는 동안 표를 바꾸지 않게(D4).
 
-import { isAbsolute, resolve } from 'node:path';
+import { existsSync, mkdirSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { openDatabase } from '../src/connection.js';
 import { inspectFile, migrate } from '../src/migrate.js';
 
 const USAGE = '사용법: migrate <control|shop> <파일> [--backup-dir <폴더>] [--app-version <판>] [--status] [--json]';
@@ -38,6 +42,34 @@ function baseDir() {
 /** @param {string} p */
 const fromBase = p => (isAbsolute(p) ? p : resolve(baseDir(), p));
 
+/**
+ * 매장 파일이면 쓰는 사람 잠금을 잡는다(쥔 프로세스가 있으면 null, 매장 파일이 아니면 풀 것 없는 잠금).
+ * @param {'control' | 'shop'} kind @param {string} file
+ * @returns {{ release(): void } | null}
+ */
+function writerLock(kind, file) {
+  const none = { release() {} };
+  if (kind !== 'shop' || basename(dirname(file)) !== 'shops' || basename(dirname(dirname(file))) !== 'db') return none;
+  const shopId = basename(file).replace(/\.sqlite$/, '');
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(shopId)) return none;
+  const dir = join(dirname(dirname(dirname(file))), 'locks');
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o750 });
+  const busy = (/** @type {unknown} */ e) => /SQLITE_BUSY|database is locked/i.test(String(/** @type {{ message?: unknown }} */ (e)?.message ?? e));
+  let db;
+  try {
+    db = openDatabase(join(dir, shopId + '.writer'));
+    db.exec('CREATE TABLE IF NOT EXISTS writer_lock (shop_id TEXT NOT NULL PRIMARY KEY) STRICT');
+    db.exec('PRAGMA busy_timeout = 0');
+    db.exec('BEGIN IMMEDIATE');
+  } catch (error) {
+    db?.close();
+    if (busy(error)) return null;
+    throw error;
+  }
+  const held = db;
+  return { release() { try { held.exec('ROLLBACK'); } finally { held.close(); } } };
+}
+
 /** @param {string[]} argv */
 function main(argv) {
   let args;
@@ -67,11 +99,21 @@ function main(argv) {
     return state.problems.length ? 2 : 0;
   }
 
-  const result = migrate(file, kind, {
-    backupDir: args.backupDir ? fromBase(args.backupDir) : undefined,
-    appVersion: args.appVersion,
-  });
-  result.db.close();
+  const lock = writerLock(kind, file);
+  if (!lock) {
+    console.error('서버(또는 명령줄)가 이 매장 파일을 쓰는 중입니다: 서버를 멈춘 뒤 다시 합니다(sudo systemctl stop skinote-server)');
+    return 1;
+  }
+  let result;
+  try {
+    result = migrate(file, kind, {
+      backupDir: args.backupDir ? fromBase(args.backupDir) : undefined,
+      appVersion: args.appVersion,
+    });
+    result.db.close();
+  } finally {
+    lock.release();
+  }
   if (args.json) {
     const { db, error, ...rest } = result;
     console.log(JSON.stringify({ ...rest, error: error ? { code: error.code, message: error.message } : undefined }, null, 2));

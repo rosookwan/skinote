@@ -5,15 +5,25 @@
 #   deploy/deploy.sh --rollback      바로 전 릴리스로 되돌린다(코드만, 마이그레이션이 든 릴리스는 --force 없이는 거절)
 #   deploy/deploy.sh --status        서버의 릴리스 · 서비스 · 상태 · 마지막 배포 작업 · 알림만 본다
 #   deploy/deploy.sh --stage <폴더>  서버에 붙지 않고 릴리스 사본만 <폴더>/<릴리스 이름>에 만들고 점검한다(저장소 밖이나 무시 폴더)
+#   deploy/deploy.sh --shop-cli <명령> [깃발…]
+#                                    서버에서 매장 명령줄(server/bin/shop.js: provision · load-sample · device-code · rotate-pin ·
+#                                    revoke-device · status)을 돌린다. 요청은 ssh 표준 입력의 JSON으로 가고(서버의 고정 입구
+#                                    deploy/shop-cli.sh), 비밀번호 · 등록 번호는 이 터미널에만 찍힌다(파일 · 기록 없음).
+#                                    provision · load-sample은 서버를 잠깐 멈췄다가 다시 켠다.
 #
-# 선택: --allow-dirty(커밋하지 않은 변경을 시험 배포), --allow-stale-dist(낡은 빌드인 줄 알고), --force(되돌리기에서만)
+# 선택: --allow-dirty(커밋하지 않은 변경을 시험 배포), --allow-stale-dist(낡은 빌드인 줄 알고), --force(되돌리기에서만),
+#       --allow-no-e2e(서버 끝까지 시험 기록 없이: 시험 배포만)
+#
+# 배포 전에 서버 끝까지 시험(npm run test:e2e)이 지금 빌드 · 서버 코드로 모두 통과한 기록(work/e2e/<시각>/report.json)이 있어야 한다.
 #
 # 설정(환경 변수가 먼저, 없으면 git에 올리지 않는 deploy/.env.local):
 #   SKINOTE_SSH    ssh 별칭이나 user@host. root가 아니면 비밀번호 없는 sudo가 있어야 한다(ssh 키, BatchMode).
 #   SKINOTE_SITE   사이트 주소(예: skinote.<IP를 대시로>.sslip.io). 저장소에 적지 않는다.
 #
 # 서버에서의 모양(/srv/skinote):
-#   releases/<UTC 시각>-<커밋>[-dirty]/{app,server,schema,deploy,node_modules/@skinote/schema -> ../../schema,RELEASE}
+#   releases/<UTC 시각>-<커밋>[-dirty]/{app,server,schema,contract,domain,store,deploy,RELEASE,
+#                                       node_modules/@skinote/{schema,contract,domain,store} -> ../../<이름>}
+#   app/index.html에는 서버 모드 표시(<meta name="skinote-runtime" content="server">)를 찍는다(apps/pos/dist는 그대로: 체험판).
 #   current -> releases/<…>   (한 번에 바꾸는 링크, 가장 새 5개만 남김)
 # 설치 · 되돌리기는 서버에서 떼어 낸 작업(systemd-run)으로 돈다: ssh가 끊기거나 Ctrl-C를 눌러도 서버에서는 끝까지 돌고,
 # 기록은 /var/log/skinote-ops/deploy/<작업>.log에 남는다(--status가 보인다). 한 번에 하나만(/run/skinote-deploy.lock).
@@ -28,7 +38,13 @@ REMOTE_NODE=/usr/local/bin/node
 APP_PORT=3100
 KEEP_RELEASES=5
 NODE_MIN_MAJOR=22
-NODE_MIN_MINOR=13
+# 22.18부터 .ts를 깃발 없이 읽는다(저장소 · 도메인 · 계약 패키지가 TypeScript 원본 그대로 돈다).
+NODE_MIN_MINOR=18
+# Caddy 2.5부터 reverse_proxy가 들어온 X-Forwarded-For를 믿지 않는다(사이트 파일도 header_up으로 못 박는다).
+CADDY_MIN_MAJOR=2
+CADDY_MIN_MINOR=5
+# 릴리스에 넣는 서버 쪽 패키지(TypeScript 원본 그대로, node_modules/@skinote/<이름>으로 잇는다).
+SERVER_PACKAGES=(schema contract domain store)
 UNIT_FILES=(skinote-server.service skinote-backup.service skinote-backup.timer skinote-alert@.service)
 # 서버 작업을 기다리는 한도(초). 설치 안에서 마이그레이션을 최대 15분 기다린다.
 INSTALL_JOB_LIMIT=1500
@@ -39,13 +55,15 @@ STAGE_PARENT=
 FORCE=0
 ALLOW_STALE_DIST=0
 ALLOW_DIRTY=0
+ALLOW_NO_E2E=0
+SHOP_CLI_ARGS=()
 
 say() { printf '%s\n' "$*"; }
 step() { printf '\n== %s\n' "$*"; }
 die() { printf '배포 중단: %s\n' "$*" >&2; exit 1; }
 
 usage() {
-  sed -n '2,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,/^set -euo pipefail/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'
 }
 
 while [[ $# -gt 0 ]]; do
@@ -61,6 +79,14 @@ while [[ $# -gt 0 ]]; do
     --force) FORCE=1 ;;
     --allow-stale-dist) ALLOW_STALE_DIST=1 ;;
     --allow-dirty) ALLOW_DIRTY=1 ;;
+    --allow-no-e2e) ALLOW_NO_E2E=1 ;;
+    --shop-cli)
+      MODE=shop-cli
+      shift
+      [[ $# -ge 1 ]] || die '--shop-cli 다음에 명령이 필요합니다(provision · load-sample · device-code · rotate-pin · revoke-device · status)'
+      SHOP_CLI_ARGS=("$@")
+      break
+      ;;
     -h | --help) usage; exit 0 ;;
     *) die "모르는 선택: $1 (--help)" ;;
   esac
@@ -130,21 +156,59 @@ check_dist() {
 }
 
 check_server_tests() {
-  step '서버 시험(packages/server)'
-  local out
-  if ! out="$(cd "$REPO_ROOT/packages/server" && node --disable-warning=ExperimentalWarning --test test/*.test.js 2>&1)"; then
+  step '서버 시험(packages/server · store · schema · domain)'
+  local out pkg
+  for pkg in server store schema; do
+    if ! out="$(cd "$REPO_ROOT/packages/$pkg" && npm test --silent 2>&1)"; then
+      printf '%s\n' "$out" | tail -n 40 >&2
+      die "시험이 실패했습니다: packages/$pkg"
+    fi
+    printf '  %s: %s\n' "$pkg" "$(printf '%s\n' "$out" | grep -E '^# (pass|fail) ' | tr '\n' ' ')"
+  done
+  if ! out="$(cd "$REPO_ROOT/packages/domain" && npm test --silent 2>&1)"; then
     printf '%s\n' "$out" | tail -n 40 >&2
-    die '서버 시험이 실패했습니다'
+    die '시험이 실패했습니다: packages/domain'
   fi
-  printf '%s\n' "$out" | grep -E '^# (tests|pass|fail) ' | tr '\n' ' '
-  printf '\n'
+  printf '  domain: %s\n' "$(printf '%s\n' "$out" | grep -E '^ *Tests ' | tail -n 1 | sed 's/^ *//')"
+}
+
+# 서버 끝까지 시험(npm run test:e2e)의 마지막 기록이 지금 빌드 · 서버 코드보다 새롭고 모두 통과인지(배포 전 문).
+check_e2e() {
+  step '서버 끝까지 시험 기록(work/e2e)'
+  local latest='' newer='' problem=''
+  latest="$(ls -1d "$REPO_ROOT"/work/e2e/*/report.json 2>/dev/null | sort | tail -n 1 || true)"
+  if [[ -z "$latest" ]]; then
+    problem='기록이 없습니다'
+  elif [[ ! "$latest" -nt "$DIST/index.html" ]]; then
+    problem="마지막 기록(${latest#"$REPO_ROOT"/})이 지금 빌드보다 오래되었습니다"
+  else
+    newer="$(find "$REPO_ROOT/packages/server/src" "$REPO_ROOT/packages/server/bin" "$REPO_ROOT/packages/store/src" "$REPO_ROOT/packages/domain/src" \
+      "$REPO_ROOT/packages/contract/src" "$REPO_ROOT/packages/schema/migrations" "$REPO_ROOT/packages/schema/src" \
+      -type f -newer "$latest" ! -name '.DS_Store' 2>/dev/null | head -n 3 || true)"
+    if [[ -n "$newer" ]]; then
+      problem="마지막 기록 뒤에 고친 서버 코드가 있습니다: $(printf '%s ' ${newer//$REPO_ROOT\//})"
+    elif ! node -e '
+const r = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+const bad = (r.results || []).filter((x) => x.state !== "ok");
+for (const b of bad.slice(0, 5)) console.log("  " + (b.state === "blocked" ? "막힘" : "실패") + ": " + b.name);
+process.exit(r.results && r.results.length && !bad.length ? 0 : 1);' "$latest"; then
+      problem="마지막 기록(${latest#"$REPO_ROOT"/})에 실패 · 막힘이 있습니다"
+    fi
+  fi
+  if [[ -z "$problem" ]]; then
+    say "통과: ${latest#"$REPO_ROOT"/}"
+  elif [[ "$ALLOW_NO_E2E" = 1 ]]; then
+    say "주의: $problem (--allow-no-e2e: 시험 배포로 계속합니다)"
+  else
+    die "$problem. npm run build && npm run test:e2e 뒤 다시 하세요(시험 배포면 --allow-no-e2e)"
+  fi
 }
 
 release_name() {
   local stamp sha dirty=''
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
   sha="$(git -C "$REPO_ROOT" rev-parse --short=7 HEAD 2>/dev/null)" || die 'git 커밋을 읽지 못했습니다'
-  local paths=(apps/pos packages/server packages/schema packages/ui packages/contract packages/layout deploy)
+  local paths=(apps/pos packages/server packages/schema packages/store packages/domain packages/ui packages/contract packages/layout deploy)
   if ! git -C "$REPO_ROOT" diff --quiet HEAD -- "${paths[@]}" 2>/dev/null; then
     dirty='-dirty'
   elif [[ -n "$(git -C "$REPO_ROOT" ls-files --others --exclude-standard -- "${paths[@]}" 2>/dev/null | head -n 1)" ]]; then
@@ -160,28 +224,42 @@ stage_release() {
   [[ ! -e "$dir" ]] || die "이미 있는 폴더입니다: $dir"
   mkdir -p "$dir"
   rsync -a --exclude '.DS_Store' "$DIST/" "$dir/app/"
+  # 서버 판의 앱 뼈대: 릴리스의 index.html에만 서버 모드 표시를 찍는다(apps/pos/dist · GitHub Pages는 체험판 그대로).
+  node "$REPO_ROOT/packages/server/bin/stamp-runtime.js" "$dir/app/index.html" >/dev/null || die '앱 뼈대에 서버 표시를 넣지 못했습니다'
+  grep -q '<meta name="skinote-runtime" content="server">' "$dir/app/index.html" || die '릴리스의 index.html에 서버 표시가 없습니다'
+  grep -q 'skinote-runtime' "$DIST/index.html" && die 'apps/pos/dist/index.html에 서버 표시가 있습니다(체험판 빌드에는 없어야 함)'
   rsync -a --exclude '.DS_Store' --exclude 'test/' --exclude 'data/' --exclude 'node_modules/' --exclude 'RELEASE' \
     "$REPO_ROOT/packages/server/" "$dir/server/"
   rsync -a --exclude '.DS_Store' --exclude 'test/' --exclude 'tools/' --exclude 'node_modules/' \
     "$REPO_ROOT/packages/schema/" "$dir/schema/"
+  # 서버가 읽는 TypeScript 패키지(원본 그대로: Node가 형을 지우고 읽는다). 시험 · 설정 파일은 넣지 않는다.
+  local pkg
+  for pkg in contract domain store; do
+    rsync -a --exclude '.DS_Store' --exclude 'test/' --exclude 'node_modules/' --exclude 'tsconfig*.json' --exclude 'vitest.config.*' \
+      "$REPO_ROOT/packages/$pkg/" "$dir/$pkg/"
+  done
   mkdir -p "$dir/deploy"
   local f
-  for f in "${UNIT_FILES[@]}" skinote.caddy.template skinote.env.example README.md deploy.sh; do
+  for f in "${UNIT_FILES[@]}" skinote.caddy.template skinote.env.example README.md deploy.sh shop-cli.sh; do
     cp "$DEPLOY_DIR/$f" "$dir/deploy/$f"
   done
+  # 사이트 주소만 채운다. 앞단 표 자리(__SKINOTE_PROXY_TOKEN__)는 서버의 설치 작업이 secrets.env 값으로 채운다(표는 서버 밖으로 나가지 않음).
   sed "s/__SKINOTE_SITE__/$site/g" "$DEPLOY_DIR/skinote.caddy.template" >"$dir/deploy/skinote.caddy"
   grep -q '__SKINOTE_SITE__' "$dir/deploy/skinote.caddy" && die 'Caddy 사이트 파일의 자리를 채우지 못했습니다'
+  grep -q 'header_up X-Skinote-Proxy __SKINOTE_PROXY_TOKEN__' "$dir/deploy/skinote.caddy" || die 'Caddy 사이트 파일에 앞단 표 자리가 없습니다'
   mkdir -p "$dir/node_modules/@skinote"
-  ln -s ../../schema "$dir/node_modules/@skinote/schema"
+  for pkg in "${SERVER_PACKAGES[@]}"; do
+    ln -s "../../$pkg" "$dir/node_modules/@skinote/$pkg"
+  done
   printf '%s\n' "$name" >"$dir/RELEASE"
   printf '%s\n' "$name" >"$dir/server/RELEASE"
   chmod -R u=rwX,go=rX "$dir"
   # 운영 자료 · 비밀이 섞이지 않았는지
-  if find "$dir" \( -name '*.sqlite*' -o -name '.env*' -o -name '*.db' \) -print | grep -q .; then
+  if find "$dir" \( -name '*.sqlite*' -o -name '.env*' -o -name '*.db' -o -name 'secrets.env' \) -print | grep -q .; then
     die '릴리스에 데이터베이스나 .env 파일이 섞였습니다'
   fi
   say "릴리스 사본: $dir ($(du -sh "$dir" | cut -f1))"
-  # 사본에서 서버를 띄워 본다(빠진 파일, @skinote/schema 연결, 앞단을 거친 상태 확인, 백업 명령, 종료).
+  # 사본에서 서버를 띄워 본다(빠진 파일, @skinote/* 연결, 앞단을 거친 상태 확인, 장부 API의 문, 백업 명령, 종료).
   node "$dir/server/bin/smoke.js" --expect-release "$name" || die '릴리스 사본 점검에 실패했습니다'
 }
 
@@ -236,6 +314,8 @@ set -u
 uid=$(id -u); echo "uid=$uid"
 if [ "$uid" -ne 0 ]; then if sudo -n true 2>/dev/null; then echo "sudo=ok"; else echo "sudo=no"; fi; else echo "sudo=root"; fi
 echo "node=$('"$REMOTE_NODE"' --version 2>/dev/null || echo missing)"
+echo "caddy=$(caddy version 2>/dev/null | head -n 1 || echo missing)"
+if getent group caddy >/dev/null 2>&1; then echo "group caddy=ok"; else echo "group caddy=missing"; fi
 for t in rsync caddy systemd-run flock runuser; do if command -v "$t" >/dev/null 2>&1; then echo "tool $t=ok"; else echo "tool $t=missing"; fi; done
 if id skinote >/dev/null 2>&1; then echo "user=ok"; else echo "user=missing"; fi
 for d in '"$REMOTE_BASE"' /var/lib/skinote /etc/caddy/sites; do if [ -d "$d" ]; then echo "dir $d=ok"; else echo "dir $d=missing"; fi; done
@@ -265,13 +345,23 @@ preflight() {
   for t in rsync caddy systemd-run flock runuser; do
     [[ "$(get "tool $t")" = ok ]] || die "서버에 $t 명령이 없습니다"
   done
+  local caddy_version
+  caddy_version="$(get caddy)"
+  [[ "$caddy_version" =~ ^v?([0-9]+)\.([0-9]+) ]] || die "서버의 Caddy 판을 읽지 못했습니다($caddy_version)"
+  if ((BASH_REMATCH[1] < CADDY_MIN_MAJOR || (BASH_REMATCH[1] == CADDY_MIN_MAJOR && BASH_REMATCH[2] < CADDY_MIN_MINOR))); then
+    die "서버 Caddy가 낡았습니다: ${caddy_version%% *} (필요 v$CADDY_MIN_MAJOR.$CADDY_MIN_MINOR 이상: 들어온 X-Forwarded-For를 믿지 않는 판)"
+  fi
+  # 사이트 파일(앞단 표가 든다)은 root:caddy 0640으로 둔다.
+  [[ "$(get 'group caddy')" = ok ]] || die '서버에 caddy 그룹이 없습니다(사이트 파일을 root:caddy 0640으로 둔다)'
   [[ "$(get user)" = ok ]] || die '서버에 skinote 계정이 없습니다'
   local d
   for d in "$REMOTE_BASE" /var/lib/skinote /etc/caddy/sites; do
     [[ "$(get "dir $d")" = ok ]] || die "서버에 $d 폴더가 없습니다"
   done
-  say "계정 uid $(get uid) · sudo $(get sudo) · node $node_version · 지금 릴리스 $(get current || true)"
+  say "계정 uid $(get uid) · sudo $(get sudo) · node $node_version · caddy ${caddy_version%% *} · 지금 릴리스 $(get current || true)"
 
+  # 매장 명령줄은 Caddy 조각을 보지 않는다.
+  [[ "$MODE" != shop-cli ]] || return 0
   # 공통 static_app 조각: root나 인자({args…})가 있으면 스키노트의 root를 덮거나 빈 값으로 가져온다.
   local snippet
   snippet="$(printf '%s\n' "$out" | sed -n 's/^snippet| //p')"
@@ -310,23 +400,26 @@ health_js_line() {
   printf 'HEALTH_JS=%q\n' "$HEALTH_JS"
 }
 
-# 원격 설치(root로, 떼어 낸 작업): 인자 = 릴리스 이름, 포트, 남길 개수
+# 원격 설치(root로, 떼어 낸 작업): 인자 = 릴리스 이름, 포트, 남길 개수, 사이트 주소
 remote_install_script() {
   health_js_line
   cat <<'REMOTE'
 # 한 덩어리로 읽힌 뒤 돈다.
 {
 set -euo pipefail
-NAME="$1"; PORT="$2"; KEEP="$3"
+NAME="$1"; PORT="$2"; KEEP="$3"; SITE="$4"
 BASE=/srv/skinote; REL="$BASE/releases"; NEW="$REL/$NAME"; INC="$REL/.incoming-$NAME"
 NODE=/usr/local/bin/node; DATA=/var/lib/skinote; OPS=/var/log/skinote-ops
 UNIT_DIR=/etc/systemd/system; SITE_FILE=/etc/caddy/sites/skinote.caddy; ENV_FILE=/etc/skinote/skinote.env
+SECRETS_FILE=/etc/skinote/secrets.env
+SECRET_NAMES="SKINOTE_PIN_PEPPER SKINOTE_SESSION_KEY SKINOTE_FINGERPRINT_KEY SKINOTE_IP_KEY SKINOTE_PROXY_TOKEN"
 PREV_UNITS=/etc/skinote/units.prev; SITE_PREV=/etc/skinote/skinote.caddy.prev
 UNITS="skinote-server.service skinote-backup.service skinote-backup.timer skinote-alert@.service"
 log() { printf '  [서버] %s\n' "$*" || true; }
 fail() { printf '  [서버] 실패: %s\n' "$*" >&2 || true; exit 1; }
 exec 9>/run/skinote-deploy.lock
 flock -n 9 || fail "다른 배포 작업이 도는 중입니다(/run/skinote-deploy.lock)"
+case "$SITE" in '' | *[!A-Za-z0-9.-]*) fail "사이트 주소 모양이 틀렸습니다" ;; esac
 
 live() { "$NODE" -e "fetch('http://127.0.0.1:$PORT/api/health/live',{signal:AbortSignal.timeout(2000)}).then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"; }
 # wait_live <초>: 그 시간 안에 살아 있음이 답하면 0. 마이그레이션 동안은 서버가 답하지 않는다(동기).
@@ -364,6 +457,35 @@ if [ ! -f "$ENV_FILE" ]; then
   mv -f "$ENV_FILE.tmp" "$ENV_FILE"
   log "설정 파일을 만들었습니다: $ENV_FILE (첫 매장 id $shop_id)"
 fi
+# 앱 주소(SKINOTE_PUBLIC_ORIGIN): 서버가 Origin을 맞춰 보고 기기 서명 문장에 넣는다. 없으면 넣고, 사이트 주소가 바뀌었으면 따라 고친다.
+want_origin="https://$SITE"
+env_origin="$(sed -n 's/^SKINOTE_PUBLIC_ORIGIN=//p' "$ENV_FILE" | tail -n 1)"
+if [ -z "$env_origin" ]; then
+  printf '\n# 앱 주소(배포가 SKINOTE_SITE로 넣음)\nSKINOTE_PUBLIC_ORIGIN=%s\n' "$want_origin" >>"$ENV_FILE"
+  log "설정에 앱 주소를 넣었습니다: SKINOTE_PUBLIC_ORIGIN=$want_origin"
+elif [ "$env_origin" != "$want_origin" ]; then
+  sed -i "s|^SKINOTE_PUBLIC_ORIGIN=.*|SKINOTE_PUBLIC_ORIGIN=$want_origin|" "$ENV_FILE"
+  log "설정의 앱 주소를 사이트 주소에 맞췄습니다: $env_origin → $want_origin"
+fi
+chown root:skinote "$ENV_FILE"
+chmod 640 "$ENV_FILE"
+# 비밀값(없을 때만 한 번 만든다: 넷 + 앞단 표). 값은 이 파일에만 있고 기록 · 화면에 찍지 않는다. 앞단 표가 없는 옛 파일에는 표만 더한다.
+new_secret() { "$NODE" -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))'; }
+if [ ! -f "$SECRETS_FILE" ]; then
+  ( umask 077
+    { printf '# 스키노트 서버 비밀값(배포가 만듦, root:skinote 0640). 저장소 · 기록 · 백업에 옮기지 않는다.\n'
+      for n in $SECRET_NAMES; do printf '%s=%s\n' "$n" "$(new_secret)"; done; } >"$SECRETS_FILE.tmp" )
+  chown root:skinote "$SECRETS_FILE.tmp"
+  chmod 640 "$SECRETS_FILE.tmp"
+  mv -f "$SECRETS_FILE.tmp" "$SECRETS_FILE"
+  log "비밀값 파일을 만들었습니다: $SECRETS_FILE (값은 찍지 않음)"
+elif ! grep -q '^SKINOTE_PROXY_TOKEN=' "$SECRETS_FILE"; then
+  printf 'SKINOTE_PROXY_TOKEN=%s\n' "$(new_secret)" >>"$SECRETS_FILE"
+  log "비밀값 파일에 앞단 표를 더했습니다(값은 찍지 않음)"
+fi
+chown root:skinote "$SECRETS_FILE"
+chmod 640 "$SECRETS_FILE"
+for n in $SECRET_NAMES; do grep -q "^$n=" "$SECRETS_FILE" || fail "$SECRETS_FILE에 $n이(가) 없습니다"; done
 env_port="$(sed -n 's/^SKINOTE_PORT=//p' "$ENV_FILE" | tail -n 1)"
 [ -z "$env_port" ] || [ "$env_port" = "$PORT" ] || fail "설정의 SKINOTE_PORT($env_port)가 Caddy · 유닛 · 배포의 포트($PORT)와 다릅니다"
 env_data="$(sed -n 's/^SKINOTE_DATA_DIR=//p' "$ENV_FILE" | tail -n 1)"
@@ -414,19 +536,26 @@ systemctl enable skinote-server.service >/dev/null 2>&1 || { restore_units; fail
 systemctl enable --now skinote-backup.timer >/dev/null 2>&1 || { restore_units; fail "skinote-backup.timer를 켜지 못했습니다"; }
 
 # 3) Caddy 사이트(바뀐 때만). 검사 · 다시 읽기에 걸리면 되돌린다(다른 프로젝트의 다음 reload가 이 파일에 걸리지 않게).
-# 공통 Caddyfile은 고치지 않는다.
+# 공통 Caddyfile은 고치지 않는다. 릴리스의 사이트 파일에 앞단 표를 채워(서버 안에서만) root:caddy 0640으로 둔다.
 site_changed=0
 had_site=0
+proxy_token="$(sed -n 's/^SKINOTE_PROXY_TOKEN=//p' "$SECRETS_FILE" | tail -n 1)"
+case "$proxy_token" in '' | *[!A-Za-z0-9_-]*) fail "$SECRETS_FILE의 SKINOTE_PROXY_TOKEN 모양이 틀렸습니다" ;; esac
+SITE_NEW="$(mktemp /etc/skinote/skinote.caddy.XXXXXX)"
+sed "s/__SKINOTE_PROXY_TOKEN__/$proxy_token/g" "$NEW/deploy/skinote.caddy" >"$SITE_NEW"
+grep -q '__SKINOTE_PROXY_TOKEN__' "$SITE_NEW" && { rm -f "$SITE_NEW"; fail "Caddy 사이트 파일에 앞단 표를 채우지 못했습니다"; }
+chown root:caddy "$SITE_NEW"
+chmod 640 "$SITE_NEW"
 restore_site() {
   [ "$site_changed" = 1 ] || return 0
-  if [ "$had_site" = 1 ]; then cp -p "$SITE_PREV" "$SITE_FILE"; else rm -f "$SITE_FILE"; fi
+  if [ "$had_site" = 1 ]; then cp -p "$SITE_PREV" "$SITE_FILE"; chown root:caddy "$SITE_FILE"; chmod 640 "$SITE_FILE"; else rm -f "$SITE_FILE"; fi
   systemctl reload caddy || log "주의: 되돌린 뒤에도 Caddy를 다시 읽지 못했습니다(journalctl -u caddy)"
   site_changed=0
   log "Caddy 사이트 파일을 전 것으로 되돌렸습니다"
 }
-if ! cmp -s "$NEW/deploy/skinote.caddy" "$SITE_FILE"; then
+if ! cmp -s "$SITE_NEW" "$SITE_FILE"; then
   if [ -f "$SITE_FILE" ]; then cp -p "$SITE_FILE" "$SITE_PREV"; had_site=1; fi
-  install -m 644 -o root -g root "$NEW/deploy/skinote.caddy" "$SITE_FILE"
+  install -m 640 -o root -g caddy "$SITE_NEW" "$SITE_FILE"
   if ! out="$(caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1)"; then
     if [ "$had_site" = 1 ]; then cp -p "$SITE_PREV" "$SITE_FILE"; else rm -f "$SITE_FILE"; fi
     restore_units
@@ -441,6 +570,10 @@ if ! cmp -s "$NEW/deploy/skinote.caddy" "$SITE_FILE"; then
   fi
   log "Caddy 사이트 바꿈"
 fi
+rm -f "$SITE_NEW"
+# 옛 배포가 0644로 둔 파일도 표가 든 뒤에는 caddy 그룹만 읽는다.
+chown root:caddy "$SITE_FILE"
+chmod 640 "$SITE_FILE"
 
 # 4) 링크를 한 번에 바꾸고 다시 시작한다. 살아 있음 + 서버 안의 상태(ok, 릴리스 이름)까지 확인한다.
 switch_to "$NAME"
@@ -751,6 +884,18 @@ case "$MODE" in
     stage_release "$parent" "$name" example.invalid
     say "끝(서버에 붙지 않음): $name"
     ;;
+  shop-cli)
+    need_tool node
+    setup_ssh
+    preflight
+    step "매장 명령줄: ${SHOP_CLI_ARGS[0]} (서버 $SKINOTE_SSH)"
+    # 요청 JSON은 변수에만 두고 ssh 표준 입력으로 보낸다(파일 · 명령줄 인자 없음). 서버 쪽 명령은 늘 같다.
+    request="$(node "$DEPLOY_DIR/shop-cli-request.mjs" "${SHOP_CLI_ARGS[@]}")" || die '매장 명령줄 인자가 틀렸습니다(위 줄)'
+    code=0
+    printf '%s' "$request" | ssh "${SSH_OPTS[@]}" "$SKINOTE_SSH" "$REMOTE_SHELL $REMOTE_BASE/current/deploy/shop-cli.sh" || code=$?
+    unset request
+    ((code == 0)) || die "서버의 매장 명령줄이 끝 코드 $code로 끝났습니다(64 쓰는 법 · 65 자료 · 69 지금 못 함 · 70 처리 오류 · 75 배포 중 · 78 설정)"
+    ;;
   status)
     setup_ssh
     preflight
@@ -775,6 +920,7 @@ case "$MODE" in
     fi
     check_dist
     check_server_tests
+    check_e2e
     preflight
     step "릴리스 만들기: $name"
     STAGE_TMP="$(mktemp -d /tmp/skinote-release.XXXXXX)"
@@ -785,7 +931,7 @@ case "$MODE" in
       "$STAGE_TMP/$name/" "$SKINOTE_SSH:$REMOTE_BASE/releases/.incoming-$name/"
     say '올림'
     step '설치 · 켜기'
-    run_job "deploy-$name" "$(remote_install_script)" "$INSTALL_JOB_LIMIT" "$name" "$APP_PORT" "$KEEP_RELEASES"
+    run_job "deploy-$name" "$(remote_install_script)" "$INSTALL_JOB_LIMIT" "$name" "$APP_PORT" "$KEEP_RELEASES" "$SKINOTE_SITE"
     check_public "$name"
     say "배포 끝: $name"
     ;;

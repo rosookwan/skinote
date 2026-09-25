@@ -331,6 +331,11 @@ export interface ConnectionState {
   online: boolean;
   /** 보냄 대기에 있는 명령 수. */
   pendingCount: number;
+  /**
+   * false면 이 기기에는 보냄 대기가 없다(서버에 붙은 기기: 명령은 바로 보내거나 거절된다). 화면은 바닥줄의 `전송 대기` 숫자를 그리지
+   * 않는다. 없으면 보냄 대기가 있는 기기(체험판의 기사 기기).
+   */
+  sendQueue?: boolean;
   /** 마지막으로 서버와 맞춘 때(연결이 끊긴 때). */
   lastSyncAt?: IsoTime;
 }
@@ -339,8 +344,9 @@ export interface ConnectionState {
  * 조회가 실패한 까닭. 화면은 코드로만 가르고 문장은 스스로 쓴다.
  * NOT_FOUND: 없는 접수 · 업무(다시 읽어도 같다), NETWORK: 연결이 끊겼거나 서버가 답하지 않음(다시 읽으면 될 수 있다),
  * UNKNOWN_VIEW: 이 서버에 없는 화면 · 조회(앱과 서버의 판이 다름).
+ * FORBIDDEN: 이 세션 · 기기가 읽을 수 없는 것(기사 세션의 다른 차량 업무 · 장부). 다시 읽어도 같다(`이 기기에서 사용 불가`).
  */
-export type DomainErrorCode = 'NOT_FOUND' | 'NETWORK' | 'UNKNOWN_VIEW';
+export type DomainErrorCode = 'NOT_FOUND' | 'NETWORK' | 'UNKNOWN_VIEW' | 'FORBIDDEN';
 
 export class DomainError extends Error {
   readonly code: DomainErrorCode;

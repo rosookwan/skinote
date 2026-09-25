@@ -248,7 +248,7 @@ export function measureRules(options) {
   // ⑥ 스크롤: 페이지 스크롤, 스크롤 영역, 스크롤 상자 안의 목록, 반쯤 잘린 줄.
   const pageHeight = Math.max(doc.scrollHeight, document.body.scrollHeight);
   if (pageHeight > vh + 1) add('scroll', null, { why: '페이지 세로 스크롤', need: pageHeight, has: vh });
-  const listItem = 'li,tr,[role="row"],[role="listitem"],[role="option"],.sn-check,.sn-key,.pos-van-row,.pos-choice-button,.pos-visit-choice';
+  const listItem = 'li,tr,[role="row"],[role="listitem"],[role="option"],.sn-check,.sn-key,.sn-kb-key,.pos-van-row,.pos-choice-button,.pos-visit-choice';
   for (const el of document.body.querySelectorAll('*')) {
     if (!visible(el)) continue;
     const s = cs(el);
@@ -258,7 +258,7 @@ export function measureRules(options) {
     if ((scrollY && el.scrollHeight > el.clientHeight + 1) || (scrollX && el.scrollWidth > el.clientWidth + 1)) add('scroll', el, { why: '스크롤 영역' });
     else if (el.querySelector(listItem)) add('scroll', el, { why: '스크롤 상자 안의 목록' });
   }
-  const frames = '.sn-ledger,.sn-slip-items,.sn-checklist-list,.sn-dialog,.sn-keypad,.sn-sheet,.sn-slip,.pos-side,.pos-card,.sn-footer,.sn-rowbar';
+  const frames = '.sn-ledger,.sn-slip-items,.sn-checklist-list,.sn-dialog,.sn-keypad,.sn-kb,.sn-sheet,.sn-slip,.pos-side,.pos-card,.sn-footer,.sn-rowbar';
   for (const item of root.querySelectorAll(listItem)) {
     if (!visible(item)) continue;
     const r = item.getBoundingClientRect();

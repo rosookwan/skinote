@@ -6,16 +6,11 @@ import {
 import { openOrRestoreDraft } from '@skinote/ui';
 import { describe, expect, it } from 'vitest';
 import { chainDrafts, chainGoesOn, confirmEnvelope, draftOptions, sendChain } from '../src/components/ConfirmFlow.tsx';
-import { heldNumbers } from '../src/fixture/assets.ts';
-import { applyCommand } from '../src/fixture/commands.ts';
-import { depositOf, heldAmount, heldUnits } from '../src/fixture/deposits.ts';
+import { assetId, depositOf, type FxState, heldAmount, heldNumbers, heldUnits, kstAt, lastReturnSlotAt, liftReturnable, nightPrepSlotAt, orderSlip, routeTasks, when } from '@skinote/domain';
+import { SHOP_RULES } from '@skinote/domain/sample';
+import { applyCommand, createSeed } from '../src/fixture/demo.ts';
 import { FixtureClient } from '../src/fixture/fixture-client.ts';
-import type { FxState } from '../src/fixture/model.ts';
-import { lastReturnSlotAt, nightPrepSlotAt, routeTasks } from '../src/fixture/rules.ts';
-import { assetId, createSeed, liftReturnable, SHOP_RULES } from '../src/fixture/seed.ts';
 import { STORY } from '../src/fixture/story.ts';
-import { kstAt, when } from '../src/fixture/time.ts';
-import { orderSlip } from '../src/fixture/views.ts';
 
 const ms = (h: number, m: number, day = 0) => kstAt('2026-12-26', day, h, m);
 const iso = (h: number, m: number, day = 0) => new Date(ms(h, m, day)).toISOString();

@@ -10,6 +10,7 @@ import { after, test } from 'node:test';
 import { checkBackupFile, isVerified } from '../src/backup-files.js';
 import { closeDatabases, openDatabases } from '../src/databases.js';
 import { startServer } from '../src/server.js';
+import { loadMigrations } from '@skinote/schema';
 import { collectLog, request, tempDir, testConfig } from './helpers.js';
 
 const temp = tempDir();
@@ -26,7 +27,9 @@ function prepared(name, shops) {
 
 /** 그 파일의 post_migration 사본 이름(오래된 것 먼저). @param {string} dir @param {string} base */
 function postCopies(dir, base) {
-  return readdirSync(dir).filter(n => n.startsWith(`${base}.post_migration.v0001.`) && n.endsWith('.sqlite')).sort();
+  // 매장 파일의 지금 판(배포한 shop 마이그레이션 수)의 사본.
+  const version = String(loadMigrations('shop').length).padStart(4, '0');
+  return readdirSync(dir).filter(n => n.startsWith(`${base}.post_migration.v${version}.`) && n.endsWith('.sqlite')).sort();
 }
 
 test('a shop file the service user cannot write is reported as READ_ONLY_FILE and health is 503', { skip: isRoot && 'root ignores file modes' }, async () => {

@@ -1,4 +1,6 @@
-# 스키노트 매장 앱(PWA) + API. deploy.sh가 아래 사이트 주소 자리를 SKINOTE_SITE 값으로 채워 /etc/caddy/sites/skinote.caddy로 둔다.
+# 스키노트 매장 앱(PWA) + API. deploy.sh가 아래 사이트 주소 자리를 SKINOTE_SITE 값으로 채우고(릴리스 사본), 서버의 설치 작업이 앞단 표
+# 자리(아래 X-Skinote-Proxy 줄)를 /etc/skinote/secrets.env의 SKINOTE_PROXY_TOKEN으로 채워 /etc/caddy/sites/skinote.caddy(root:caddy 0640)로
+# 둔다. 표는 서버 밖으로 나가지 않는다(릴리스 사본 · 저장소에는 자리만 있다).
 # 공통 Caddyfile은 고치지 않는다: 그 파일의 static_app(압축 · file_server · 기본 머리)을 가져다 쓰고, 이 파일만 스키노트의 것이다.
 # deploy.sh는 배포 전에 static_app 조각을 읽어 root · {args}가 없는지 보고, 배포 뒤 릴리스의 다른 파일(server/ · deploy/ · RELEASE)이
 # 바깥에서 보이지 않는지 확인한다.
@@ -49,6 +51,12 @@ __SKINOTE_SITE__ {
 			max_size 1MB
 		}
 		reverse_proxy 127.0.0.1:3100 {
+			# 손님 주소(서버의 로그인 제한 · 기록): Caddy가 본 상대 주소 하나로 못 박는다. 손님이 보낸 X-Forwarded-For · Forwarded는
+			# 넘기지 않는다(공통 Caddyfile의 trusted_proxies와 상관없이). 서버는 앞단 표 머리가 맞을 때만 이 주소를 믿는다
+			# (packages/server/src/security.js clientIp): 같은 VPS의 다른 프로세스가 3100에 바로 붙어 주소를 꾸미지 못하게.
+			header_up X-Forwarded-For {remote_host}
+			header_up -Forwarded
+			header_up X-Skinote-Proxy __SKINOTE_PROXY_TOKEN__
 			transport http {
 				keepalive 30s
 			}

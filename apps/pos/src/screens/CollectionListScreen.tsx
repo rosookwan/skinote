@@ -5,7 +5,8 @@
 // 줄을 누르면 고르고, 바닥줄 자리에 동작 줄: 설정의 동작(▲ 위로 · ▼ 아래로 · 맨 위로 · 수거 실패 · 전화 · 시간순 정렬)과 '닫기'.
 // 어느 동작이 보일지는 설정(ledger_view_actions)과 줄의 능력(conditions), 누를 수 있는지는 줄의 disabledActions(서버)가 정한다.
 // 끝 4자리 숫자판은 높이 600px 이상 기사 태블릿에서 오른쪽 판, 그보다 낮거나 휴대폰이면 머리줄 '끝 4자리'로 아래 판.
-// 바닥줄: '완료 4 · 전송 대기 0 · 잔여 7 · 차량 재고 …'(카운터는 전송 대기 없음), 쪽 넘김, 주 버튼 하나(기사 보라 '매장 입고 · 14개', 카운터 주황 '인쇄').
+// 바닥줄: '완료 4 · 전송 대기 0 · 잔여 7 · 차량 재고 …'(카운터와 서버에 붙은 기사 기기는 보냄 대기가 없어 전송 대기 없음), 쪽 넘김,
+// 주 버튼 하나(기사 보라 '매장 입고 · 14개', 카운터 주황 '인쇄').
 // 화면은 규칙을 계산하지 않는다: 순서 · 도장 · 숫자 · 긴급 · 누를 수 있는지는 읽기 모델 그대로이고, 누르면 명령을 보낸다.
 // 기사의 배달 목록(delivery_list, ui 6-5, #/driver/:date/deliveries)도 같은 틀이다: 배달 시각 묶음, 배달 도장(적재 → 배달), 줄의 팀 칸을
 // 누르면 줄 고르기 대신 업무 판(V7, plan §8 D2)을 열고, 끝 4자리로 찾은 팀도 업무 판으로 간다. 머리줄 메뉴 `배달 목록` · `수거 목록`은
@@ -309,8 +310,11 @@ function useCollectionScreen(workspace: Workspace, viewKey: DriverListKey, date:
     return { label: name, onPress: () => dispatchAction(key, { flow, target }) };
   })() : null;
 
+  // 보냄 대기가 없는 기기(서버에 붙은 기기)는 `전송 대기` 숫자를 그리지 않는다(늘 0이라 뜻이 없다).
+  const noQueue = connection.sendQueue === false;
   const metrics: FooterMetric[] = view && result
     ? view.metrics.flatMap((row) => {
+        if (noQueue && row.metric_key === 'pending_count') return [];
         const value = result.metrics.find((m) => m.metricKey === row.metric_key);
         return value ? [{ row, value }] : [];
       })

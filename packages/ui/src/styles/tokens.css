@@ -43,6 +43,13 @@
   --sn-shadow: rgba(27, 42, 74, 0.18);
 
   --sn-accent: var(--sn-orange);
+
+  /* 화면 키보드(HangulKeyboard)가 잰 판 크기로 까는 값의 기본(부품이 판에 새로 깐다): 한 칸 폭 · 키 줄 수 · 표시 칸 높이 · 제목 줄 높이 · 키의 칸 수. */
+  --sn-kb-unit: var(--sn-kb-key);
+  --sn-kb-rows: 4;
+  --sn-kb-display-h: var(--sn-kb-key);
+  --sn-kb-title-h: var(--sn-kb-title);
+  --sn-kb-n: 1;
 }
 
 .sn-root[data-accent='orange'] { --sn-accent: var(--sn-orange); }

@@ -1,0 +1,19 @@
+{
+  "name": "@skinote/domain",
+  "version": "0.1.0",
+  "private": true,
+  "description": "스키노트 업무 규칙: 도장 · 돈 · 일정 · 재고 규칙, 명령 처리기, 읽기 모델 만들기. SQL · React · Node 내장 모듈 없는 순수 함수이고, 체험판(FixtureClient)과 서버 저장소가 같은 코드를 쓴다.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./sample": "./src/sample/index.ts"
+  },
+  "engines": { "node": ">=22.18.0" },
+  "dependencies": {
+    "@skinote/contract": "*"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  }
+}

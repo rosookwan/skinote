@@ -11,14 +11,10 @@ import { describe, expect, it } from 'vitest';
 import {
   amountOf, checkParams, draftParams, withCount, withDefer, withoutDefer,
 } from '../src/app/closing-draft.ts';
-import { applyCommand } from '../src/fixture/commands.ts';
-import { postingDate, walletLeft } from '../src/fixture/closing.ts';
-import { depositOf, heldAmount } from '../src/fixture/deposits.ts';
+import { depositOf, type FxState, heldAmount, kstAt, ownDue, postingDate, walletLeft } from '@skinote/domain';
+import { applyCommand } from '../src/fixture/demo.ts';
 import { FixtureClient } from '../src/fixture/fixture-client.ts';
-import type { FxState } from '../src/fixture/model.ts';
-import { ownDue } from '../src/fixture/rules.ts';
 import { applyStory, STORY } from '../src/fixture/story.ts';
-import { kstAt } from '../src/fixture/time.ts';
 import { closingColumns, closingLayout } from '../src/screens/ClosingScreen.tsx';
 import { parseHash } from '../src/app/router.ts';
 

@@ -10,7 +10,7 @@ import { APP_STRINGS_KO, say } from '../src/app/strings.ts';
 import { confirmText } from '../src/components/ConfirmFlow.tsx';
 import { choicesPerPage } from '../src/components/NoticeDialog.tsx';
 import { laterThanNow } from '../src/components/VisitResultDialog.tsx';
-import { kstAt } from '../src/fixture/time.ts';
+import { kstAt } from '@skinote/domain';
 import { hrefFor, parseHash, screenRoute } from '../src/app/router.ts';
 import { keepPositions } from '../src/screens/keep-position.ts';
 
@@ -197,6 +197,26 @@ describe('가져오기 경계', () => {
     expect(ui!.forbid('@skinote/core/src/x')).toMatch(/core/);
     expect(ui!.forbid('node:path')).toMatch(/Node/);
     expect(ui!.forbid('@skinote/layout')).toBeNull();
+  });
+
+  it('업무 규칙(@skinote/domain): 체험 자료(fixture/)만 가져오고, domain은 contract만 가져온다', () => {
+    const rule = (dir: string) => BOUNDARY_RULES.find((r) => r.dir === dir)!;
+    const pos = rule('apps/pos/src');
+    expect(pos.forbid('@skinote/domain', 'apps/pos/src/fixture/fixture-client.ts')).toBeNull();
+    expect(pos.forbid('@skinote/domain', 'apps/pos/src/fixture/demo.ts')).toBeNull();
+    expect(pos.forbid('@skinote/domain', 'apps/pos/src/app/App.tsx')).toMatch(/fixture/);
+    expect(pos.forbid('@skinote/domain/sample', 'apps/pos/src/app/preview.tsx')).toMatch(/fixture/);
+    expect(pos.forbid('@skinote/domain', 'apps/pos/src/screens/LedgerScreen.tsx')).toMatch(/fixture/);
+    expect(pos.forbid('@skinote/domain', 'apps/pos/src/main.tsx')).toMatch(/fixture/);
+    const domain = rule('packages/domain/src');
+    expect(domain.forbid('@skinote/contract')).toBeNull();
+    expect(domain.forbid('./model.ts')).toBeNull();
+    expect(domain.forbid('react')).toMatch(/순수/);
+    expect(domain.forbid('@skinote/ui')).toMatch(/contract만/);
+    expect(domain.forbid('@skinote/layout')).toMatch(/contract만/);
+    expect(domain.forbid('@skinote/core')).toMatch(/core/);
+    expect(domain.forbid('node:sqlite')).toMatch(/Node/);
+    expect(domain.forbid('../../../apps/pos/src/fixture/demo.ts')).toMatch(/이름/);
   });
 });
 

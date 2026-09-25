@@ -2,6 +2,8 @@
 // 처음 화면은 어느 기기로 볼지 고른다: 카운터(포스) · 기사 태블릿 · 기사 휴대폰. 나가기에서는 체험 시계를 앞으로 돌리거나
 // 체험 자료를 처음(12월 26일 15:40)으로 되돌린다. 기사 기기의 나가기(#/exit?from=driver)에서는 기사 기기의 연결을 끊고 이어
 // 보냄 대기(점선 도장)를 볼 수 있다.
+// 서버 모드(로그인한 세션, 계획 work/impl-server/plan.md 6-3): 처음 화면은 없고(기기의 첫 화면으로 간다), 나가기는 오늘 · 직원 이름과
+// `장부`(기사는 `수거 목록`) · `로그아웃`(묻는 창 `로그아웃`)이다. 체험 시계 · 초기화 · 연결 끊기 체험은 체험판에만 있다.
 import type { LedgerViewResult } from '@skinote/contract';
 import { formatDateTitle, formatTime, useUi } from '@skinote/ui';
 import { useEffect, useState } from 'react';
@@ -9,11 +11,15 @@ import { useClient, useConfig, useConnection, useLive } from '../app/client.tsx'
 import { clearClosingDraft } from '../app/closing-draft.ts';
 import { clearNewOrder } from '../app/new-order-draft.ts';
 import { back, go, navState } from '../app/router.ts';
+import { shapeOf, useSession, type SessionControls } from '../app/session-context.ts';
 import { say } from '../app/strings.ts';
 import { NoticeDialog } from '../components/NoticeDialog.tsx';
 
-function useToday(): string | null {
-  const live = useLive<LedgerViewResult>('today', (c) => c.ledgerView('day_ledger', {}));
+/**
+ * 오늘 영업일(읽기 모델의 머리). 기사 쪽은 수거 목록에서 읽는다: 서버의 기사 세션은 장부(day_ledger)를 읽지 못한다(plan §5-4).
+ */
+function useToday(driver = false): string | null {
+  const live = useLive<LedgerViewResult>(driver ? 'today:driver' : 'today', (c) => c.ledgerView(driver ? 'collection_list' : 'day_ledger', {}));
   return live.data?.currentBusinessDate ?? null;
 }
 
@@ -46,6 +52,55 @@ export function StartScreen() {
 }
 
 export function ExitScreen({ from = 'pos' }: { from?: 'pos' | 'driver' }) {
+  const session = useSession();
+  if (session) return <SessionExit session={session} from={from} />;
+  return <DemoExit from={from} />;
+}
+
+/** 서버 모드의 나가기: 오늘 · 직원 · 기기 한 줄, 돌아가는 곳(카운터 `장부`, 기사 `수거 목록`), `로그아웃`(묻는 창). */
+function SessionExit({ session, from }: { session: SessionControls; from: 'pos' | 'driver' }) {
+  const driver = from === 'driver';
+  const today = useToday(driver);
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const who = session.info.staff.name + ' · ' + session.info.device.label;
+  const line = [today ? formatDateTitle(today) : '', who].filter(Boolean).join(' · ');
+  const toHome = () => {
+    if (driver) {
+      if (navState().fromDriver) back();
+      else if (today) go({ name: 'driver', date: today, device: shapeOf(session.info.device.kind) });
+    } else {
+      go({ name: 'ledger', date: null });
+    }
+  };
+  const logout = () => {
+    if (busy) return;
+    setBusy(true);
+    void session.logout().finally(() => setBusy(false));
+  };
+  return (
+    <div className="pos-plain">
+      <main className="pos-card">
+        <h1 className="pos-card-title">{say('exitTitle')}</h1>
+        <p className="pos-card-line">{line}</p>
+        <div className="pos-card-row">
+          <button type="button" className="sn-primary" data-primary="true" onClick={toHome}>{driver ? say('toList') : say('toLedger')}</button>
+          <button type="button" className="sn-button" onClick={() => setAsking(true)}>{say('logout')}</button>
+        </div>
+      </main>
+      {asking ? (
+        <NoticeDialog
+          title={say('logout')}
+          lines={[who]}
+          actions={[{ label: say('logout'), primary: true, onPress: () => { setAsking(false); logout(); } }]}
+          onClose={() => setAsking(false)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function DemoExit({ from }: { from: 'pos' | 'driver' }) {
   const client = useClient();
   const { timezone } = useUi();
   const today = useToday();

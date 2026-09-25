@@ -15,6 +15,8 @@ export interface DemoControls {
   /** 기사 기기의 연결을 끊거나 잇는다(체험). */
   setOffline(offline: boolean): void;
   driverOffline(): boolean;
+  /** 미리 보기(#/preview/login)의 직원 타일 이름(견본 직원). 화면이 도메인을 가져오지 않게 체험판이 넘긴다. */
+  previewStaff(): string[];
 }
 
 export type AppClient = DomainClient & Partial<DemoControls>;
@@ -90,11 +92,11 @@ export interface LiveState<T> extends Live<T> {
 
 /**
  * 읽기가 실패했을 때의 다음 상태: 같은 열쇠면 가진 읽기 모델을 그대로 두고(화면이 비지 않게) 까닭만 적고, 다른 열쇠면 비운다.
- * 없는 것(NOT_FOUND)이 아니면 잠시 뒤 다시 읽는다(retry).
+ * 없는 것(NOT_FOUND) · 이 기기가 읽을 수 없는 것(FORBIDDEN)이 아니면 잠시 뒤 다시 읽는다(retry).
  */
 export function afterFailure<T>(prev: LiveState<T>, key: string, error: unknown, tick: number): { state: LiveState<T>; retry: boolean } {
   const code = domainErrorCode(error);
-  return { state: { data: prev.key === key ? prev.data : null, error: code, key, tick }, retry: code !== 'NOT_FOUND' };
+  return { state: { data: prev.key === key ? prev.data : null, error: code, key, tick }, retry: code !== 'NOT_FOUND' && code !== 'FORBIDDEN' };
 }
 
 /**
@@ -136,7 +138,7 @@ export function useConnection(): ConnectionState {
   useEffect(() => {
     const read = () => setState((prev) => {
       const next = client.connection();
-      return prev.online === next.online && prev.pendingCount === next.pendingCount && prev.lastSyncAt === next.lastSyncAt ? prev : next;
+      return prev.online === next.online && prev.pendingCount === next.pendingCount && prev.sendQueue === next.sendQueue && prev.lastSyncAt === next.lastSyncAt ? prev : next;
     });
     read();
     return client.subscribe(read);

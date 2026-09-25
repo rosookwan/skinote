@@ -1,0 +1,21 @@
+{
+  "name": "@skinote/store",
+  "version": "0.1.0",
+  "private": true,
+  "description": "스키노트 서버 저장소: 도메인 상태(ShopState) ↔ 매장 파일 · control 파일의 표. 매장 만들기, 명령 트랜잭션(command_log 멱등 · events · change_log · rev), 기기 · 세션 행, 쓰는 사람 하나를 지키는 OS 잠금. SQL은 이 패키지에만 있다(AGENTS.md).",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "engines": { "node": ">=22.18.0" },
+  "dependencies": {
+    "@skinote/contract": "*",
+    "@skinote/domain": "*",
+    "@skinote/schema": "0.1.0"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.ts"
+  }
+}

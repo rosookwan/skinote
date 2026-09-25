@@ -181,8 +181,9 @@ async function openNewOrder(page, h) {
   await page.clock.fastForward('05:00');
   await h.open('#/orders/new', '.pos-new-kinds');
   await page.locator('.pos-new-field.is-name').click();
-  await page.locator('.pos-text-input').fill('이민호');
-  await page.getByRole('dialog').getByRole('button', { name: '입력', exact: true }).click();
+  // 대표자는 화면 키보드(편집 칸 없음): 카운터 자판의 두벌식 자리로 ㅇ ㅣ ㅁ ㅣ ㄴ ㅎ ㅗ = 이민호.
+  for (const code of ['KeyD', 'KeyL', 'KeyA', 'KeyL', 'KeyS', 'KeyG', 'KeyH']) await page.keyboard.press(code);
+  await page.locator('.sn-kb [data-primary="true"]').click();
   await page.locator('.pos-new-field.is-phone').click();
   await page.keyboard.type('01000000042');
   await page.getByRole('dialog').getByRole('button', { name: '입력', exact: true }).click();

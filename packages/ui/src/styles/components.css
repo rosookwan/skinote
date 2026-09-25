@@ -88,6 +88,12 @@
 .sn-header-shop { flex: 1 1 0; font-size: var(--sn-font-body); font-weight: 700; color: var(--sn-ink-muted); }
 /* 매장 이름이 들어가지 않아 비었으면 자리도 차지하지 않는다(왼쪽 묶음의 사이 간격도 없앤다). */
 .sn-header-shop:empty { display: none; }
+/* 연결 끊김 이름표(서버에 붙은 카운터): 매장 이름 자리를 쓰고, 가장 짧은 글 `연결 끊김`의 폭은 늘 남긴다(줄이는 단계가 이 폭을 뺀다).
+   카운터는 머리줄 이름표, 기사 기기는 연결 띠(ui-architecture §5 · §7). */
+/* (.sn-tag-slot의 min-width: 0보다 앞서도록 두 클래스로) */
+.sn-tag-slot.sn-header-offline { min-width: 6em; font-size: var(--sn-font-min); }
+/* 기사 기기의 연결 띠와 같은 노랑(회색 이름표는 어르신 직원이 놓치기 쉽다). */
+.sn-header-offline > .sn-tag.sn-fit { background: var(--sn-strip); border-color: var(--sn-ink-muted); color: var(--sn-ink); font-weight: 800; }
 .sn-unit {
   display: inline-flex; align-items: center; flex: none; padding: var(--sn-space-xs) var(--sn-space-m);
   border-radius: var(--sn-radius-m); background: var(--sn-purple-wash); color: var(--sn-purple-ink);
@@ -508,10 +514,67 @@
 
 /* 숫자판(NumberPad): 끝 4자리 숫자판과 같은 키 · 표시 칸. 금액의 `입력`은 줄 전체, 표시 칸은 글자 사이를 띄우지 않는다(번호 · 금액). */
 .sn-numpad-display { letter-spacing: 0; }
+/* 가린 비밀번호(● ● ● ●): 숫자는 보이지 않고 자리 수만. */
+.sn-numpad-display.is-masked { letter-spacing: 0.1em; }
 .sn-key.is-wide { grid-column: 1 / -1; }
 .sn-numpad.is-inline { border-radius: var(--sn-radius-paper); }
 /* 숫자 키만(값은 부르는 쪽이 따로 보임): 판 여백 없이 키 격자만. */
 .sn-numpad.is-keys { padding: 0; background: transparent; }
+
+/* 화면 키보드(HangulKeyboard, 계획 work/impl-server/plan.md 7-3): 아래에서 올라오는 판. 자모 키 글자는 등급의 --sn-kb-glyph(낱자모는 글자 크기의 절반쯤으로
+   그려져서 제목 크기보다 크게), 말 키는 본문 크기. `닫기`는 키 줄 밖(제목 줄 끝 · 제목 줄이 없으면 표시 칸 줄 끝). 판 폭 · 한 칸 폭 · 표시 칸 높이 · 제목 줄 높이는
+   부품이 잰 판 크기로 고른 값(--sn-kb-unit · --sn-kb-display-h · --sn-kb-title-h), 키 높이 · 사이 · 여백은 등급 값(--sn-kb-*)이다.
+   키 폭 = 칸 폭 × 칸 수 + 사이 × (칸 수 − 1)이라 줄마다 판 안 폭과 같다. 표시 칸은 편집 칸이 아니라 글을 보이기만 하고(운영체제 자판 없음),
+   가장 긴 글이 들어가는 줄 수만큼 높아 스크롤 · 잘림이 없다(글자마다 줄을 바꿀 수 있게 break-all). */
+.sn-kb {
+  display: flex; flex-direction: column; gap: var(--sn-kb-gap); max-width: var(--sn-kb-max);
+  padding: var(--sn-kb-inset); background: var(--sn-paper); border-radius: var(--sn-radius-m) var(--sn-radius-m) 0 0;
+  box-shadow: 0 calc(var(--sn-space-xs) * -1) var(--sn-space-l) var(--sn-shadow); outline: none;
+}
+.sn-kb-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sn-kb-gap); flex: none; height: var(--sn-kb-title-h); min-width: 0; }
+/* 제목과 그 아래 안내 한 줄(`입력`을 눌렀는데 받지 않는 글일 때만): 한 칸에 위아래로, 제목은 늘 보인다. */
+.sn-kb-label { display: flex; flex-direction: column; justify-content: center; flex: 1 1 auto; min-width: 0; align-self: stretch; }
+.sn-kb-title { margin: 0; font-size: var(--sn-font-body); font-weight: 900; line-height: var(--sn-line-body); color: var(--sn-ink); white-space: nowrap; }
+.sn-kb-note { font-weight: 800; color: var(--sn-ink-muted); }
+.sn-kb-display-row { display: flex; align-items: center; gap: var(--sn-kb-gap); flex: none; height: var(--sn-kb-display-h); min-width: 0; }
+/* 제목 줄이 없는 모양: 제목은 표시 칸 앞의 회색 이름표. */
+.sn-kb-display-row > .sn-kb-label { flex: none; }
+.sn-kb-display-row > .sn-kb-label > .sn-kb-title { color: var(--sn-ink-muted); }
+.sn-kb-close { flex: none; }
+.sn-kb-display {
+  display: flex; align-items: center; flex: 1 1 0; min-width: 0; align-self: stretch;
+  padding: 0 calc(var(--sn-kb-display-pad) - var(--sn-line-strong) * 2) 0 calc(var(--sn-kb-display-pad) - var(--sn-line-strong));
+  border: var(--sn-line-strong) solid var(--sn-rule); border-radius: var(--sn-radius-m); background: var(--sn-paper);
+}
+.sn-kb-display.has-value { border-color: var(--sn-ink); }
+.sn-kb-text {
+  flex: 1 1 0; min-width: 0; padding-right: var(--sn-line-strong);
+  font-size: var(--sn-font-big); font-weight: 800; line-height: 1.3; color: var(--sn-ink);
+  white-space: pre-wrap; word-break: break-all; overflow-wrap: anywhere;
+}
+/* 조합 중인 음절(다음 자모와 묶일 수 있음)은 밑줄. */
+.sn-kb-composing { text-decoration: underline; text-decoration-thickness: var(--sn-line-strong); text-underline-offset: var(--sn-line-stamp); }
+/* 글자 칸을 먹지 않는 막대(오른쪽 안 여백에 그려져 줄을 바꾸지 않는다). */
+.sn-kb-caret { display: inline-block; width: var(--sn-line-strong); height: 1.15em; margin-right: calc(var(--sn-line-strong) * -1); vertical-align: text-bottom; background: var(--sn-ink); }
+.sn-kb-placeholder { margin-left: var(--sn-space-xs); font-weight: 700; color: var(--sn-ink-muted); }
+.sn-kb-keys {
+  display: flex; flex-direction: column; justify-content: flex-end; gap: var(--sn-kb-gap); flex: none;
+  height: calc(var(--sn-kb-key) * var(--sn-kb-rows) + var(--sn-kb-gap) * (var(--sn-kb-rows) - 1));
+}
+.sn-kb-row { display: flex; justify-content: center; gap: var(--sn-kb-gap); flex: none; }
+.sn-kb-key, .sn-kb-blank { flex: none; width: calc(var(--sn-kb-unit) * var(--sn-kb-n) + var(--sn-kb-gap) * (var(--sn-kb-n) - 1)); height: var(--sn-kb-key); }
+.sn-kb-key {
+  display: inline-flex; align-items: center; justify-content: center; min-height: var(--sn-target); padding: 0;
+  border: var(--sn-line-strong) solid var(--sn-rule); border-radius: var(--sn-radius-m);
+  background: var(--sn-paper); color: var(--sn-ink); font-size: var(--sn-font-title); font-weight: 800; white-space: nowrap;
+  touch-action: manipulation; user-select: none; -webkit-user-select: none;
+}
+.sn-kb-key:active:not(:disabled) { background: var(--sn-rule-soft); }
+.sn-kb-key.is-jamo { font-size: var(--sn-kb-glyph); }
+.sn-kb-key.is-word { background: var(--sn-paper-shade); font-size: var(--sn-font-body); }
+.sn-kb-key[aria-pressed='true'] { background: var(--sn-ink); border-color: var(--sn-ink); color: var(--sn-paper); }
+.sn-kb-key.is-go { background: var(--sn-accent); border-color: var(--sn-accent); color: var(--sn-on-accent); font-size: var(--sn-font-big); font-weight: 900; }
+.sn-kb-key.is-go:disabled { background: var(--sn-rule); border-color: var(--sn-rule); color: var(--sn-ink-muted); }
 
 /* 결제 칸(MethodRow, 확정 창 V4 · ui 4-5): 두 줄 칸 = 제목 줄(글만) + 수단 줄(누르는 곳) + 아래 틈(어느 수단 줄이 어느 칸 것인지 갈라 보이게),
    한 줄 칸 = 버튼 없는 한 줄(누르는 곳 높이). 칸 사이의 가는 선은 안쪽 그림자라 높이를 먹지 않는다. 금액은 늘 오른쪽 끝. */

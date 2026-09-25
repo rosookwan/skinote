@@ -10,3 +10,9 @@ export * from './request-id.ts';
 export * from './ui-defaults.ts';
 export * from './validate.ts';
 export * from './shape.ts';
+export * from './auth.ts';
+// 들어오는 본문의 검사(plan §5-2). 작은 검사 말(str · obj …)은 wire.ts 안에만 두고 검사 함수와 한도만 내보낸다.
+export {
+  parseAuthBody, parseEnvelope, parseQuery, ID_PATTERN, KEY_PATTERN, LEDGER_VIEW_KEYS, QUEUE_FIELDS, WIRE_LIMITS, WIRE_QUERY_NAMES,
+  type AuthBodies, type EnvelopeOptions, type LedgerViewKey, type WireFailure, type WireQuery,
+} from './wire.ts';

@@ -6,6 +6,7 @@
 //   ④ 연결을 끊고(브라우저 오프라인) 다시 열면 앱이 뜨고 묶은 글꼴도 저장본에서 오는지
 //   ⑤ 서버를 아예 멈춘 뒤 새 창으로 기사 화면 주소를 열어도 뜨는지(이 스크립트가 서버를 띄웠을 때)
 //   ⑥ 개발 서버(vite)에서는 서비스 워커를 등록하지 않는지
+//   ⑦ 서버 API(api/v2/…)는 서비스 워커가 저장하거나 감싸지 않는지(계획 6-5: 세션 · 알림 연결은 늘 서버에서)
 // 단위 시험에 넣지 않는다(브라우저 필요). 실행: npm run build && npm run test:pwa
 //   환경 변수: SKINOTE_PWA_URL(기본 http://127.0.0.1:5182/skinote/, 없으면 vite preview --base /skinote/를 그 포트에 띄움),
 //   SKINOTE_UI_OUT(찍은 화면, 기본 work/screens/step3), SKINOTE_PWA_DEV=0이면 ⑥을 건너뜀
@@ -135,6 +136,20 @@ async function main() {
     check('브라우저가 푼 앱 id가 하위 경로 안', appId.startsWith(URL_BASE), appId || '(읽지 못함)');
     await cdp.detach();
     check('저장한 파일 수가 목록과 같다', sw1.entries === files.length && sw1.keys.length === 1, sw1.keys.join(', ') + ' · ' + sw1.entries + '개');
+
+    // ⑦ 서버 API는 서비스 워커를 거치지 않는다(체험판 빌드라 api가 없다: 미리 보기 서버의 답이 그대로 오면 된다).
+    const apiSeen = [];
+    const onApi = (res) => { if (new URL(res.url()).pathname.includes('/api/v2/')) apiSeen.push({ path: new URL(res.url()).pathname, worker: res.fromServiceWorker() }); };
+    page.on('response', onApi);
+    await page.evaluate(() => fetch('./api/v2/session', { cache: 'no-store' }).then((r) => r.status, () => 0));
+    page.off('response', onApi);
+    const apiCached = await page.evaluate(async () => {
+      let n = 0;
+      for (const key of await caches.keys()) for (const req of await (await caches.open(key)).keys()) if (new URL(req.url).pathname.includes('/api/')) n += 1;
+      return n;
+    });
+    check('서버 API는 서비스 워커를 거치지 않고 저장되지 않는다', apiSeen.length > 0 && apiSeen.every((r) => !r.worker) && apiCached === 0,
+      apiSeen.map((r) => r.path + (r.worker ? ' (서비스 워커)' : '')).join(', ') + ' · 저장 ' + apiCached);
 
     // ④ 브라우저 오프라인에서 다시 열기
     await context.setOffline(true);

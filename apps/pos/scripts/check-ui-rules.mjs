@@ -3,6 +3,11 @@
 // 검사 크기마다 그 등급의 모든 경로를 돈다. 화면마다 탭 · 쪽을 넘기고, 도장 · 주 버튼 · 옆 동작 · 머리줄 메뉴 · 동작 줄을 눌러
 // 여는 확인 창 · 알림 창 · 숫자판 · 아래 판(고르기 판 · 방문 결과 판 · 차에 있는 것)을 모두 열어 재고 닫는다.
 // 그 뒤 도장을 찍고(지급 · 수납 · 받음 · 매장 입고 · 못 받음 · 빨리 확인 · 연결 끊김) 체험 시계를 밤(21시 · 22시 뒤)으로 돌려 다시 잰다.
+// 글자 칸(새 접수 대표자 · 현금 점검 직접 입력)은 화면 키보드(keyboardWalk): 편집 칸이 없는지, 키로 친 ㄱ ㅣ ㅁ이 `김`인지, 치는 중에는
+// 안내가 없고 `입력`을 누른 뒤에만 낱자모 안내(제목은 그대로), `닫기`가 키 줄 밖인지, 자모 키 글자의 먹 높이, 쌍자음(글자로 보이는 키) ·
+// 가장 넓은 글자(뷁)로 한도까지 채운 표시 칸 · 숫자 쪽을 잰다. 기사 기기 크기는 미리 보기 #/preview/keyboard(40자)에서 잰다.
+// 서버 모드의 화면(기기 등록 · 로그인 타일 쪽 · 비밀번호 숫자판 · 연결 끊김 · 로그아웃)은 미리 보기 #/preview/enroll · login · offline ·
+// exit에서 잰다(connectWalk).
 // 규칙(ui-rules-measure.mjs): 등급 최소보다 작은 글자 · 누르는 곳, 가로 넘침 · 화면 밖, 잘린 · 넘친 글자, 말줄임표,
 // 스크롤 영역 · 스크롤 목록 · 반쯤 잘린 줄 · 페이지 스크롤, 주 버튼 둘 이상 · 강조색이 아닌 주 버튼, 늦지 않은 것의 빨강, 영어 글자,
 // 화면이 고른 기기 등급. 크기 숫자는 DeviceProfile(@skinote/ui/device-profile)에서만 읽는다: 검사 크기(checkSizes), 최소 글자(minFontPx),
@@ -94,6 +99,8 @@ class Walk {
     this.returnWalked = { plain: false, deposit: false };
     /** 접수 확정 창(V4)을 이 크기에서 모두 걸었는지(첫 창만 모두, 나머지는 열어 재기만). */
     this.checkoutWalked = false;
+    /** 화면 키보드를 모두 걸은 판 제목(제목마다 첫 판만 모두, 나머지는 열어 재기만). */
+    this.keyboardWalked = new Set();
   }
 
   /** 화면이 가라앉을 때까지(글꼴을 읽고, DOM이 60ms 동안 바뀌지 않을 때까지, 길어도 2.5초). */
@@ -236,6 +243,10 @@ class Walk {
     }
     if (await top.evaluate((el) => el.classList.contains('pos-cash-check'))) {
       await this.cashCheckWalk(name);
+      return;
+    }
+    if (await top.evaluate((el) => el.classList.contains('sn-kb-overlay'))) {
+      await this.keyboardWalk(name);
       return;
     }
     await this.scene(name, 'dialog');
@@ -618,9 +629,14 @@ class Walk {
     if (await primary().isEnabled()) this.fail(name + '-v6pad', '차액의 사유를 고르기 전에 점검 판의 주 버튼을 누를 수 있음');
     const manual = panel().getByRole('button', { name: /^직접 입력/ });
     if (await manual.count()) {
+      // 직접 입력 사유(40자): 화면 키보드. 크기마다 첫 판은 모두 걷는다. 적지 않는 걸음(commit 없음)에서는 짧은 사유를 쳐서 넣어 본다
+      // (사유가 골라져 주 버튼이 풀린다, 판은 적지 않고 닫는다). 적는 걸음은 칩 사유만 쓴다(마감 흐름을 바꾸지 않게).
       await this.click(manual);
-      await this.scene(name + '-v6pad-note', 'dialog');
-      await this.closeTo((await this.dialogCount()) - 1);
+      const typed = await this.keyboardWalk(name + '-v6pad-note', commit ? {} : { submit: ['ㅊ', 'ㅏ', 'ㄱ', 'ㅇ', 'ㅗ'] });
+      if (typed) {
+        await measure('-v6pad-manual');
+        if (!(await primary().isEnabled())) this.fail(name + '-v6pad-manual', '직접 입력 사유를 넣은 뒤에도 점검 판의 주 버튼이 막힘');
+      }
     }
     const reason = panel().getByRole('button', { name: '잔돈 착오', exact: true });
     if (await reason.count() && await reason.isEnabled()) {
@@ -640,6 +656,116 @@ class Walk {
     await this.click(primary());
     await this.page.waitForSelector('.pos-cash-check', { state: 'detached', timeout: 10_000 });
     await this.settle();
+  }
+
+  /**
+   * 화면 키보드(HangulKeyboard, 계획 work/impl-server/plan.md 7-5): 판을 재고, 편집 칸이 없는지(운영체제 자판이 뜰 곳 없음) · 판이 화면 안인지
+   * 본다. 제목마다 첫 판은 모두 걷는다: 자모 키 글자의 먹 높이 · `닫기`가 키 줄 밖 → 비우기 → 키로 ㄱ ㅣ ㅁ(`김`) → ㅅ(치는 중: 안내 없음 ·
+   * `입력` 눌림) → `입력`(낱자모: 판이 닫히지 않고 제목 아래 회색 안내, 제목은 그대로) → 정정(안내가 사라짐) → 쌍자음(ㄱ → ㄲ, 한 번만) →
+   * 가장 넓은 글자 뷁을 실제 자판(두벌식 글쇠 자리)으로 한도 + 1번(한도에서 멈춤) → 숫자 쪽 → 한글 쪽. submit(자모 키 이름들)이 있으면
+   * 끝에 비우고 그 키로 쳐서 `입력`(판이 닫힘, true), 없으면 `닫기`.
+   */
+  async keyboardWalk(name, { submit = null } = {}) {
+    const page = this.page;
+    const sheet = () => page.locator('.sn-kb');
+    const key = (label) => sheet().getByRole('button', { name: label, exact: true });
+    const value = () => page.locator('.sn-kb-display').getAttribute('data-value');
+    const enter = () => sheet().locator('[data-primary="true"]');
+    const before = await this.dialogCount();
+    await this.scene(name, 'dialog');
+    const bad = await page.evaluate(() => {
+      const kb = document.querySelector('.sn-kb');
+      const problems = [];
+      if (!kb) return ['화면 키보드 판이 없음'];
+      if (kb.closest('[role="dialog"]')?.querySelector('input,textarea,select,[contenteditable]:not([contenteditable="false"])')) problems.push('판 안에 편집 칸이 있음(운영체제 자판이 뜬다)');
+      const active = document.activeElement;
+      if (active && (active.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName))) problems.push('초점이 편집 칸에 있음: ' + active.tagName);
+      if (kb.getAttribute('data-fits') === 'false') problems.push('이 크기에 맞는 키보드 모양이 없음');
+      const r = kb.getBoundingClientRect();
+      if (r.top < -0.5 || r.bottom > window.innerHeight + 0.5 || r.left < -0.5 || r.right > window.innerWidth + 0.5) problems.push('판이 화면 밖: ' + [r.left, r.top, r.right, r.bottom].map(Math.round).join(','));
+      return problems;
+    });
+    for (const text of bad) this.fail(name, text);
+    const title = (await this.topKey()).replace(/^\d+:/, '');
+    const full = !this.keyboardWalked.has(title);
+    this.keyboardWalked.add(title);
+    const clear = async () => {
+      for (let guard = 0; guard < 60 && (await value()); guard += 1) await key('정정').click();
+      await this.settle();
+    };
+    const press = async (labels) => { for (const label of labels) await this.click(key(label)); };
+    if (full) {
+      const maxLength = Number(await sheet().getAttribute('data-max'));
+      // 자모 키 글자의 먹 높이(글자 크기가 아니라 그려진 자음의 높이: 한글 호환 자모는 글자 크기의 절반쯤) ≥ 가장 작은 글자 크기.
+      const ink = await page.evaluate(() => {
+        const canvas = document.createElement('canvas').getContext('2d');
+        const consonants = new Set([...'ㄱㄴㄷㄹㅁㅂㅅㅇㅈㅊㅋㅌㅍㅎㄲㄸㅃㅆㅉ']);
+        const heights = [];
+        for (const el of document.querySelectorAll('.sn-kb .sn-kb-key.is-jamo')) {
+          const text = el.textContent ?? '';
+          if (!consonants.has(text)) continue;
+          const cs = getComputedStyle(el);
+          canvas.font = cs.fontWeight + ' ' + cs.fontSize + ' ' + cs.fontFamily;
+          const m = canvas.measureText(text);
+          heights.push([text, m.actualBoundingBoxAscent + m.actualBoundingBoxDescent]);
+        }
+        const inRows = [...document.querySelectorAll('.sn-kb .sn-kb-keys button')].some((b) => b.textContent === '닫기');
+        return { heights, inRows, device: document.querySelector('.sn-kb')?.closest('.sn-root')?.getAttribute('data-device') ?? '' };
+      });
+      const minInk = PROFILES[ink.device]?.minFont ?? 16;
+      const small = ink.heights.filter(([, h]) => h < minInk - 0.5).map(([text, h]) => text + ' ' + h.toFixed(1) + 'px');
+      if (!ink.heights.length) this.fail(name, '자모 키를 찾지 못함');
+      if (small.length) this.fail(name, '자모 키 글자의 먹 높이가 ' + minInk + 'px보다 작음: ' + small.join(', '));
+      if (ink.inRows) this.fail(name, '닫기가 키 줄 안에 있음(치던 글을 묻지 않고 버리는 키가 글쇠 사이에)');
+      await clear();
+      if (await enter().isEnabled()) this.fail(name, '빈 글인데 입력을 누를 수 있음');
+      await press(['ㄱ', 'ㅣ', 'ㅁ']);
+      await this.scene(name + '-kb-typed', 'dialog');
+      if ((await value()) !== '김') this.fail(name + '-kb-typed', '키 ㄱ ㅣ ㅁ이 김이 아님: ' + (await value()));
+      await press(['ㅅ']);
+      await this.scene(name + '-kb-typing', 'dialog');
+      if ((await value()) !== '김ㅅ') this.fail(name + '-kb-typing', '김 + ㅅ이 김ㅅ이 아님: ' + (await value()));
+      if (!(await enter().isEnabled())) this.fail(name + '-kb-typing', '치는 중(새 글자의 자음)인데 입력이 막힘');
+      if (await sheet().locator('.sn-kb-note').count()) this.fail(name + '-kb-typing', '치는 중인데 낱자모 안내가 뜸');
+      await this.click(enter());
+      await this.scene(name + '-kb-incomplete', 'dialog');
+      if ((await this.dialogCount()) < before) this.fail(name + '-kb-incomplete', '낱자모가 남은 글이 입력됨');
+      if (!(await sheet().locator('.sn-kb-note').count())) this.fail(name + '-kb-incomplete', '입력 뒤 낱자모 안내 한 줄이 없음');
+      if (!(await sheet().locator('h2.sn-kb-title').isVisible())) this.fail(name + '-kb-incomplete', '안내가 뜨며 제목이 가려짐');
+      await press(['정정']);
+      if (await sheet().locator('.sn-kb-note').count()) this.fail(name + '-kb-incomplete', '다음 키 뒤에도 안내가 남음');
+      await this.click(sheet().getByRole('button', { name: '쌍자음' }));
+      await this.scene(name + '-kb-shift', 'dialog');
+      await press(['ㄲ']);
+      if ((await value()) !== '김ㄲ') this.fail(name + '-kb-shift', '쌍자음 + ㄱ이 ㄲ이 아님: ' + (await value()));
+      if ((await sheet().getByRole('button', { name: '쌍자음' }).getAttribute('aria-pressed')) !== 'false') this.fail(name + '-kb-shift', '쌍자음이 한 번 뒤에 풀리지 않음');
+      await clear();
+      // 가장 넓은 글자로 한도까지(실제 자판: 뷁 = Q N P F R). 한도 + 1번째는 버려진다.
+      for (let i = 0; i <= maxLength; i += 1) for (const code of ['KeyQ', 'KeyN', 'KeyP', 'KeyF', 'KeyR']) await page.keyboard.press(code);
+      await this.settle();
+      await this.scene(name + '-kb-full', 'dialog');
+      const filled = [...((await value()) ?? '')];
+      if (!maxLength || filled.length !== maxLength || filled.some((ch) => ch !== '뷁')) this.fail(name + '-kb-full', '뷁으로 한도까지 채우지 못함: ' + filled.length + '자 / 한도 ' + maxLength);
+      const spill = await page.evaluate(() => {
+        const display = document.querySelector('.sn-kb-display').getBoundingClientRect();
+        const text = document.querySelector('.sn-kb-text').getBoundingClientRect();
+        return text.top < display.top - 0.5 || text.bottom > display.bottom + 0.5 || text.right > display.right + 0.5 ? [text.top, text.bottom, display.top, display.bottom].map(Math.round).join(',') : '';
+      });
+      if (spill) this.fail(name + '-kb-full', '한도까지 친 글이 표시 칸 밖: ' + spill);
+      await this.click(key('숫자'));
+      await this.scene(name + '-kb-number', 'dialog');
+      await press(['1']);
+      await this.click(key('한글'));
+    }
+    if (submit) {
+      await clear();
+      await press(submit);
+      await this.click(enter());
+      if ((await this.dialogCount()) >= before) { this.fail(name, '입력 뒤에도 화면 키보드가 닫히지 않음'); await this.closeTo(before - 1); return false; }
+      return true;
+    }
+    await this.closeTo(before - 1);
+    return false;
   }
 
   /** 바닥줄 쪽 넘김 '1 / 3쪽'의 [지금, 모두]. */
@@ -932,6 +1058,7 @@ async function counterWalk(w) {
   await w.scene('exit');
   await w.probe(w.page.getByRole('button', { name: '체험 자료 초기화', exact: true }), 'exit-reset');
   await w.closeTo(0);
+  await connectWalk(w);
 
   await v2CounterRoutes(w);
   await counterFlow(w);
@@ -1327,7 +1454,7 @@ async function groupPayWalk(w) {
 }
 
 /**
- * 새 접수 ① 품목 · ② 일정(V2 · V3, spec 3-4 · 3-5): 빈 초안 → 대표자(글자 입력 판) · 연락처(숫자판) · 인원 → 종류 타일마다(쪽마다) 열어
+ * 새 접수 ① 품목 · ② 일정(V2 · V3, spec 3-4 · 3-5): 빈 초안 → 대표자(화면 키보드) · 연락처(숫자판) · 인원 → 종류 타일마다(쪽마다) 열어
  * 규격 · 수량을 누르고(부츠 `규격 더 보기 ›` 작은 창, 줄의 더 보기) → 선택 품목 줄 · 판의 쪽 → ② 일정: 전화 예약 창(수령일 · 다른 날 ·
  * 수령 시각 · 직접 입력 숫자판 · 수령 장소 구역 → 장소), 차량 배달 창, 반납일 · 다른 날, 반납 타임, 반납 장소의 구역 작은 창,
  * `다음 · 결제` · 탭 ③ → V4 접수 확정 창(checkoutWalk) → ① 탭 → `‹ 장부`(초안을 지움). 끝에 한 팀을 확정해 본다(newOrderConfirm).
@@ -1337,11 +1464,10 @@ async function newOrderWalk(w) {
   const click = async (locator) => { if (await locator.count() && await locator.first().isEnabled()) { await w.click(locator.first()); return true; } return false; };
   await w.visit('#/orders/new', '.pos-new');
   await w.scene('v2-empty');
-  // 대표자: 기기 자판 판
+  // 대표자: 화면 키보드(편집 칸 없음, 포스에 실제 자판이 없다). 모두 걸은 뒤 키로 이민호를 쳐서 넣는다.
   await w.click(page.locator('.pos-new-field.is-name'));
-  await w.scene('v2-name', 'dialog');
-  await page.locator('.pos-text-input').fill('이민호');
-  await w.click(w.top().getByRole('button', { name: '입력', exact: true }));
+  await w.keyboardWalk('v2-name', { submit: ['ㅇ', 'ㅣ', 'ㅁ', 'ㅣ', 'ㄴ', 'ㅎ', 'ㅗ'] });
+  if ((await page.locator('.pos-new-field.is-name').getAttribute('aria-label')) !== '대표자 이민호 · 이름 입력') w.fail('v2-name', '키로 친 대표자 이름이 칸에 없음');
   // 연락처: 숫자판(카운터 자판으로도 친다)
   await w.click(page.locator('.pos-new-field.is-phone'));
   await w.scene('v2-phone', 'dialog');
@@ -1517,8 +1643,7 @@ async function newOrderConfirm(w) {
   const page = w.page;
   await w.visit('#/orders/new', '.pos-new');
   await w.click(page.locator('.pos-new-field.is-name'));
-  await page.locator('.pos-text-input').fill('한지민');
-  await w.click(w.top().getByRole('button', { name: '입력', exact: true }));
+  await w.keyboardWalk('v4-name', { submit: ['ㅎ', 'ㅏ', 'ㄴ', 'ㅈ', 'ㅣ', 'ㅁ', 'ㅣ', 'ㄴ'] });
   await w.click(page.locator('.pos-new-field.is-phone'));
   await page.keyboard.type('01000000099');
   await w.settle();
@@ -1861,6 +1986,81 @@ async function driverWalk(w) {
     await w.pages('driver-phone-frame');
   }
   await driverNight(w, list);
+  await driverKeyboard(w);
+  await connectWalk(w);
+}
+
+/**
+ * 서버 모드의 화면(계획 work/impl-server/plan.md 6-3 · 6-4): 체험판 미리 보기로 이 크기의 등급에서 잰다.
+ *   #/preview/enroll: 기기 등록(화면 안 숫자판) → 12자리(넷씩 끊어 보임) → 입력(체험판 미지원 한 줄).
+ *   #/preview/login?many: 직원 타일 24개(쪽마다) → 타일 → 비밀번호 숫자판(가린 표시 ● ● ● ●) → 입력(한 줄) → 닫기. 셋이면 한 쪽.
+ *   #/preview/offline: 연결 끊김(마지막 연결 · 재시도). #/preview/exit: 로그인한 기기의 나가기와 로그아웃 묻는 창.
+ * 기사 크기는 ?device=tablet · phone(기사 등급), 포스 크기는 카운터 등급.
+ */
+async function connectWalk(w) {
+  const page = w.page;
+  const driver = DRIVER_CLASSES.includes(w.sizeClass);
+  const role = driver ? 'driver' : 'counter';
+  const device = driver ? 'device=' + (w.sizeClass === 'driver_phone' ? 'phone' : 'tablet') : '';
+  const query = (extra) => { const q = [extra, device].filter(Boolean).join('&'); return q ? '?' + q : ''; };
+  await w.visit('#/preview/enroll' + query(''), '.pos-enroll', role);
+  await w.scene('enroll');
+  const pad = page.locator('.pos-enroll .sn-numpad');
+  if (await pad.getByRole('button', { name: '입력', exact: true }).isEnabled()) w.fail('enroll', '빈 등록 번호인데 입력을 누를 수 있음');
+  for (const d of '123456789012') await w.click(pad.getByRole('button', { name: d, exact: true }));
+  await w.scene('enroll-typed');
+  const shown = ((await pad.locator('.sn-numpad-display').textContent()) ?? '').trim();
+  if (shown !== '1234-5678-9012') w.fail('enroll-typed', '등록 번호가 넷씩 끊어 보이지 않음: ' + shown);
+  await w.click(pad.getByRole('button', { name: '입력', exact: true }));
+  await page.waitForSelector('.pos-enroll .sn-keypad-note', { timeout: 5_000 }).catch(() => {});
+  await w.scene('enroll-note');
+  if (!(await pad.locator('.sn-keypad-note').count())) w.fail('enroll-note', '보낸 뒤 한 줄이 없음');
+
+  await w.visit('#/preview/login' + query('many'), '.pos-login-tile', role);
+  const pager = page.locator('.pos-login-pager');
+  const [, total] = await w.pageInfo(pager);
+  if (total < 2) w.fail('login', '타일 24개가 한 쪽에 들어감(쪽 넘김을 재지 못함): ' + (await page.locator('.pos-login-tile').count()) + '개');
+  for (let p = 1; p <= total; p += 1) {
+    await w.toPage(p, pager);
+    await w.scene('login-p' + p);
+  }
+  await w.toPage(1, pager);
+  await w.click(page.locator('.pos-login-tile').first());
+  await w.scene('login-pin', 'dialog');
+  for (const d of '4821') await w.click(w.top().getByRole('button', { name: d, exact: true }));
+  await w.scene('login-pin-typed', 'dialog');
+  const masked = ((await w.top().locator('.sn-numpad-display').textContent()) ?? '').trim();
+  if (masked !== '● ● ● ●' || (await w.top().textContent())?.includes('4821')) w.fail('login-pin-typed', '비밀번호가 가려 보이지 않음: ' + masked);
+  await w.click(w.top().getByRole('button', { name: '입력', exact: true }));
+  await page.waitForSelector('.sn-sheet-overlay .sn-keypad-note', { timeout: 5_000 }).catch(() => {});
+  await w.scene('login-pin-note', 'dialog');
+  await w.closeTo(0);
+  await w.visit('#/preview/login' + query(''), '.pos-login-tile', role);
+  await w.scene('login-few');
+
+  await w.visit('#/preview/offline' + query(''), '.pos-card', role);
+  await w.scene('offline');
+  await w.visit('#/preview/exit' + query(''), '.pos-card', role);
+  await w.scene('exit-session');
+  await w.probe(page.getByRole('button', { name: '로그아웃', exact: true }), 'exit-logout');
+  await w.closeTo(0);
+}
+
+/**
+ * 기사 기기의 화면 키보드(계획 7-5): 기사 화면에는 아직 글자 칸이 없어 체험판 미리 보기 #/preview/keyboard(40자)를 이 크기의 기사 등급으로
+ * 열어 모두 걷고, 키로 이름(박기사)을 쳐서 넣은 뒤 종이를 잰다. 휴대폰 틀이 들어가는 태블릿 크기에서는 틀 안(360×640)에서도 모두 걷는다.
+ */
+async function driverKeyboard(w) {
+  const phone = w.sizeClass === 'driver_phone';
+  await w.visit('#/preview/keyboard?device=' + (phone ? 'phone' : 'tablet'), '.sn-kb', 'driver');
+  await w.keyboardWalk('driver-kb', { submit: ['ㅂ', 'ㅏ', 'ㄱ', 'ㄱ', 'ㅣ', 'ㅅ', 'ㅏ'] });
+  await w.scene('driver-kb-done');
+  if ((await w.page.locator('.pos-preview-text').textContent()) !== '박기사') w.fail('driver-kb-done', '키로 친 이름이 종이에 없음');
+  if (!phone) {
+    w.keyboardWalked.clear();
+    await w.visit('#/preview/keyboard?device=phone', '.sn-kb', 'driver', ['driver_phone']);
+    await w.keyboardWalk('driver-kb-phone-shape');
+  }
 }
 
 /**

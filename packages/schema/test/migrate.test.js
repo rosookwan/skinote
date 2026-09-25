@@ -42,16 +42,20 @@ const columns = (db, table) => /** @type {{ name: string }[]} */ (db.prepare(`PR
 
 const LOCALE = { '0002_control_locale.sql': '-- 계정의 화면 언어(예시)\nALTER TABLE accounts ADD COLUMN locale TEXT;\n' };
 
+// 배포한 마이그레이션: control은 0001, shop은 0001 + 0002(첫 서버 연결, 2026-09-26).
+const SHIPPED = /** @type {const} */ ({ control: ['0001_control'], shop: ['0001_shop', '0002_shop_server_link'] });
+
 for (const kind of /** @type {const} */ (['control', 'shop'])) {
-  test(`${kind}: a fresh file gets 0001 with WAL, synchronous FULL, foreign keys, recursive triggers and incremental auto_vacuum`, () => {
+  test(`${kind}: a fresh file gets every shipped migration with WAL, synchronous FULL, foreign keys, recursive triggers and incremental auto_vacuum`, () => {
     const dir = fresh();
     const file = join(dir, `${kind}.sqlite`);
     const result = migrate(file, kind, { appVersion: '0.1.0-test' });
+    const shipped = SHIPPED[kind];
     try {
       assert.equal(result.status, 'migrated');
       assert.equal(result.mode, 'read_write');
-      assert.equal(result.version, 1);
-      assert.deepEqual(result.applied.map(m => m.name), [`0001_${kind}`]);
+      assert.equal(result.version, shipped.length);
+      assert.deepEqual(result.applied.map(m => m.name), [...shipped]);
       assert.deepEqual(result.backups.map(b => b.kind_key), ['post_migration'], 'no pre_migration backup for an empty file');
       const db = result.db;
       assert.equal(pragma(db, 'journal_mode'), 'wal');
@@ -60,18 +64,20 @@ for (const kind of /** @type {const} */ (['control', 'shop'])) {
       assert.equal(pragma(db, 'recursive_triggers'), 1);
       assert.equal(pragma(db, 'busy_timeout'), 5000);
       assert.equal(pragma(db, 'auto_vacuum'), 2, 'INCREMENTAL before the first table');
-      const rows = /** @type {any[]} */ (db.prepare('SELECT id, name, database_key, checksum, app_version, applied_at, duration_ms FROM schema_migrations').all());
-      assert.equal(rows.length, 1);
-      assert.equal(rows[0].id, 1);
-      assert.equal(rows[0].name, `0001_${kind}`);
-      assert.equal(rows[0].database_key, kind);
-      assert.equal(rows[0].checksum, checksum(readFileSync(join(MIGRATIONS, `0001_${kind}.sql`), 'utf8')));
-      assert.equal(rows[0].app_version, '0.1.0-test');
-      assert.match(rows[0].applied_at, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+      const rows = /** @type {any[]} */ (db.prepare('SELECT id, name, database_key, checksum, app_version, applied_at, duration_ms FROM schema_migrations ORDER BY id').all());
+      assert.equal(rows.length, shipped.length);
+      shipped.forEach((name, i) => {
+        assert.equal(rows[i].id, i + 1);
+        assert.equal(rows[i].name, name);
+        assert.equal(rows[i].database_key, kind);
+        assert.equal(rows[i].checksum, checksum(readFileSync(join(MIGRATIONS, `${name}.sql`), 'utf8')));
+        assert.equal(rows[i].app_version, '0.1.0-test');
+        assert.match(rows[i].applied_at, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+      });
       const backup = result.backups[0];
       assert.ok(existsSync(backup.path));
       assert.match(backup.sha256, /^[0-9a-f]{64}$/);
-      assert.equal(backup.version, 1);
+      assert.equal(backup.version, shipped.length);
     } finally {
       result.db.close();
     }
@@ -440,8 +446,8 @@ test('migration numbering is forward-only: a gap, a duplicate or a misnamed file
   assert.throws(() => loadMigrations('control', twice), MigrationSetError);
   const misnamed = migrationsDir(fresh(), { '2_control.sql': 'SELECT 1;' });
   assert.throws(() => loadMigrations('control', misnamed), /이름 모양이 틀린 파일/);
-  assert.deepEqual(loadMigrations('shop').map(m => m.name), ['0001_shop']);
-  assert.deepEqual(loadMigrations('control').map(m => m.name), ['0001_control']);
+  assert.deepEqual(loadMigrations('shop').map(m => m.name), [...SHIPPED.shop]);
+  assert.deepEqual(loadMigrations('control').map(m => m.name), [...SHIPPED.control]);
 });
 
 test('inspectFile reports a missing file as version 0 without creating it', () => {
@@ -449,7 +455,7 @@ test('inspectFile reports a missing file as version 0 without creating it', () =
   const state = inspectFile(file, 'shop');
   assert.equal(state.exists, false);
   assert.equal(state.version, 0);
-  assert.deepEqual(state.pending.map(m => m.name), ['0001_shop']);
+  assert.deepEqual(state.pending.map(m => m.name), [...SHIPPED.shop]);
   assert.equal(existsSync(file), false);
 });
 
@@ -479,4 +485,29 @@ test('the command line tool migrates, reports up to date, refuses the wrong kind
   const usage = cli('stock', file);
   assert.equal(usage.status, 1);
   assert.match(usage.stderr, /사용법/);
+});
+
+test('bin/migrate.js takes the shop writer lock of a server data dir: refused while the server (or the CLI) holds it', () => {
+  const dir = fresh();
+  const shopsDir = join(dir, 'db', 'shops');
+  mkdirSync(shopsDir, { recursive: true });
+  mkdirSync(join(dir, 'locks'), { recursive: true });
+  const file = join(shopsDir, 'shop-x.sqlite');
+  const cliRun = () => spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', join(PACKAGE_DIR, 'bin', 'migrate.js'), 'shop', file], { encoding: 'utf8', timeout: 60_000 });
+  // 서버의 쓰는 사람 잠금과 같은 방법(저장소 lock.ts): 잠금 파일의 쓰기 트랜잭션을 쥔다.
+  const holder = openDatabase(join(dir, 'locks', 'shop-x.writer'));
+  holder.exec('CREATE TABLE IF NOT EXISTS writer_lock (shop_id TEXT NOT NULL PRIMARY KEY) STRICT');
+  holder.exec('BEGIN IMMEDIATE');
+  try {
+    const refused = cliRun();
+    assert.equal(refused.status, 1, refused.stdout + refused.stderr);
+    assert.match(refused.stderr, /쓰는 중/);
+    assert.ok(!existsSync(file), 'the shop file was not touched');
+  } finally {
+    holder.exec('ROLLBACK');
+    holder.close();
+  }
+  const done = cliRun();
+  assert.equal(done.status, 0, done.stdout + done.stderr);
+  assert.ok(existsSync(file));
 });

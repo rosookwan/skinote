@@ -2,7 +2,10 @@
 // 등급은 잰 화면 크기와 역할로 고른다(카운터 직원이 태블릿을 쓰면 pos_narrow, 기사가 휴대폰을 쓰면 driver_phone).
 // React 없이도 읽히도록 순수 모듈로 둔다(서버의 설정 명령 · 시험이 같은 값을 쓴다).
 import type { DeviceClassKey, ShopDeviceClassKey } from '@skinote/contract';
-import type { ConfirmWindowSpec } from '@skinote/layout';
+import type { ConfirmWindowSpec, KeyboardSpec } from '@skinote/layout';
+
+/** 등급의 화면 키보드 크기: 모양 고르기 값(layout KeyboardSpec) + 자모 키의 글자 크기(--sn-kb-glyph). */
+export type KeyboardProfile = KeyboardSpec & { glyphPx: number };
 
 export interface Size {
   width: number;
@@ -60,6 +63,11 @@ export interface DeviceProfile {
   slip: { titlePx: number; fieldsPx: number; promisePx: number; moneyPx: number; sidePanelPx: number; gapPx: number } | null;
   confirm: ConfirmWindowSpec;
   keypad: { keyPx: number; displayPx: number; titlePx: number; loadPx: number; sidePanelPx: number; sidePanelMinHeightPx: number; allowSide: boolean };
+  /**
+   * 화면 키보드(한글 글자판, HangulKeyboard): 키 높이 · 사이 · 판 여백 · 판 최대 폭(null = 화면 폭 전체) · 제목 줄 · 표시 칸 여백과
+   * 자모 키의 글자 크기(glyphPx). 두벌식 줄 배치와 자모 차례 격자 가운데 무엇을 쓸지는 잰 판 크기로 layout fitKeyboard가 고른다(계획 7-2).
+   */
+  keyboard: KeyboardProfile;
   /** 도장 그림(누르는 곳은 칸 전체). */
   stamp: { markPx: number; miniMarkPx: number };
   /**
@@ -94,6 +102,14 @@ const DRIVER_CONFIRM: ConfirmWindowSpec = {
 const POS_SLIP = { titlePx: 60, fieldsPx: 40, promisePx: 32, moneyPx: 40, sidePanelPx: 280, gapPx: 16 };
 const KEYPAD = { keyPx: 56, displayPx: 56, titlePx: 40, loadPx: 48, sidePanelPx: 268, sidePanelMinHeightPx: 600 };
 const PLAIN = { cardMaxPx: 672, choicePx: 72 };
+/**
+ * 화면 키보드(계획 7-2): 포스는 860 폭까지(확인 창과 같은 폭), 기사 태블릿 900, 휴대폰은 화면 폭 전체. 제목 줄에 `닫기`가 있어 그 줄은
+ * 키 높이(56)다. 자모 키 글자는 36: 한글 호환 자모(ㅂ · ㄱ · ㄴ)는 글자 크기의 절반쯤(0.47 ~ 0.52)으로 그려져서 24로는 먹 높이가 12px
+ * 남짓이라 가장 낮은 ㄴ도 16px을 넘게(약 17px) 키운다(규칙 검사가 잰 먹 높이로 본다, 30이면 휴대폰에서 14px대였다).
+ */
+const POS_KEYBOARD: KeyboardProfile = { keyPx: 56, gapPx: 8, insetPx: 12, maxWidthPx: 860, titlePx: 40, displayPadPx: 12, glyphPx: 36 };
+const TABLET_KEYBOARD: KeyboardProfile = { ...POS_KEYBOARD, maxWidthPx: 900 };
+const PHONE_KEYBOARD: KeyboardProfile = { keyPx: 56, gapPx: 6, insetPx: 8, maxWidthPx: null, titlePx: 56, displayPadPx: 8, glyphPx: 36 };
 /** 줄 최소 · 최대(V7 60 ~ 88, V6 52 ~ 88)와 아래 판 최대 높이(ui 6-5: 440). */
 const PANEL_MAX_PX = 440;
 
@@ -111,6 +127,7 @@ const pos: DeviceProfile = {
   slip: POS_SLIP,
   confirm: POS_CONFIRM,
   keypad: { ...KEYPAD, allowSide: false },
+  keyboard: POS_KEYBOARD,
   stamp: STAMP, fill: { rowMinPx: 52, rowMaxPx: 88, panelMaxPx: PANEL_MAX_PX }, pages: PAGES, space: SPACE, radius: RADIUS, line: LINE,
 };
 
@@ -135,6 +152,7 @@ const driverTablet: DeviceProfile = {
   slip: null,
   confirm: DRIVER_CONFIRM,
   keypad: { ...KEYPAD, allowSide: true },
+  keyboard: TABLET_KEYBOARD,
   stamp: STAMP, fill: { rowMinPx: 60, rowMaxPx: 88, panelMaxPx: PANEL_MAX_PX }, pages: PAGES, space: SPACE, radius: RADIUS, line: LINE,
 };
 
@@ -150,6 +168,7 @@ const driverPhone: DeviceProfile = {
   combineHeadingsBelowPx: 0,
   capacity: { menu: 1, tabs: 3, quickMethods: 2, paymentSectionsPerPage: 1, sideActions: 1 },
   keypad: { ...KEYPAD, allowSide: false },
+  keyboard: PHONE_KEYBOARD,
   // 한 칸 세로 업무 판(360×640): 팀 · 품목 줄 · 돈 줄 · 반납 일정 · 2 × 2 버튼이 한 화면에 들도록 품목 줄은 누르는 곳 높이부터.
   fill: { rowMinPx: 56, rowMaxPx: 88, panelMaxPx: PANEL_MAX_PX },
 };
@@ -254,6 +273,14 @@ export function profileCssVars(profile: DeviceProfile): Record<string, string> {
     '--sn-keypad-title': px(profile.keypad.titlePx),
     '--sn-keypad-load': px(profile.keypad.loadPx),
     '--sn-keypad-side': px(profile.keypad.sidePanelPx),
+    /** 화면 키보드(HangulKeyboard): 키 높이 · 사이 · 판 여백 · 판 최대 폭 · 제목 줄 · 표시 칸 여백. 한 칸 폭 · 표시 칸 높이는 부품이 잰 값으로 깐다. */
+    '--sn-kb-key': px(profile.keyboard.keyPx),
+    '--sn-kb-gap': px(profile.keyboard.gapPx),
+    '--sn-kb-inset': px(profile.keyboard.insetPx),
+    '--sn-kb-max': profile.keyboard.maxWidthPx === null ? 'none' : px(profile.keyboard.maxWidthPx),
+    '--sn-kb-title': px(profile.keyboard.titlePx),
+    '--sn-kb-display-pad': px(profile.keyboard.displayPadPx),
+    '--sn-kb-glyph': px(profile.keyboard.glyphPx),
     '--sn-stamp': px(profile.stamp.markPx),
     '--sn-panel-max': px(profile.fill.panelMaxPx),
     '--sn-stamp-mini': px(profile.stamp.miniMarkPx),

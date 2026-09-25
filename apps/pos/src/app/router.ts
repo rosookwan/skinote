@@ -3,7 +3,9 @@
 // #/ledger는 오늘 장부, #/collection/:date는 수거 목록의 줄임 주소(같은 화면). 화면 안의 하위 경로(sys_screens에 따로 없음):
 // #/orders/new/schedule 새 접수 ② 일정, #/orders/:orderId/pay 일괄 수납(접수증의 수납), #/driver/:date/deliveries 배달 목록,
 // #/manage/settings/:tab 매장 설정(탭, 기본 운영 규칙). 체험판 전용 경로: #/ 처음 화면, #/exit 나가기(?from=driver면 기사 기기의
-// 나가기), 기사 화면의 ?device=phone 휴대폰 모양으로 보기.
+// 나가기), 기사 화면의 ?device=phone 휴대폰 모양으로 보기, 미리 보기 #/preview/keyboard · enroll · login · offline · exit(화면 키보드,
+// 서버 모드의 기기 등록 · 로그인 · 연결 끊김 · 나가기 화면. 어디에도 연결하지 않은 주소 — 규칙 검사기가 기기 크기마다 재려고 연다.
+// ?device=phone · tablet이면 기사 기기, 없으면 카운터. 로그인 미리 보기의 ?many는 쪽 넘김을 보려고 예시 이름을 여러 번 늘어놓는다).
 // 온 곳(장부의 탭 · 쪽 · 고른 줄)은 브라우저 기록 상태에 넣어, 접수증의 '‹ 장부'가 그 쪽 그 줄로 돌아간다(ui 3-6, N9).
 import type { ScreenKey } from '@skinote/contract';
 import { useSyncExternalStore } from 'react';
@@ -16,6 +18,10 @@ export type NewOrderStep = 'items' | 'schedule';
 /** 매장 설정의 색인 탭(V8). 운영 규칙만 만들었고 나머지 탭은 준비 중인 화면이다. */
 export const SETTINGS_TABS = ['info', 'places', 'slots', 'pricing', 'fleet', 'rules'] as const;
 export type SettingsTab = (typeof SETTINGS_TABS)[number];
+
+/** 체험판 전용 미리 보기(계획 6-3): 화면 키보드, 서버 모드의 기기 등록 · 로그인 · 연결 끊김 · 나가기(로그아웃) 화면(규칙 검사기가 잰다). */
+export const PREVIEW_VIEWS = ['keyboard', 'enroll', 'login', 'offline', 'exit'] as const;
+export type PreviewView = (typeof PREVIEW_VIEWS)[number];
 
 export type Route =
   | { name: 'start' }
@@ -40,6 +46,8 @@ export type Route =
   | { name: 'deliveries'; date: string; device: DeviceShape }
   /** 기사 업무 판(V7): 배달 · 수거 한 팀. */
   | { name: 'task'; taskId: string; device: DeviceShape }
+  /** 체험판 전용 미리 보기. device가 있으면 기사 기기(휴대폰 · 태블릿), 없으면 카운터. */
+  | { name: 'preview'; view: PreviewView; device: DeviceShape | null }
   | { name: 'unknown' };
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -47,6 +55,12 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const deviceOf = (query: string): DeviceShape => (new URLSearchParams(query).get('device') === 'phone' ? 'phone' : 'tablet');
 const deviceQuery = (device: DeviceShape) => (device === 'phone' ? '?device=phone' : '');
 const isSettingsTab = (tab: string | undefined): tab is SettingsTab => (SETTINGS_TABS as readonly string[]).includes(tab ?? '');
+const isPreviewView = (view: string | undefined): view is PreviewView => (PREVIEW_VIEWS as readonly string[]).includes(view ?? '');
+/** 미리 보기의 기기: ?device=phone · tablet이면 기사 기기, 없으면 카운터. */
+const previewDevice = (query: string): DeviceShape | null => {
+  const device = new URLSearchParams(query).get('device');
+  return device === 'phone' || device === 'tablet' ? device : null;
+};
 
 export function parseHash(hash: string): Route {
   const [path = '', query = ''] = hash.replace(/^#/, '').split('?');
@@ -71,6 +85,7 @@ export function parseHash(hash: string): Route {
   if (head === 'driver' && arg === 'tasks' && third && parts.length === 3) return { name: 'task', taskId: third, device: deviceOf(query) };
   if (head === 'driver' && arg && DATE.test(arg) && parts.length === 2) return { name: 'driver', date: arg, device: deviceOf(query) };
   if (head === 'driver' && arg && DATE.test(arg) && third === 'deliveries' && parts.length === 3) return { name: 'deliveries', date: arg, device: deviceOf(query) };
+  if (head === 'preview' && isPreviewView(arg) && parts.length === 2) return { name: 'preview', view: arg, device: previewDevice(query) };
   return { name: 'unknown' };
 }
 
@@ -89,6 +104,7 @@ export function hrefFor(route: Route): string {
     case 'driver': return '#/driver/' + route.date + deviceQuery(route.device);
     case 'deliveries': return '#/driver/' + route.date + '/deliveries' + deviceQuery(route.device);
     case 'task': return '#/driver/tasks/' + encodeURIComponent(route.taskId) + deviceQuery(route.device);
+    case 'preview': return '#/preview/' + route.view + (route.device ? '?device=' + route.device : '');
     case 'unknown': return '#/';
   }
 }

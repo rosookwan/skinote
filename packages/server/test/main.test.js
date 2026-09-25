@@ -9,16 +9,20 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { checkBackupFile } from '../src/backup-files.js';
+import { newSecretsEnv } from '../src/secrets.js';
 import { freePort, PACKAGE_DIR, request, tempDir } from './helpers.js';
 
 const temp = tempDir();
 after(() => temp.cleanup());
 
+/** 시험마다 새로 뽑은 비밀값(API를 켠 서버는 비밀값 넷이 있어야 시작한다), 관리 소켓 없음. */
+const SECRETS = { ...newSecretsEnv(), SKINOTE_ADMIN_SOCKET: 'off' };
+
 /** @param {Record<string, string>} env */
 function start(env) {
   const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', 'src/main.js'], {
     cwd: PACKAGE_DIR,
-    env: { PATH: process.env.PATH ?? '', ...env },
+    env: { PATH: process.env.PATH ?? '', ...SECRETS, ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let output = '';
@@ -67,6 +71,23 @@ test('main.js serves health, refuses a second instance on the same port, and exi
   assert.match(server.output(), /SIGTERM 받음/);
   assert.match(server.output(), /종료: 데이터베이스를 닫았습니다/);
   assert.ok(!existsSync(join(dataDir, 'db', 'control.sqlite-wal')), 'closing checkpoints and removes the WAL file');
+});
+
+test('main.js exits 78 when the API is on and a secret is missing, and names the secret without a value', () => {
+  const dataDir = join(temp.dir, 'no-secret');
+  const env = { ...SECRETS };
+  delete env.SKINOTE_IP_KEY;
+  const result = spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', 'src/main.js'], {
+    cwd: PACKAGE_DIR,
+    env: { PATH: process.env.PATH ?? '', SKINOTE_DATA_DIR: dataDir, ...env, SKINOTE_SESSION_KEY: 'short' },
+    encoding: 'utf8',
+    timeout: 10_000,
+  });
+  assert.equal(result.status, 78);
+  assert.match(result.stderr, /SKINOTE_IP_KEY가 없습니다/);
+  assert.match(result.stderr, /SKINOTE_SESSION_KEY는 base64url/);
+  for (const value of Object.values(env)) assert.ok(!result.stderr.includes(value) || value === 'off', 'no secret value in the output');
+  assert.ok(!existsSync(dataDir));
 });
 
 test('main.js exits 78 on a config error without creating anything', () => {

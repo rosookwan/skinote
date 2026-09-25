@@ -2,7 +2,9 @@
 # 코드는 /srv/skinote/current(배포가 바꾸는 링크)에서 읽기만 하고, 쓰는 곳은 /var/lib/skinote(자료) · /var/log/skinote뿐이다.
 # 날마다 백업 폴더(/var/lib/skinote/backups)는 읽기만 한다: 서버 프로세스가 뚫리거나 잘못 써도 날마다 백업을 지우지 못하게.
 # 실행기의 적용 전 · 뒤 사본(backups/migrations)만 쓴다.
-# 설정 값은 /etc/skinote/skinote.env(비밀값 없음, deploy/skinote.env.example). 기록은 journald: journalctl -u skinote-server
+# 설정 값은 /etc/skinote/skinote.env(비밀값 없음, deploy/skinote.env.example), 비밀값은 /etc/skinote/secrets.env(root:skinote 0640, 배포가
+# 없을 때 한 번 만든다: 비밀값 넷 + 앞단 표). 기록은 journald: journalctl -u skinote-server
+# 관리 소켓(/run/skinote/admin.sock, 기기 끊기 · 비밀번호 새로 · 등록 번호를 서버가 도는 동안): RuntimeDirectory가 /run/skinote를 만든다.
 
 [Unit]
 Description=Skinote server (API, health)
@@ -19,6 +21,8 @@ Type=simple
 User=skinote
 Group=skinote
 EnvironmentFile=/etc/skinote/skinote.env
+# '-': 파일이 없으면 systemd가 아니라 서버가 빠진 비밀값의 이름을 알리고 설정 오류(78)로 끝난다(알림 유닛이 돈다).
+EnvironmentFile=-/etc/skinote/secrets.env
 Environment=NODE_ENV=production
 WorkingDirectory=/srv/skinote/current/server
 ExecStart=/usr/local/bin/node --disable-warning=ExperimentalWarning --max-old-space-size=256 src/main.js
@@ -37,6 +41,9 @@ KillMode=mixed
 TimeoutStopSec=10min
 SyslogIdentifier=skinote-server
 UMask=0077
+# /run/skinote(주인 skinote, 0750): 관리 소켓 자리. 서비스가 멈추면 지워진다(명령줄은 그때 파일을 직접 연다).
+RuntimeDirectory=skinote
+RuntimeDirectoryMode=0750
 
 # 자원(2 GB를 여러 앱이 나눠 쓰는 VPS)
 MemoryHigh=384M

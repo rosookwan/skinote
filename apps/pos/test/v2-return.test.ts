@@ -8,14 +8,9 @@ import {
 import { openOrRestoreDraft } from '@skinote/ui';
 import { describe, expect, it } from 'vitest';
 import { pickedOf, returnEnvelopes, togglePiece, withLineQuantity, withRefundMethod } from '../src/components/ReturnDialog.tsx';
-import { heldNumbers } from '../src/fixture/assets.ts';
-import { applyCommand } from '../src/fixture/commands.ts';
-import { depositOf, heldAmount, heldUnits } from '../src/fixture/deposits.ts';
+import { collectDone, depositOf, findTask, type FxState, heldAmount, heldNumbers, heldUnits, kstAt, ownDue, taskOrder } from '@skinote/domain';
+import { applyCommand } from '../src/fixture/demo.ts';
 import { FixtureClient } from '../src/fixture/fixture-client.ts';
-import type { FxState } from '../src/fixture/model.ts';
-import { findTask, taskOrder } from '../src/fixture/promises.ts';
-import { collectDone, ownDue } from '../src/fixture/rules.ts';
-import { kstAt } from '../src/fixture/time.ts';
 
 const ms = (h: number, m: number, day = 0) => kstAt('2026-12-26', day, h, m);
 const iso = (h: number, m: number, day = 0) => new Date(ms(h, m, day)).toISOString();

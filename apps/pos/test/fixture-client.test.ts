@@ -6,10 +6,10 @@ import {
 import { openOrRestoreDraft } from '@skinote/ui';
 import { describe, expect, it } from 'vitest';
 import { confirmEnvelope, draftOptions } from '../src/components/ConfirmFlow.tsx';
+import { collectionList, dayLedger, kstAt, orderSlip } from '@skinote/domain';
+import { AREAS } from '@skinote/domain/sample';
+import { createSeed, DEMO_START_MS } from '../src/fixture/demo.ts';
 import { FixtureClient, type FixtureStorage } from '../src/fixture/fixture-client.ts';
-import { AREAS, DEMO_START_MS, createSeed } from '../src/fixture/seed.ts';
-import { kstAt } from '../src/fixture/time.ts';
-import { collectionList, dayLedger, orderSlip } from '../src/fixture/views.ts';
 
 class MemoryStorage implements FixtureStorage {
   readonly map = new Map<string, string>();
@@ -338,6 +338,22 @@ describe('찾기 · 저장 · 체험 시계', () => {
     const fresh = await second.client.ledgerView('day_ledger', {});
     expect(stamp(row(fresh, 'o22'), 'stamp:issue').state).toBe('todo');
     expect(fresh.serverTime).toBe(at(15, 40));
+  });
+
+  it('매장 목록(registry)이 없는 옛 저장(도메인 패키지 전의 판 3)도 이어서 읽고, 목록은 늘 지금 견본 값이다', async () => {
+    const storage = new MemoryStorage();
+    const first = setup(storage);
+    await confirmAndSend(first.client, await first.client.query('confirmDraft', { orderId: 'o22', actionKey: 'stamp.issue' }));
+    first.client.persist();
+    const saved = JSON.parse(storage.getItem('skinote.demo.v1')!) as { state: Record<string, unknown> };
+    delete saved.state['registry'];
+    storage.setItem('skinote.demo.v1', JSON.stringify(saved));
+    const second = setup(storage);
+    const ledger = await second.client.ledgerView('day_ledger', {});
+    expect(stamp(row(ledger, 'o22'), 'stamp:issue').state).toBe('done');
+    const list = await second.client.ledgerView('collection_list', { vehicleId: 'v1' });
+    expect(list.vehicle?.label).toBe('1호 차량');
+    expect(second.client.previewStaff()).toHaveLength(3);
   });
 
   it('저장소가 막히거나 망가져도 처음 자료로 돈다', async () => {

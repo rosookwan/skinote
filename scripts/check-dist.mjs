@@ -97,6 +97,9 @@ function main() {
   const adminRoutes = scripts.filter((file) => /#\/admin\b/.test(read(file)));
   check('관리자 콘솔 경로(#/admin)가 없음', adminRoutes.length === 0, adminRoutes.join(', '));
   check('.env 파일이 없음', !files.some((file) => /(^|\/)\.env/.test(file)));
+  // 서버 모드 표시(<meta name="skinote-runtime" content="server">)는 배포할 때 서버 판의 index.html에만 찍는다(계획 D7): 빌드 · 체험판에
+  // 있으면 GitHub Pages가 서버 모드로 떠 `연결 끊김`만 보인다.
+  check('서버 모드 표시(skinote-runtime)가 index.html에 없음', !/<meta[^>]+name=["']skinote-runtime["']/i.test(html));
   const SECRETS = [
     [/-----BEGIN [A-Z ]*PRIVATE KEY-----/, '비밀 키'],
     [/\bghp_[A-Za-z0-9]{36}\b/, 'GitHub 토큰'],

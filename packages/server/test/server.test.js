@@ -11,10 +11,13 @@ import { runBackup } from '../src/backup.js';
 import { canWrite } from '../src/databases.js';
 import { buildHealth } from '../src/health.js';
 import { pathOf, startServer } from '../src/server.js';
+import { loadMigrations } from '@skinote/schema';
 import { collectLog, request, tempDir, testConfig } from './helpers.js';
 
 const temp = tempDir();
 after(() => temp.cleanup());
+/** 배포한 마이그레이션 수(종류마다): control 0001, shop 0001 + 0002. */
+const KNOWN = /** @type {Record<string, number>} */ ({ control: loadMigrations('control').length, shop: loadMigrations('shop').length });
 const SHOPS = '01K5ZQ8Y7M3N4P5Q6R7S8T9V0W,shop-b';
 
 test('health on a fresh data dir: every file migrated, WAL, pages, no absolute paths', async () => {
@@ -59,10 +62,10 @@ test('health on a fresh data dir: every file migrated, WAL, pages, no absolute p
       assert.equal(db.status, 'migrated');
       assert.equal(db.mode, 'read_write');
       assert.equal(db.writable, true);
-      assert.equal(db.schemaVersion, 1);
-      assert.equal(db.knownVersion, 1);
-      assert.equal(db.migrationCount, 1);
-      assert.equal(db.appliedAtStart, 1);
+      assert.equal(db.schemaVersion, KNOWN[db.kind]);
+      assert.equal(db.knownVersion, KNOWN[db.kind]);
+      assert.equal(db.migrationCount, KNOWN[db.kind]);
+      assert.equal(db.appliedAtStart, KNOWN[db.kind]);
       assert.equal(db.reason, null);
       assert.deepEqual(db.warnings, []);
       assert.equal(db.journalMode, 'wal');
@@ -90,7 +93,7 @@ test('health on a fresh data dir: every file migrated, WAL, pages, no absolute p
     const body = await (await request(again.port, '/api/health')).json();
     assert.equal(body.ok, true);
     assert.deepEqual(body.databases.map((/** @type {any} */ d) => [d.status, d.appliedAtStart, d.migrationCount]), [
-      ['up_to_date', 0, 1], ['up_to_date', 0, 1], ['up_to_date', 0, 1],
+      ['up_to_date', 0, KNOWN.control], ['up_to_date', 0, KNOWN.shop], ['up_to_date', 0, KNOWN.shop],
     ]);
 
     // 백업 뒤에는 파일마다 마지막 백업 시각이 보인다.

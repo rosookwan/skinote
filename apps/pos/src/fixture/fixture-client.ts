@@ -1,25 +1,20 @@
-// FixtureClient: 체험판(GitHub Pages)에서 서버 대신 쓰는 DomainClient. 운영의 HttpClient · LocalClient(ui 7절)가 올 때까지
-// 화면을 실제 모양의 읽기 모델로 돌려 보려는 임시 대역이다. 규칙은 fixture/rules.ts · stamps.ts에 최소한만 있고, 화면은 이 규칙을
-// 모른다(읽기 모델만 받는다). 자료는 브라우저 localStorage에 남고(없어도 돈다), '나가기' 화면에서 처음으로 되돌린다.
+// FixtureClient: 체험판(GitHub Pages)에서 서버 대신 쓰는 DomainClient — @skinote/domain의 메모리 어댑터(work/impl-server/plan.md D1).
+// 규칙 · 명령 처리기 · 읽기 모델은 모두 도메인 패키지에 있고(서버와 같은 코드), 여기에는 체험판만의 것(시계 · 이야기 · 기사 기기의
+// 보냄 대기 · localStorage · 체험 문구)만 있다. 화면은 규칙을 모른다(읽기 모델만 받는다). 자료는 브라우저 localStorage에 남고(없어도
+// 돈다), '나가기' 화면에서 처음으로 되돌린다.
 // 체험 시계는 12월 26일 15:40에서 시작해 페이지를 연 동안 실제 시간과 함께 가고, 닫혀 있던 동안은 멈춘다. 앞으로 돌릴 수 있다.
 // 기기 역할(setDevice): 기사 화면을 여는 동안 이 클라이언트는 기사 기기(운영의 LocalClient 몫)다. 그 기기의 연결을 끊으면
 // (setOffline) 허용된 명령은 보냄 대기에 쌓이고, 목록은 대기를 겹쳐 그려 받음 도장을 점선으로 보인다(sync 8-1).
 // 다시 연결하면 쌓인 순서대로 보낸다. 카운터는 매장 네트워크라 늘 연결되어 있고, 기사 기기의 대기는 카운터에 보이지 않는다.
 import {
-  DomainError, defaultUiConfig, type AnyCommandEnvelope, type CommandOutcome, type CommandType, type ConnectionState, type DomainClient,
+  defaultUiConfig, type AnyCommandEnvelope, type CommandOutcome, type CommandType, type ConnectionState, type DomainClient,
   type LedgerViewResult, type PendingCommand, type QueryName, type QueryParams, type QueryResult, type SyncHead, type UiConfig, type ViewParams,
 } from '@skinote/contract';
-import { applyCommand, OFFLINE_ALLOWED } from './commands.ts';
-import type { FxState } from './model.ts';
-import { findOrder, orderIdOfTask } from './rules.ts';
-import { DEMO_START_MS, SHOP_NAME, createSeed } from './seed.ts';
 import {
-  addTicketSheet, checkoutSheet, closingSheet, fieldPaySheet, groupPaySheet, orderDraft, partialPaySheet, promiseSheet, returnSheet, shopRules,
-  taskSheet,
-} from './sheets.ts';
+  MINUTE, OFFLINE_ALLOWED, SAMPLE_STAFF, findOrder, hm, iso, ledgerView, orderIdOfTask, runQuery, sampleRegistry, type FxState, type ReadContext,
+} from '@skinote/domain';
+import { DEMO_LINES, DEMO_START_MS, applyCommand, createSeed } from './demo.ts';
 import { applyStory } from './story.ts';
-import { MINUTE, hm, iso } from './time.ts';
-import { collectionList, confirmDraft, dayLedger, deliveryList, findLast4, orderSlip, reviewList, type ViewContext } from './views.ts';
 
 /** localStorage와 같은 모양(시험은 메모리 저장소를 넣는다). */
 export interface FixtureStorage {
@@ -76,7 +71,7 @@ export class FixtureClient implements DomainClient {
     this.key = options.storageKey ?? FIXTURE_STORAGE_KEY;
     this.realNow = options.realNow ?? (() => Date.now());
     this.story = options.story ?? false;
-    this.settings = defaultUiConfig({ shopName: SHOP_NAME, timezone: 'Asia/Seoul' });
+    this.settings = defaultUiConfig({ shopName: sampleRegistry().shopName, timezone: 'Asia/Seoul' });
     const saved = this.read();
     this.state = saved?.state ?? createSeed(newEpoch(this.realNow()));
     this.anchorDemo = saved?.clock ?? DEMO_START_MS;
@@ -156,6 +151,11 @@ export class FixtureClient implements DomainClient {
     return this.state.driverDevice.offline;
   }
 
+  /** 미리 보기 화면(로그인 타일)의 직원 이름: 견본 직원(SAMPLE_STAFF). 화면이 도메인을 가져오지 않게 체험판이 넘긴다(plan §6-3). */
+  previewStaff(): string[] {
+    return SAMPLE_STAFF.map((s) => s.name);
+  }
+
   // ── DomainClient ──────────────────────────────────────────────────
 
   async config(): Promise<UiConfig> {
@@ -163,46 +163,13 @@ export class FixtureClient implements DomainClient {
   }
 
   async ledgerView(viewKey: string, params: ViewParams): Promise<LedgerViewResult> {
-    const ctx = this.context();
-    switch (viewKey) {
-      case 'day_ledger': return clone(dayLedger(ctx, params));
-      case 'collection_list': return clone(collectionList(ctx, params));
-      case 'delivery_list': return clone(deliveryList(ctx, params));
-      default: throw new DomainError('UNKNOWN_VIEW', '체험 자료에 없는 화면: ' + viewKey);
-    }
+    const { state, ctx } = this.context();
+    return clone(ledgerView(state, viewKey, params, ctx));
   }
 
   async query<Q extends QueryName>(name: Q, params: QueryParams[Q]): Promise<QueryResult[Q]> {
-    const ctx = this.context();
-    const answer = (value: QueryResult[QueryName]) => clone(value) as QueryResult[Q];
-    switch (name) {
-      case 'orderSlip': {
-        const p = params as QueryParams['orderSlip'];
-        const slip = orderSlip(ctx, p.orderId, p.deviceClass);
-        if (!slip) throw new DomainError('NOT_FOUND', '없는 접수: ' + p.orderId);
-        return answer(slip);
-      }
-      case 'findLast4': return answer(findLast4(ctx, (params as QueryParams['findLast4']).last4));
-      case 'confirmDraft': return answer(confirmDraft(ctx, params as QueryParams['confirmDraft']));
-      case 'reviewList': return answer(reviewList(ctx));
-      case 'vehicleLoad': {
-        const list = collectionList(ctx, { vehicleId: (params as QueryParams['vehicleLoad']).vehicleId });
-        return answer(list.vehicleLoad!);
-      }
-      // 둘째 판 화면(sheets.ts, 단계마다 채움).
-      case 'returnSheet': return answer(returnSheet(ctx, params as QueryParams['returnSheet']));
-      case 'promiseSheet': return answer(promiseSheet(ctx, params as QueryParams['promiseSheet']));
-      case 'orderDraft': return answer(orderDraft(ctx, params as QueryParams['orderDraft']));
-      case 'checkoutSheet': return answer(checkoutSheet(ctx, params as QueryParams['checkoutSheet']));
-      case 'groupPaySheet': return answer(groupPaySheet(ctx, params as QueryParams['groupPaySheet']));
-      case 'partialPaySheet': return answer(partialPaySheet(ctx, params as QueryParams['partialPaySheet']));
-      case 'closingSheet': return answer(closingSheet(ctx, params as QueryParams['closingSheet']));
-      case 'taskSheet': return answer(taskSheet(ctx, params as QueryParams['taskSheet']));
-      case 'fieldPaySheet': return answer(fieldPaySheet(ctx, params as QueryParams['fieldPaySheet']));
-      case 'addTicketSheet': return answer(addTicketSheet(ctx, params as QueryParams['addTicketSheet']));
-      case 'shopRules': return answer(shopRules(ctx, params as QueryParams['shopRules']));
-      default: throw new DomainError('UNKNOWN_VIEW', '체험 자료에 없는 조회: ' + String(name));
-    }
+    const { state, ctx } = this.context();
+    return clone(runQuery(state, name, params, ctx));
   }
 
   async command(envelope: AnyCommandEnvelope): Promise<CommandOutcome> {
@@ -258,10 +225,11 @@ export class FixtureClient implements DomainClient {
     return who + (what[envelope.type] ?? envelope.type) + ' ' + hm(at);
   }
 
-  private context(): ViewContext {
-    const base = { config: this.settings, now: this.now() };
+  /** 읽기 문맥: 지금 자료(기사 기기면 보냄 대기를 겹친 사본)와 화면 설정 · 체험 시계 · 체험 문구. */
+  private context(): { state: FxState; ctx: ReadContext } {
+    const base = { config: this.settings, now: this.now(), lines: DEMO_LINES };
     const queue = this.state.driverDevice.queue;
-    if (this.device !== 'driver' || queue.length === 0) return { ...base, state: this.state };
+    if (this.device !== 'driver' || queue.length === 0) return { state: this.state, ctx: base };
     // 보냄 대기 겹치기(sync 8-1): 대기 명령을 복사본에 적용해 그리고 버린다. 수거 · 배달이 대기인 업무는 점선.
     const shadow = structuredClone(this.state);
     const pendingTasks = new Set<string>();
@@ -269,7 +237,7 @@ export class FixtureClient implements DomainClient {
       const outcome = applyCommand(shadow, q.envelope, q.at);
       if ((q.envelope.type === 'stock.collect' || q.envelope.type === 'stock.deliver') && outcome.outcome === 'applied') pendingTasks.add(q.envelope.payload.taskId);
     }
-    return { ...base, state: shadow, pendingTasks };
+    return { state: shadow, ctx: { ...base, pendingTasks } };
   }
 
   private emit(): void {
@@ -285,6 +253,8 @@ export class FixtureClient implements DomainClient {
       // 옛 판(2 이하)으로 저장된 체험 자료는 버리고 처음 자료로 시작한다(판 3: 운영 규칙 · 번호 · 보증금 · 돈통).
       if (saved.version !== 3 || saved.state?.version !== 3 || !Array.isArray(saved.state.orders) || !saved.state.driverDevice || !saved.state.settings
         || typeof saved.clock !== 'number') return null;
+      // 매장 목록(registry)은 체험판 코드의 견본 값이다: 저장된 것이 없거나 옛것이어도 늘 지금 값을 쓴다.
+      saved.state.registry = sampleRegistry();
       return saved;
     } catch {
       return null;

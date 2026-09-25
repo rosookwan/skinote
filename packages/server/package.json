@@ -2,7 +2,7 @@
   "name": "@skinote/server",
   "version": "0.1.0",
   "private": true,
-  "description": "스키노트 중앙 서버의 뼈대: 시작할 때 control · 매장 파일 마이그레이션, 상태 확인(/api/health), 날마다 백업. 의존성 없이 Node 내장 모듈과 @skinote/schema만 쓴다.",
+  "description": "스키노트 중앙 서버: 시작할 때 control · 매장 파일 마이그레이션, 상태 확인(/api/health), 날마다 백업, 기기 등록 · 직원 로그인(/api/v2/device · login · session), 장부 API(/api/v2/query · command · head · stream), 매장 명령줄(bin/shop.js)과 관리 소켓. 의존성 없이 Node 내장 모듈과 @skinote 패키지만 쓴다.",
   "type": "module",
   "main": "src/main.js",
   "exports": {
@@ -11,14 +11,18 @@
     "./package.json": "./package.json"
   },
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=22.18.0"
   },
   "dependencies": {
-    "@skinote/schema": "0.1.0"
+    "@skinote/contract": "*",
+    "@skinote/domain": "*",
+    "@skinote/schema": "0.1.0",
+    "@skinote/store": "*"
   },
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning src/main.js",
     "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js",
-    "backup": "node --disable-warning=ExperimentalWarning bin/backup.js"
+    "backup": "node --disable-warning=ExperimentalWarning bin/backup.js",
+    "shop": "node --disable-warning=ExperimentalWarning bin/shop.js"
   }
 }

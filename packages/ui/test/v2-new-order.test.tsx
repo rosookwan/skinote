@@ -59,7 +59,7 @@ describe('숫자판(NumberPad)', () => {
     expect(time).toContain('>17:2_</output>');
     expect(time).toMatch(/class="sn-key is-go" disabled="">입력</);
     expect([numberPadReady('time', '1720'), numberPadReady('time', '172'), numberPadReady('phone', ''), numberPadReady('amount', '')]).toEqual([true, false, true, true]);
-    expect(NUMBER_PAD_DIGITS).toEqual({ phone: 11, amount: 9, time: 4 });
+    expect(NUMBER_PAD_DIGITS).toEqual({ phone: 11, amount: 9, time: 4, code: 12, pin: 6 });
     expect([numberPadText('amount', ''), numberPadText('time', ''), numberPadText('phone', '010')]).toEqual(['', '__:__', '010']);
   });
 

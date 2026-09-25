@@ -117,3 +117,26 @@ test('loopback hosts', () => {
   for (const host of ['127.0.0.1', '127.1.2.3', 'localhost', '::1', '[::1]']) assert.ok(isLoopbackHost(host), host);
   for (const host of ['0.0.0.0', '::', '10.0.0.1', 'example.com']) assert.ok(!isLoopbackHost(host), host);
 });
+
+test('API settings: SKINOTE_API on/off, the public origin (required off loopback), the admin socket path', () => {
+  const defaults = loadConfig({}, noRelease);
+  assert.equal(defaults.api, 'on');
+  assert.equal(defaults.publicOrigin, null, 'a loopback server may go without it (the Host header is compared)');
+  assert.equal(defaults.adminSocket, '/run/skinote/admin.sock');
+  assert.equal(defaults.secrets, null, 'secrets are read apart (secrets.js)');
+  assert.equal(loadConfig({ SKINOTE_API: 'OFF' }, noRelease).api, 'off');
+  assert.equal(loadConfig({ SKINOTE_ADMIN_SOCKET: 'off' }, noRelease).adminSocket, null);
+  assert.equal(loadConfig({ SKINOTE_PUBLIC_ORIGIN: 'https://shop.example.com' }, noRelease).publicOrigin, 'https://shop.example.com');
+  assert.equal(loadConfig({ SKINOTE_PUBLIC_ORIGIN: 'http://localhost:5183' }, noRelease).publicOrigin, 'http://localhost:5183');
+  assert.match(problemsOf({ SKINOTE_API: 'maybe' })[0] ?? '', /SKINOTE_API/);
+  for (const bad of ['shop.example.com', 'https://shop.example.com/app', 'https://a:b@shop.example.com', 'ftp://shop.example.com', 'https://shop.example.com?x=1', 'https://Shop.Example.com']) {
+    assert.equal(problemsOf({ SKINOTE_PUBLIC_ORIGIN: bad }).length, 1, bad);
+  }
+  assert.match(problemsOf({ SKINOTE_HOST: '0.0.0.0' })[0] ?? '', /SKINOTE_PUBLIC_ORIGIN/, 'an open host needs the public origin');
+  assert.equal(loadConfig({ SKINOTE_HOST: '0.0.0.0', SKINOTE_API: 'off' }, noRelease).host, '0.0.0.0', 'not with the API off');
+  assert.match(problemsOf({ NODE_ENV: 'production' })[0] ?? '', /SKINOTE_PUBLIC_ORIGIN/, 'production (the unit sets NODE_ENV) needs the public origin');
+  assert.equal(loadConfig({ NODE_ENV: 'production', SKINOTE_PUBLIC_ORIGIN: 'https://shop.example.com' }, noRelease).publicOrigin, 'https://shop.example.com');
+  assert.equal(loadConfig({ NODE_ENV: 'production', SKINOTE_API: 'off' }, noRelease).api, 'off', 'not with the API off');
+  assert.equal(problemsOf({ SKINOTE_ADMIN_SOCKET: 'relative.sock' }).length, 1);
+  assert.equal(problemsOf({ SKINOTE_ADMIN_SOCKET: '/' + 'x'.repeat(120) }).length, 1, 'socket paths stay under 100 bytes');
+});

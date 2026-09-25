@@ -2,11 +2,11 @@
 // 조회 · 명령의 자리(9단계까지 모두 채웠다). 단계마다 이 파일이 아니라 자기 시험 파일(v2-<화면>.test.ts)을 더한다.
 import { DomainError, draftToEnvelope, openCommandDraft, type AnyCommandEnvelope, type ConfirmCommand } from '@skinote/contract';
 import { describe, expect, it } from 'vitest';
-import { applyCommand } from '../src/fixture/commands.ts';
+import { assetId, businessDateOf, kstAt } from '@skinote/domain';
+import { DRAWERS, SHOP_RULES } from '@skinote/domain/sample';
+import { applyCommand, createSeed } from '../src/fixture/demo.ts';
 import { FixtureClient, type FixtureStorage } from '../src/fixture/fixture-client.ts';
-import { DRAWERS, SHOP_RULES, assetId, createSeed } from '../src/fixture/seed.ts';
-import { applyStory, storyRequestId, type FxStoryEvent } from '../src/fixture/story.ts';
-import { businessDateOf, kstAt } from '../src/fixture/time.ts';
+import { applyStory, type FxStoryEvent, storyRequestId } from '../src/fixture/story.ts';
 
 class MemoryStorage implements FixtureStorage {
   readonly map = new Map<string, string>();

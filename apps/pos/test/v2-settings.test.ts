@@ -7,12 +7,9 @@ import { fitList } from '@skinote/layout';
 import { DEVICE_PROFILES, openOrRestoreDraft } from '@skinote/ui';
 import { describe, expect, it } from 'vitest';
 import { inputAccepts, optionPress, padValue, withChange } from '../src/app/settings-draft.ts';
-import { heldRule } from '../src/fixture/deposits.ts';
-import { ruleKeys } from '../src/fixture/shop-rules.ts';
+import { businessDateOf, type FxState, heldRule, kstAt, liftReturnable, ruleKeys, shopCutoff } from '@skinote/domain';
+import { SHOP_RULES, sampleRegistry } from '@skinote/domain/sample';
 import { FixtureClient } from '../src/fixture/fixture-client.ts';
-import type { FxState } from '../src/fixture/model.ts';
-import { liftReturnable, SHOP_RULES } from '../src/fixture/seed.ts';
-import { businessDateOf, kstAt, shopCutoff } from '../src/fixture/time.ts';
 import { rulesLayout, saveRowsPerPage, settingsTabs } from '../src/screens/ShopSettingsScreen.tsx';
 
 const ms = (h: number, m: number, day = 0) => kstAt('2026-12-26', day, h, m);
@@ -186,7 +183,7 @@ describe('바꿈 key(RuleChange.key)는 schema.sql의 표 · 열(contract ruleKe
       expect(start, table).toBeGreaterThanOrEqual(0);
       return sql.slice(start, sql.indexOf('\n);', start));
     };
-    for (const key of Object.values(ruleKeys(SHOP_RULES))) {
+    for (const key of Object.values(ruleKeys(sampleRegistry(), SHOP_RULES))) {
       const parts = parseRuleKey(key);
       expect(parts, key).not.toBeNull();
       if (parts!.table === 'shop_settings') expect(sql, key).toContain("('" + parts!.row + "',");

@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 // @ts-check
 // 서버 시작점(systemd skinote-server.service가 부른다: WorkingDirectory=/srv/skinote/current/server, node src/main.js).
-// 설정이 틀리면 78(EX_CONFIG)로 끝난다: 유닛의 RestartPreventExitStatus=78이 같은 실패로 다시 시작하지 않게 한다.
+// 설정이 틀리거나 API를 켰는데 비밀값(secrets.js)이 없으면 78(EX_CONFIG)로 끝난다: 유닛의 RestartPreventExitStatus=78이 같은 실패로
+// 다시 시작하지 않게 한다. 다른 프로세스가 매장 파일의 쓰는 사람 잠금을 쥐고 있으면(WRITER_LOCKED) 1로 끝난다.
 // SIGTERM · SIGINT를 받으면 새 연결을 받지 않고, 처리 중인 요청을 끝내고, 데이터베이스를 닫고 끝난다.
 // 신호 처리는 시작(마이그레이션 · 실행기의 VACUUM INTO 백업, 동기) 전에 건다: 그동안 온 신호는 표시만 하고, 시작이 끝난 뒤에
 // 곧바로 닫는다. 기본 동작(바로 죽음)으로 VACUUM INTO가 반쯤 쓴 사본이 남지 않게. systemd의 TimeoutStopSec는 긴 마이그레이션을
 // 기다릴 만큼 길다(deploy/skinote-server.service).
 
 import { ConfigError, isLoopbackHost, loadConfig } from './config.js';
+import { loadSecrets } from './secrets.js';
 import { startServer } from './server.js';
 
 const EX_CONFIG = 78;
@@ -16,7 +18,8 @@ const FORCE_EXIT_MS = 15_000;
 async function main() {
   let config;
   try {
-    config = loadConfig();
+    const loaded = loadConfig();
+    config = { ...loaded, secrets: loaded.api === 'on' ? loadSecrets(process.env) : null };
   } catch (error) {
     if (error instanceof ConfigError) {
       console.error(error.message);

@@ -32,7 +32,7 @@ const codes = problems => [...new Set(problems.map(p => p.code))].sort();
 test('the shipped control and shop migrations pass the lint', () => {
   const { problems, ledgers } = lintAll();
   assert.deepEqual(problems, []);
-  assert.equal(ledgers.size, 53, '50 shop ledgers + events + 2 control ledgers');
+  assert.equal(ledgers.size, 55, '50 shop ledgers + events + line_promise_fulfillments · payment_allocation_sections(0002) + 2 control ledgers');
 });
 
 test('the package code itself passes the code lint (no raw connections, no REPLACE on ledgers)', () => {

@@ -244,6 +244,25 @@ export const APP_STRINGS_KO = {
   /** 카운터가 끊겼을 때(ui 6-9, 문구 표 3-11). */
   settingsOffline: '설정 변경 · 연결 후 가능',
   settingsUnreadable: '연결 끊김 · 설정 조회 실패 · 자동 재시도',
+
+  // ── 서버 연결(계획 work/impl-server/plan.md 6-3 · 8절, 문구 표 3-17 확인 대기): 기기 등록 · 로그인 · 로그아웃 · 연결 끊김 화면.
+  //    `연결 끊김` · `마지막 연결 {time}`은 부품 문구(t.offline · t.lastSync), `입력` · `정정` · `닫기`는 숫자판의 말이다.
+  titleEnroll: '기기 등록 · 스키노트',
+  titleLogin: '로그인 · 스키노트',
+  enrollTitle: '기기 등록',
+  enrollCode: '등록 번호',
+  enrollLine: '등록 번호 12자리',
+  enrollBadCode: '등록 번호 불일치 · 재입력 필요',
+  enrollUsed: '등록 번호 만료 · 새 번호 필요',
+  tooManyTries: '시도 횟수 초과 · 잠시 후 재시도',
+  loginTitle: '로그인',
+  /** 비밀번호 숫자판의 제목(고른 직원 이름 + `비밀번호`). */
+  pinPadTitle: '{name} · 비밀번호',
+  pinWrong: '비밀번호 불일치 · 재입력 필요',
+  loginLocked: '로그인 잠김 · {time} 이후 가능',
+  loginExpired: '로그인 만료 · 재로그인 필요',
+  logout: '로그아웃',
+  retry: '재시도',
 } as const;
 
 /** 앱 화면 문구를 부르고 {이름} 자리를 채운다. */

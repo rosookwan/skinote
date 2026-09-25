@@ -21,6 +21,8 @@
 //   - 같은 날 여러 번 돌려도(손으로, 놓친 실행) 파일마다 가장 새 3개만 남긴다.
 //   - migrations/(실행기의 적용 전 · 뒤 사본)는 파일 · 종류마다 가장 새 판 2개, 판마다 가장 새 3개만 남긴다.
 //   - 실행마다 backups/ 전체 크기와 디스크 여유를 기록한다.
+// 매장 파일의 사본마다 그 rev · epoch를 manifest에 적고 control의 tenant_epochs.max_rev_seen을 올린다(되살릴 때 rev_floor = 지금까지
+// 본 가장 큰 rev + 1,000,000을 셀 수 있게, data-model · sync 10-2 · deployment 6절). 그 행이 없으면(예전 판이 만든 매장) 만든다.
 // 아직 하지 않은 것: 공개 키 암호화, 다른 구역 · 다른 회사 저장소로 올리기(6-1), control backups 표에 적기.
 
 import {
@@ -29,6 +31,7 @@ import {
 } from 'node:fs';
 import { basename, join } from 'node:path';
 import { backupDatabase, loadMigrations, openDatabase, readState } from '@skinote/schema';
+import { openControlStore, readInstance, readRev } from '@skinote/store';
 import { compareBackupNames, parseBackupName, VERIFIED_SUFFIX } from './backup-files.js';
 import { businessDate, localDate } from './clock.js';
 import { SHOP_ID_PATTERN } from './config.js';
@@ -51,6 +54,9 @@ import { errorCode, messageOf } from './errors.js';
  *   quickCheck?: 'ok',
  *   createdAt?: string,
  *   error?: string,
+ *   epoch?: string,
+ *   epochNo?: number,
+ *   rev?: number,
  * }} BackupItem
  * @typedef {{
  *   startedAt: string,
@@ -453,6 +459,50 @@ function mb(bytes) {
 }
 
 /**
+ * 매장 사본마다 rev · epoch를 적고(manifest 항목) control tenant_epochs.max_rev_seen을 올린다. 던지지 않는다(기록만).
+ * @param {ServerConfig} config @param {string} dir @param {BackupItem[]} items @param {() => Date} now @param {(line: string) => void} log
+ */
+function recordRevs(config, dir, items, now, log) {
+  const shops = items.filter(item => item.ok && item.kind === 'shop' && item.shopId && item.file);
+  if (!shops.length) return;
+  for (const item of shops) {
+    let db;
+    try {
+      db = openDatabase(join(dir, /** @type {string} */ (item.file)), { readOnly: true });
+      const instance = readInstance(/** @type {any} */ (db), /** @type {string} */ (item.shopId));
+      if (instance) {
+        item.epoch = instance.epochId;
+        item.rev = readRev(/** @type {any} */ (db), /** @type {string} */ (item.shopId));
+        item.epochNo = instance.epochNo;
+      }
+    } catch (error) {
+      log(`${item.source}: 사본의 rev를 읽지 못함 ${messageOf(error)}`);
+    } finally {
+      try { db?.close(); } catch { /* 이미 닫힘 */ }
+    }
+  }
+  const controlFile = join(config.dbDir, 'control.sqlite');
+  if (!existsSync(controlFile)) return;
+  let control;
+  try {
+    control = openDatabase(controlFile);
+    const store = openControlStore(/** @type {any} */ (control));
+    for (const item of shops) {
+      if (item.epoch === undefined || item.rev === undefined || !item.shopId) continue;
+      if (!store.tenant(item.shopId)) continue;
+      if (!store.raiseMaxRevSeen(item.shopId, item.epoch, item.rev)) {
+        store.recordEpoch({ tenantId: item.shopId, epochNo: item.epochNo ?? 1, epochId: item.epoch, now: now().getTime() });
+        store.raiseMaxRevSeen(item.shopId, item.epoch, item.rev);
+      }
+    }
+  } catch (error) {
+    log(`control의 본 rev를 올리지 못함(tenant_epochs): ${messageOf(error)}`);
+  } finally {
+    try { control?.close(); } catch { /* 이미 닫힘 */ }
+  }
+}
+
+/**
  * 모든 파일을 백업한다. 하나라도 실패하면 ok = false(끝 코드 1). 오래된 폴더 정리는 결과와 상관없이 한다.
  * 다른 백업이 도는 중이면 BACKUP_RUNNING을 던진다.
  * @param {ServerConfig} config
@@ -514,6 +564,7 @@ function runBackupLocked(config, { now = () => new Date(), log = console.log, st
     return item;
   });
   let ok = items.length > 0 && items.every(item => item.ok);
+  recordRevs(config, dir, items, now, log);
 
   const pruned = pruneSameDay(dir, SAME_DAY_KEEP);
   removed.push(...rotateBackups(config.backupDir, config.backupKeepDays, date, protect));

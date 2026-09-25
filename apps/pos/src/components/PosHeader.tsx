@@ -2,10 +2,11 @@
 // 끝 4자리는 어느 화면에서든 숫자판(아래에서 올라오는 판)을 열고, 한 팀이면 그 접수증을 바로 연다(N10).
 // 메뉴는 화면 키(screen_key)의 경로로 간다(router의 screenRoute: 수거 목록 #/collections/:date, 관리 #/manage).
 // 아직 없는 화면(리프트권 · 확인 필요 · 사이즈 요청)은 한 문장 알림으로 알린다.
+// 서버에 붙은 카운터가 끊기면 매장 이름 자리에 회색 이름표 `연결 끊김 · 마지막 연결 16:48`(AppHeader connection, 계획 6-4).
 import { menuFor, type MenuEntryRow, type ReviewItem } from '@skinote/contract';
 import { AppHeader, Keypad, t, useDeviceProfile, type AppHeaderMore } from '@skinote/ui';
 import { useMemo, useState, type ReactNode } from 'react';
-import { useClient, useConfig, useLive } from '../app/client.tsx';
+import { useClient, useConfig, useConnection, useLive } from '../app/client.tsx';
 import { go, screenRoute } from '../app/router.ts';
 import { say } from '../app/strings.ts';
 import { ChoiceSheet, NoticeDialog, type Choice } from './NoticeDialog.tsx';
@@ -34,6 +35,7 @@ export function usePosHeader(from: 'ledger' | 'slip' | 'collection' | 'other', c
   const client = useClient();
   const config = useConfig();
   const profile = useDeviceProfile();
+  const connection = useConnection();
   const [finding, setFinding] = useState(false);
   const [digits, setDigits] = useState('');
   const [note, setNote] = useState<string | undefined>(undefined);
@@ -101,6 +103,7 @@ export function usePosHeader(from: 'ledger' | 'slip' | 'collection' | 'other', c
       onMore={onMore}
       onAlerts={() => setMessage({ title: t('alerts'), lines: alerts.length ? alerts.map((a) => a.message) : [say('noAlerts')] })}
       onExit={() => leave(() => go({ name: 'exit' }))}
+      connection={connection}
     />
   );
 

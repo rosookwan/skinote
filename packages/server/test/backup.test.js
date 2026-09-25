@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { openDatabase } from '@skinote/schema';
+import { loadMigrations, openDatabase } from '@skinote/schema';
 import { checkBackupFile } from '../src/backup-files.js';
 import {
   createLastBackupsReader, LOCK_FILE, MIGRATION_KEEP_COPIES, pruneMigrationBackups, readLastBackups, rotateBackups, runBackup, SAME_DAY_KEEP,
@@ -23,6 +23,8 @@ const quiet = { log: () => {} };
 /** 서울 04:00 = UTC 전날 19:00. 영업일(06:00 기준)은 그 전날. */
 const AT_0400_SEOUL = new Date('2026-09-24T19:00:00Z');
 const TODAY = '2026-09-25';
+/** 배포한 마이그레이션 수(종류마다): control 0001, shop 0001 + 0002. */
+const KNOWN = { control: loadMigrations('control').length, shop: loadMigrations('shop').length };
 
 /** @param {string} dir @param {string} shops @param {Record<string, string>} [env] */
 function preparedConfig(dir, shops, env = {}) {
@@ -67,8 +69,9 @@ test('backs up control and every shop, including rows still in the WAL of the li
   for (const item of result.items) {
     assert.equal(item.ok, true);
     assert.equal(item.quickCheck, 'ok');
-    assert.equal(item.schemaVersion, 1);
-    assert.match(item.file ?? '', /^(control|shop-a|shop-b)\.daily\.v0001\.20260924T190000000Z\.sqlite$/);
+    const version = item.source === 'control.sqlite' ? KNOWN.control : KNOWN.shop;
+    assert.equal(item.schemaVersion, version);
+    assert.match(item.file ?? '', new RegExp(`^(control|shop-a|shop-b)\\.daily\\.v${String(version).padStart(4, '0')}\\.20260924T190000000Z\\.sqlite$`));
     assert.deepEqual(checkBackupFile(join(dir, /** @type {string} */ (item.file))), { ok: true });
   }
   const copyA = openDatabase(join(dir, /** @type {string} */ (result.items[1].file)), { readOnly: true });
@@ -285,4 +288,28 @@ test('bin/backup.js exits 0 on success, 1 on failure, 78 on a config error', () 
   assert.match(failed.stderr, /shops\/shop-missing\.sqlite \(MISSING\)/);
   const bad = run({ SKINOTE_SHOP_IDS: '../etc' });
   assert.equal(bad.status, 78);
+});
+
+test('each shop copy records its rev and epoch, and control tenant_epochs.max_rev_seen rises to it (restore needs the highest rev ever seen)', async () => {
+  const { provisionedShop, cli: runCli, SHOP: shopId } = await import('./helpers.js');
+  const { openControlStore } = await import('@skinote/store');
+  const dataDir = join(temp.dir, 'max-rev');
+  const shop = await provisionedShop(dataDir);
+  // 견본 하루를 넣어 rev를 올린다(시험 매장).
+  const loaded = await runCli(['load-sample', '--shop', shopId, '--date', '2026-12-26'], shop.env);
+  assert.equal(loaded.code, 0, loaded.err);
+  const config = testConfig(dataDir, shop.env);
+  const result = runBackup(config, { ...quiet, now: () => AT_0400_SEOUL });
+  assert.equal(result.ok, true);
+  const item = result.items.find(i => i.kind === 'shop');
+  assert.equal(item?.rev, 1, 'the copy holds rev 1 (the import)');
+  assert.match(item?.epoch ?? '', /^[0-9A-HJKMNP-TV-Z]{26}$/);
+  const manifest = JSON.parse(readFileSync(join(config.backupDir, TODAY, 'manifest.json'), 'utf8'));
+  assert.equal(manifest.runs[0].items.find((/** @type {any} */ i) => i.kind === 'shop').rev, 1);
+  const control = openDatabase(join(dataDir, 'db', 'control.sqlite'));
+  try {
+    assert.deepEqual(openControlStore(/** @type {any} */ (control)).currentEpoch(shopId), { epochNo: 1, epochId: item?.epoch, maxRevSeen: 1, revFloor: 0 });
+  } finally {
+    control.close();
+  }
 });

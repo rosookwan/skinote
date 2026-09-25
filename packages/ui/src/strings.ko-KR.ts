@@ -109,6 +109,13 @@ export const STRINGS_KO = {
   methodsFor: '{section} 결제 수단',
   // 관리 화면 카드(RuleCard, 매장 설정 · 운영 규칙 V8)의 저장하지 않은 바꿈 이름표(문구 표 3-11 `변경됨`).
   changed: '변경됨',
+  // 화면 키보드(HangulKeyboard, 계획 work/impl-server/plan.md 8절 · 문구 표 3-17 확인 대기): 띄어쓰기 키, 쪽 바꾸기(한글 · 숫자),
+  // 쌍자음 키(그림 ⇧의 읽는 이름), 낱자모가 남은 글의 회색 한 줄. `정정` · `입력` · `닫기`는 숫자판과 같은 말(erase · enter · close).
+  space: '띄어쓰기',
+  pageHangul: '한글',
+  pageNumber: '숫자',
+  shiftKey: '쌍자음',
+  textIncomplete: '글자 미완성 · 정정 필요',
 } as const;
 
 export type StringKey = keyof typeof STRINGS_KO;

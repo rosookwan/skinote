@@ -11,14 +11,9 @@ import { autoSendStep } from '../src/screens/GroupPayScreen.tsx';
 import { chainRetry, confirmEnvelope, draftOptions } from '../src/components/ConfirmFlow.tsx';
 import { chainStep, returnPages } from '../src/components/ReturnDialog.tsx';
 import { EMPTY_NEW_ORDER, hasDraft, withName, withQuantity } from '../src/app/new-order-draft.ts';
-import { heldNumbers } from '../src/fixture/assets.ts';
-import { applyCommand } from '../src/fixture/commands.ts';
-import { depositOf, heldAmount } from '../src/fixture/deposits.ts';
+import { canOffset, depositOf, dueFor, type FxOrder, type FxState, heldAmount, heldNumbers, kstAt, moneyLateAt, othersDue, ownDue, selfDue } from '@skinote/domain';
+import { applyCommand } from '../src/fixture/demo.ts';
 import { FixtureClient } from '../src/fixture/fixture-client.ts';
-import type { FxOrder, FxState } from '../src/fixture/model.ts';
-import { canOffset } from '../src/fixture/deposits.ts';
-import { dueFor, moneyLateAt, othersDue, ownDue, selfDue } from '../src/fixture/rules.ts';
-import { kstAt } from '../src/fixture/time.ts';
 
 const ms = (h: number, m: number, day = 0) => kstAt('2026-12-26', day, h, m);
 const text = (runs: RichText) => runs.map((r) => r.text).join('');

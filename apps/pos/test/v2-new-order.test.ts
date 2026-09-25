@@ -7,12 +7,10 @@ import {
   EMPTY_NEW_ORDER, clearNewOrder, draftParams, loadNewOrder, qtyOf, saveNewOrder, withDeliver, withName, withOpenKind, withOpenVariant, withParty,
   withPhone, withPickupNow, withQuantity, withReserve, withReturnDay, withReturnPlace, withReturnSlot, type NewOrderState,
 } from '../src/app/new-order-draft.ts';
-import { KINDS, MAX_QTY, PRODUCTS, cleanItems, quoteOf } from '../src/fixture/catalog.ts';
+import { type FxState, kstAt, resolveSchedule } from '@skinote/domain';
+import { MAX_QTY } from '@skinote/domain/sample';
+import { createSeed } from '../src/fixture/demo.ts';
 import { FixtureClient } from '../src/fixture/fixture-client.ts';
-import type { FxState } from '../src/fixture/model.ts';
-import { phoneText, resolveSchedule } from '../src/fixture/order-draft.ts';
-import { SHOP_RULES, createSeed } from '../src/fixture/seed.ts';
-import { kstAt } from '../src/fixture/time.ts';
 import { footerAlts, rowPages, tilesPerPage } from '../src/screens/NewOrderScreen.tsx';
 
 const ms = (h: number, m: number, day = 0) => kstAt('2026-12-26', day, h, m);
@@ -136,21 +134,7 @@ describe('V2 ① 품목의 읽기 모델(orderDraft)', () => {
     expect(view.totals.map((t) => t.label)).toEqual(['리프트권', '합계']);
   });
 
-  it('모르는 상품 · 규격 · 0개는 빼고, 같은 품목은 합치고, 수는 한도까지', () => {
-    expect(cleanItems([
-      { productKey: 'ski', quantity: 2 }, { productKey: 'ski', quantity: 1 }, { productKey: 'lesson', quantity: 1 }, { productKey: 'clothes', variantKey: '999', quantity: 1 },
-      { productKey: 'clothes', quantity: 1 }, { productKey: 'night_adult', variantKey: '100', quantity: 1 }, { productKey: 'helmet', variantKey: '소', quantity: 0 },
-      { productKey: 'board', quantity: 99 },
-    ])).toEqual([{ productKey: 'ski', quantity: 3 }, { productKey: 'board', quantity: MAX_QTY }]);
-    expect(KINDS.map((k) => k.key)).toEqual(['ski', 'board', 'boots', 'clothes', 'helmet', 'goggles', 'lift']);
-    expect(Object.values(PRODUCTS).filter((p) => p.section === 'lift').map((p) => [p.shortLabel, p.price, p.returnSlotKey])).toEqual([
-      ['오전권', 45_000, 'morning'], ['오후권', 45_000, 'afternoon'], ['야간권', 35_000, 'night'], ['주간권', 60_000, 'afternoon'], ['종일권', 75_000, 'afternoon'],
-    ]);
-    const quote = quoteOf(drawnState().draft.items, SHOP_RULES);
-    expect([quote.gear, quote.lift, quote.total, quote.depositUnits, quote.deposit]).toEqual([225_000, 140_000, 365_000, 4, 20_000]);
-    expect(phoneText('01000000042')).toBe('010-0000-0042');
-    expect(phoneText('0101234567')).toBe('010-123-4567');
-  });
+  // 품목 목록의 순수 셈(cleanItems · quoteOf · phoneText)은 도메인 시험으로 옮겼다(packages/domain/test/catalog.test.ts).
 });
 
 describe('V3 ② 일정의 읽기 모델', () => {

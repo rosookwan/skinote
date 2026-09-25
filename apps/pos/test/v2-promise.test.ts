@@ -9,13 +9,9 @@ import {
 import { openOrRestoreDraft } from '@skinote/ui';
 import { describe, expect, it } from 'vitest';
 import { promiseEnvelope, withDay, withPlace, withQuantity, withSlot, withVehicle } from '../src/components/PromiseDialog.tsx';
-import { heldNumbers } from '../src/fixture/assets.ts';
-import { applyCommand } from '../src/fixture/commands.ts';
+import { charged, findTask, type FxState, heldNumbers, kstAt, lineBuckets, orderTasks } from '@skinote/domain';
+import { applyCommand } from '../src/fixture/demo.ts';
 import { FixtureClient } from '../src/fixture/fixture-client.ts';
-import type { FxState } from '../src/fixture/model.ts';
-import { findTask, lineBuckets, orderTasks } from '../src/fixture/promises.ts';
-import { charged } from '../src/fixture/rules.ts';
-import { kstAt } from '../src/fixture/time.ts';
 import { promiseEntry } from '../src/screens/OrderSlipScreen.tsx';
 
 const ms = (h: number, m: number, day = 0) => kstAt('2026-12-26', day, h, m);
@@ -249,6 +245,7 @@ describe('promise.change — 일정이 품목 · 수량으로 나뉜다', () => 
     expect(move('today', 'night', 'store', -80_000).outcome).toBe('applied');
     expect(charged(o)).toBe(before);
     expect(o.charges?.map((c) => c.amount)).toEqual([80_000, -80_000]);
+    expect(o.charges?.map((c) => c.kind)).toEqual(['extension', 'extension_undo']);
   });
 
   it('차량 수거 · 입고는 그 업무(일정)의 몫만: 두솔동 업무를 받고 매장 입고하면 일정 행에 센다', () => {
@@ -299,7 +296,7 @@ describe('promise.change — 일정이 품목 · 수량으로 나뉜다', () => 
     const view = await client.query('promiseSheet', params);
     expect((await confirm(client, view, view)).outcome).toBe('applied');
     const o = state().orders.find((x) => x.id === 'o22')!;
-    expect(o.charges?.map((c) => [c.kind, c.lineId, c.quantity, c.days, c.amount])).toEqual([['extension', 'o22-l2', 1, 1, 25_000], ['extension', 'o22-l3', 1, 1, 5_000]]);
+    expect(o.charges?.map((c) => [c.kind, c.lineId, c.kind === 'extension' ? c.quantity : 0, c.kind === 'extension' ? c.days : 0, c.amount])).toEqual([['extension', 'o22-l2', 1, 1, 25_000], ['extension', 'o22-l3', 1, 1, 5_000]]);
     expect(charged(o)).toBe(255_000);
     expect((await client.query('orderSlip', { orderId: 'o22' })).money).toMatchObject({ charged: 255_000, due: 150_000 });
     // 내일 22:00 일정은 오늘 목록에 없다(오늘 22:00 설천 주차장 업무만).

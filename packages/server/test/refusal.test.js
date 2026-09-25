@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { copyFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { inspectFile, MIGRATIONS_DIR, migrate } from '@skinote/schema';
+import { inspectFile, loadMigrations, MIGRATIONS_DIR, migrate } from '@skinote/schema';
 import { canWrite } from '../src/databases.js';
 import { startServer } from '../src/server.js';
 import { collectLog, request, sha256Of, tempDir, testConfig } from './helpers.js';
@@ -15,17 +15,24 @@ import { collectLog, request, sha256Of, tempDir, testConfig } from './helpers.js
 const temp = tempDir();
 after(() => temp.cleanup());
 
-/** 0001 + 앱이 모르는 0002를 적용한 파일을 만든다. @param {'control' | 'shop'} kind @param {string} file */
+/** 배포한 마이그레이션 수(종류마다): control 0001, shop 0001 + 0002. */
+const KNOWN = { control: loadMigrations('control').length, shop: loadMigrations('shop').length };
+
+/** 배포한 마이그레이션 + 앱이 모르는 다음 판을 적용한 파일을 만든다. @param {'control' | 'shop'} kind @param {string} file */
 function newerFile(kind, file) {
   const dir = join(temp.dir, `newer-${kind}`);
   mkdirSync(dir, { recursive: true });
-  copyFileSync(join(MIGRATIONS_DIR, `0001_${kind}.sql`), join(dir, `0001_${kind}.sql`));
-  writeFileSync(join(dir, `0002_${kind}_future.sql`), `CREATE TABLE future_things (id TEXT PRIMARY KEY) STRICT;\n`);
+  for (const m of loadMigrations(kind)) copyFileSync(join(MIGRATIONS_DIR, `${m.name}.sql`), join(dir, `${m.name}.sql`));
+  const next = String(KNOWN[kind] + 1).padStart(4, '0');
+  writeFileSync(join(dir, `${next}_${kind}_future.sql`), `CREATE TABLE future_things (id TEXT PRIMARY KEY) STRICT;\n`);
   mkdirSync(join(file, '..'), { recursive: true });
   const result = migrate(file, kind, { migrationsDir: dir, backupDir: join(temp.dir, `newer-${kind}-backups`), appVersion: 'future' });
-  assert.equal(result.version, 2);
+  assert.equal(result.version, KNOWN[kind] + 1);
   result.db.close();
 }
+
+/** 1부터 n까지. @param {number} n */
+const upTo = n => Array.from({ length: n }, (_, i) => i + 1);
 
 /** 파일에 적힌 적용 기록의 번호(실행기의 읽기 전용 보기). @param {string} file */
 const appliedIds = file => inspectFile(file, 'shop').applied.map(row => row.id);
@@ -46,9 +53,9 @@ test('a shop file with an unknown newer migration is refused and opened read-onl
     assert.equal(refused.reason, 'UNKNOWN_MIGRATION');
     assert.equal(refused.mode, 'read_only');
     assert.equal(refused.writable, false);
-    assert.equal(refused.schemaVersion, 2);
-    assert.equal(refused.knownVersion, 1);
-    assert.equal(refused.migrationCount, 2);
+    assert.equal(refused.schemaVersion, KNOWN.shop + 1);
+    assert.equal(refused.knownVersion, KNOWN.shop);
+    assert.equal(refused.migrationCount, KNOWN.shop + 1);
     assert.equal(refused.journalMode, 'wal');
     assert.ok(refused.pageCount > 0);
     assert.deepEqual(body.shops.map((/** @type {any} */ s) => [s.shopId, s.writable]), [['shop-ok', true], ['shop-new', false]]);
@@ -62,7 +69,7 @@ test('a shop file with an unknown newer migration is refused and opened read-onl
   } finally {
     await app.close();
   }
-  assert.deepEqual(appliedIds(join(dataDir, 'db', 'shops', 'shop-new.sqlite')), [1, 2], 'the refused file is untouched');
+  assert.deepEqual(appliedIds(join(dataDir, 'db', 'shops', 'shop-new.sqlite')), upTo(KNOWN.shop + 1), 'the refused file is untouched');
 });
 
 test('a refused control file blocks writes for every shop and leaves every shop file untouched', async () => {
@@ -85,7 +92,7 @@ test('a refused control file blocks writes for every shop and leaves every shop 
     assert.equal(body.databases[0].status, 'refused');
     assert.equal(body.databases[0].reason, 'UNKNOWN_MIGRATION');
     const [a, fresh] = body.databases.slice(1);
-    assert.deepEqual([a.status, a.reason, a.mode, a.writable, a.schemaVersion, a.migrationCount], ['refused', 'CONTROL_UNAVAILABLE', 'read_only', false, 1, 1]);
+    assert.deepEqual([a.status, a.reason, a.mode, a.writable, a.schemaVersion, a.migrationCount], ['refused', 'CONTROL_UNAVAILABLE', 'read_only', false, KNOWN.shop, KNOWN.shop]);
     assert.deepEqual([fresh.status, fresh.reason, fresh.mode, fresh.writable], ['refused', 'CONTROL_UNAVAILABLE', 'closed', false]);
     assert.deepEqual(body.shops.map((/** @type {any} */ s) => [s.shopId, s.writable]), [['shop-a', false], ['shop-new', false]]);
     assert.ok(!canWrite(app.entries, 'shop-a'));

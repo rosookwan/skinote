@@ -9,12 +9,9 @@ import { DEVICE_PROFILES, openOrRestoreDraft } from '@skinote/ui';
 import { describe, expect, it } from 'vitest';
 import { checkoutEnvelope } from '../src/components/CheckoutDialog.tsx';
 import { pickedLines, stepLine } from '../src/components/PartialPayDialog.tsx';
-import { applyCommand } from '../src/fixture/commands.ts';
+import { amountFor, coveredOrders, dueFor, evenSplit, type FxOrder, type FxState, kstAt, lineLeft, othersDue, ownDue, payableLines } from '@skinote/domain';
+import { applyCommand } from '../src/fixture/demo.ts';
 import { FixtureClient } from '../src/fixture/fixture-client.ts';
-import { amountFor, evenSplit, payableLines } from '../src/fixture/group-pay.ts';
-import type { FxOrder, FxState } from '../src/fixture/model.ts';
-import { coveredOrders, dueFor, lineLeft, ownDue, othersDue } from '../src/fixture/rules.ts';
-import { kstAt } from '../src/fixture/time.ts';
 import {
   groupPayColumns, groupPayEnvelope, groupPayRowsPerPage, withAdded, withExcluded, withMethod, withoutDropped, withPart, withTab, withToggle,
 } from '../src/screens/GroupPayScreen.tsx';

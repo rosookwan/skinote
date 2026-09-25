@@ -4,22 +4,17 @@
 // 22:00 · 22:10 차량 수거를, 8단계는 23:48 매장 입고 · 현금 인계와 27일 00:32 차량 현금 점검을 더했다.
 // 사건은 한 번만 적고(storyApplied), 사람이 먼저 같은 일을 했으면(명령이 superseded · rejected) 건너뛴다.
 // 사건의 시각은 시안 화면의 '바로 뒤'다: 시계가 그 시각에 멈추면 화면은 시안처럼 사건 전 상태다.
-// 사건은 단계마다 더한다(work/impl-v2/plan.md 5절의 표). 이 파일은 체험 전용이고 LocalClient가 오면 없어진다.
+// 사건은 단계마다 더한다(work/impl-v2/plan.md 5절의 표). 이 파일은 체험 전용이다(규칙은 @skinote/domain, work/impl-server/plan.md D14).
 import {
   draftToEnvelope, openCommandDraft, type AnyCommandEnvelope, type CheckoutChoice, type CommandOutcome, type ConfirmCommand, type DraftItem, type Expect,
   type PromiseInput,
 } from '@skinote/contract';
-import { heldNumbers, plannedLeft, numbered } from './assets.ts';
-import { checkoutPlan, LATER } from './checkout.ts';
-import { groupPayCommand, groupPayPlan } from './group-pay.ts';
-import { depositDueAtIssue, depositOf, heldAmount, heldUnits } from './deposits.ts';
-import { collectDepositStep, fieldDue, onVanToDeliver, spareTickets, ticketQuote } from './driver.ts';
-import type { FxLine, FxOrder, FxState } from './model.ts';
-import { walletLeft } from './closing.ts';
-import { bucketOnVan, bucketOut, orderTasks, taskBucket, taskOrder } from './promises.ts';
-import { backCount, collectDone, deliverTaskId, findOrder, isVehiclePickup, routeTasks, selfDue } from './rules.ts';
-import { assetId, DEMO_DATE } from './seed.ts';
-import { kstAt } from './time.ts';
+import {
+  LATER, assetId, backCount, bucketOnVan, bucketOut, checkoutPlan, collectDepositStep, collectDone, deliverTaskId, depositDueAtIssue, depositOf, fieldDue,
+  findOrder, groupPayCommand, groupPayPlan, heldAmount, heldNumbers, heldUnits, isVehiclePickup, kstAt, numbered, onVanToDeliver, orderTasks, plannedLeft,
+  routeTasks, selfDue, spareTickets, taskBucket, taskOrder, ticketQuote, walletLeft, type FxLine, type FxOrder, type FxState,
+} from '@skinote/domain';
+import { DEMO_DATE } from './demo.ts';
 
 /** 사건 하나: 그 시각에 적을 명령들(지금 자료를 보고 만든다: 번호 · 받을 금액 · 보관 보증금). */
 export interface FxStoryEvent {
@@ -483,7 +478,7 @@ export const STORY: readonly FxStoryEvent[] = [
   },
 ];
 
-/** 명령 하나를 적는 함수(fixture-client가 applyCommand를 넘긴다: 여기서 commands.ts를 가져오면 순환이 생긴다). */
+/** 명령 하나를 적는 함수(fixture-client가 체험 문구로 부르는 applyCommand(demo.ts)를 넘긴다). */
 export type ApplyFn = (state: FxState, envelope: AnyCommandEnvelope, now: number) => CommandOutcome;
 
 /**

@@ -1,7 +1,7 @@
 // DeviceProfile(ui 3-7)가 문서의 표와 같은지, 부품 CSS가 크기 숫자 없이 등급 변수만 쓰는지 본다.
 import { readFileSync } from 'node:fs';
 import { SHOP_DEVICE_CLASS_KEYS } from '@skinote/contract';
-import { listAreaHeight, slipItemRows } from '@skinote/layout';
+import { fitKeyboard, listAreaHeight, slipItemRows } from '@skinote/layout';
 import { describe, expect, it } from 'vitest';
 import { DEVICE_PROFILES, pickDeviceClass, profileCssVars } from '../src/device-profile.ts';
 
@@ -50,6 +50,35 @@ describe('기기 등급 값(ui 3-7)', () => {
     expect(pickDeviceClass({ width: 1280, height: 720 }, 'driver')).toBe('driver_tablet');
     for (const size of DEVICE_PROFILES.driver_phone.checkSizes) expect(pickDeviceClass(size, 'driver')).toBe('driver_phone');
     for (const size of DEVICE_PROFILES.pos.checkSizes) expect(pickDeviceClass(size, 'counter')).toBe('pos');
+  });
+
+  it('화면 키보드 값(계획 7-2): 키는 누르는 곳 이상, 포스 860 · 태블릿 900 · 휴대폰 화면 폭 전체', () => {
+    const pick = (key: keyof typeof DEVICE_PROFILES) => DEVICE_PROFILES[key].keyboard;
+    expect(pick('pos')).toEqual({ keyPx: 56, gapPx: 8, insetPx: 12, maxWidthPx: 860, titlePx: 40, displayPadPx: 12, glyphPx: 36 });
+    expect(pick('pos_narrow')).toEqual(pick('pos'));
+    expect(pick('driver_tablet')).toEqual({ keyPx: 56, gapPx: 8, insetPx: 12, maxWidthPx: 900, titlePx: 40, displayPadPx: 12, glyphPx: 36 });
+    expect(pick('driver_phone')).toEqual({ keyPx: 56, gapPx: 6, insetPx: 8, maxWidthPx: null, titlePx: 56, displayPadPx: 8, glyphPx: 36 });
+    // 자모 키 글자: 한글 호환 자모는 글자 크기의 절반쯤으로 그려져 가장 낮은 ㄴ도 먹 높이 16px을 넘게 36(규칙 검사기가 잰 먹 높이로 본다).
+    expect(profileCssVars(DEVICE_PROFILES.pos)['--sn-kb-glyph']).toBe('36px');
+    expect(profileCssVars(DEVICE_PROFILES.driver_phone)['--sn-kb-glyph']).toBe('36px');
+    for (const key of SHOP_DEVICE_CLASS_KEYS) expect(pick(key).keyPx).toBeGreaterThanOrEqual(DEVICE_PROFILES[key].minTargetPx);
+    expect(profileCssVars(DEVICE_PROFILES.pos)['--sn-kb-max']).toBe('860px');
+    expect(profileCssVars(DEVICE_PROFILES.driver_phone)['--sn-kb-max']).toBe('none');
+    expect(profileCssVars(DEVICE_PROFILES.driver_phone)['--sn-kb-title']).toBe('56px');
+  });
+
+  it('화면 키보드는 등급의 모든 검사 크기에 맞는다(대표자 20자 · 사유 40자, 글자 20px)', () => {
+    for (const key of SHOP_DEVICE_CLASS_KEYS) {
+      const p = DEVICE_PROFILES[key];
+      for (const size of p.checkSizes) {
+        for (const maxLength of [20, 40]) {
+          const fit = fitKeyboard(size, p.keyboard, { maxLength, glyphPx: 20, lineHeightPx: 26, titleLabelPx: 190 });
+          expect(fit.fits, key + ' ' + size.width + '×' + size.height).toBe(true);
+          expect(fit.layout).toBe(key === 'driver_phone' ? 'grid' : 'rows');
+          expect(fit.titleRow).toBe(true);
+        }
+      }
+    }
   });
 
   it('등급 값으로 계산한 높이가 문서와 같다', () => {

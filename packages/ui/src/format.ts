@@ -127,6 +127,17 @@ export function formatTimeDigits(digits: string): string {
   return d.slice(0, 2) + ':' + d.slice(2);
 }
 
+/** 기기 등록 번호 숫자 → 넷씩 끊어 '1234-5678-9012'(치는 동안에도: '1234-56'). 12자리까지. */
+export function formatEnrollDigits(digits: string): string {
+  const d = digits.replace(/\D/g, '').slice(0, 12);
+  return [d.slice(0, 4), d.slice(4, 8), d.slice(8)].filter(Boolean).join('-');
+}
+
+/** 가린 비밀번호: 친 자리 수만큼 '●'(사이 띄움, '● ● ● ●'). 숫자는 어디에도 보이지 않는다. */
+export function formatPinMask(length: number): string {
+  return Array.from({ length: Math.max(0, Math.floor(length)) }, () => '●').join(' ');
+}
+
 /** 숫자 넷('1720') → 'HH:MM'. 넷이 아니면 null(시각이 맞는지는 서버가 본다). */
 export function timeFromDigits(digits: string): string | null {
   const d = digits.replace(/\D/g, '');

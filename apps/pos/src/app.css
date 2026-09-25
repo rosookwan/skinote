@@ -65,6 +65,21 @@ html, body { margin: 0; height: 100%; overflow: hidden; }
 .pos-big-choice > span { font-size: var(--sn-font-big); font-weight: 900; }
 .pos-big-choice > small { font-size: var(--sn-font-body); font-weight: 700; }
 .sn-button.pos-big-choice > small { color: var(--sn-ink-muted); }
+/* 서버 모드의 기기 등록(계획 6-3): 넓으면 왼쪽 글 · 오른쪽 숫자판, 좁으면(휴대폰) 글 아래 숫자판. 폭 숫자 대신 글자 폭(em)으로 접는다. */
+.pos-card.pos-enroll { flex-direction: row; flex-wrap: wrap; align-items: flex-start; }
+.pos-enroll-text { display: flex; flex-direction: column; gap: var(--sn-space-m); flex: 1 1 12em; min-width: 0; }
+.pos-enroll > .sn-numpad { flex: 1 1 16em; min-width: 0; padding: 0; }
+/* 로그인: 종이가 화면 높이를 다 쓰고, 직원 타일은 남은 높이로 쪽을 나눈다(잰 높이, 반쯤 잘린 줄 없음). */
+.pos-card.pos-login { height: 100%; min-height: 0; }
+.pos-login-tiles { display: grid; grid-auto-rows: var(--sn-choice-h); align-content: start; gap: var(--sn-space-s); flex: 1 1 0; min-height: 0; }
+.pos-login-tile { min-width: 0; height: var(--sn-choice-h); padding: 0 var(--sn-space-m); font-size: var(--sn-font-big); font-weight: 900; }
+.pos-login-tile .sn-fit { flex: 1 1 auto; text-align: center; }
+.pos-login-note { color: var(--sn-ink); }
+.pos-login-pager { display: flex; justify-content: center; flex: none; }
+
+/* 체험판 미리 보기(#/preview/keyboard): 입력한 글(40자)은 글자마다 줄을 바꿔 종이 안에 남는다. */
+.pos-preview-text { color: var(--sn-ink); word-break: break-all; overflow-wrap: anywhere; }
+.pos-preview-text.is-empty { color: var(--sn-ink-muted); }
 
 /* 기사 태블릿의 오른쪽 숫자판(높이 600px 이상): 목록 종이 옆의 종이 한 장. */
 .sn-desk > .sn-keypad.is-side { border-radius: var(--sn-radius-paper) var(--sn-radius-paper) 0 0; box-shadow: 0 var(--sn-line-strong) var(--sn-space-m) var(--sn-shadow); }
@@ -202,21 +217,6 @@ html, body { margin: 0; height: 100%; overflow: hidden; }
 .pos-new-schedule.is-compact .pos-new-block { display: grid; grid-template-columns: 6em minmax(0, 1fr); align-items: center; column-gap: var(--sn-space-m); }
 /* 작은 창(전화 예약 · 차량 배달): 이름표 줄 사이 8. */
 .pos-new-window .sn-dialog-body { gap: var(--sn-space-s); }
-
-/* 글자 입력 판(대표자 이름): 아래에서 올라오는 판, 칸 하나(주 버튼 글자) + 닫기 · 입력(남색, 주 버튼 아님). */
-.pos-text-sheet {
-  display: flex; flex-direction: column; gap: var(--sn-space-s); width: 100%; max-width: calc(var(--sn-keypad-side) * 2);
-  padding: var(--sn-space-m); background: var(--sn-paper); border-radius: var(--sn-radius-m) var(--sn-radius-m) 0 0;
-}
-.pos-text-sheet-title { display: flex; align-items: center; height: var(--sn-keypad-title); font-size: var(--sn-font-body); font-weight: 900; }
-.pos-text-input {
-  height: var(--sn-keypad-display); min-width: 0; padding: 0 var(--sn-space-m);
-  border: var(--sn-line-strong) solid var(--sn-ink); border-radius: var(--sn-radius-m); background: var(--sn-paper); color: var(--sn-ink);
-  font-family: inherit; font-size: var(--sn-font-big); font-weight: 900;
-}
-.pos-text-input::placeholder { color: var(--sn-ink-muted); font-weight: 700; }
-.pos-text-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--sn-space-s); }
-.pos-text-go { background: var(--sn-ink); color: var(--sn-paper); }
 
 /* V4 접수 확정 창(spec 3-3, ui 4-5): 본문 위 여백 12 · 아래 여백 없음 · 줄 사이 없음(두 줄 칸 104 × 2 + 보증금 52 + 결제 팀 64 + 받을 금액 40,
    창 504 — 1024×529의 한도 505 안). 결제 팀 줄은 `후불`인 칸이 없으면 자리만 남는다(창 높이가 그대로). */
