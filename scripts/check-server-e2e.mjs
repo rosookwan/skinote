@@ -385,7 +385,8 @@ async function main() {
     await b.waitForSelector('.sn-header', { timeout: STEP_MS });
     check('B: 다른 기기 · 관리자 로그인 → 장부', /#\/ledger/.test(b.url()));
     if (orderSaved) {
-      const listed = await b.locator('.sn-ledger').getByText(TEAM.name).count();
+      // 장부 줄은 로그인 뒤 조회가 끝나야 그려진다: 바로 세지 않고 그 팀 줄이 나타나기를 기다린다.
+      const listed = await b.locator('.sn-ledger').getByText(TEAM.name).first().waitFor({ timeout: STEP_MS }).then(() => 1, () => 0);
       check('B: A가 적은 팀이 B의 장부에 있음(한 장부)', listed > 0);
     } else {
       blocked('B: A가 적은 팀이 B의 장부에 있음', '접수를 서버에 적지 못함');
