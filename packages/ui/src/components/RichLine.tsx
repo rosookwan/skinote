@@ -24,7 +24,11 @@ export function RichLine({ runs, className }: RichLineProps) {
   useIsoLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const over = el.scrollWidth > el.clientWidth + 1;
+    // scrollWidth는 정수로 반올림돼 1~2px 넘침을 놓친다(리눅스 글자 폭에서 실제로 걸림): 조각의 오른쪽 끝을 소수점까지 잰다.
+    const rect = el.getBoundingClientRect();
+    let right = rect.left;
+    for (const child of Array.from(el.children)) right = Math.max(right, child.getBoundingClientRect().right);
+    const over = el.scrollWidth > el.clientWidth || right > rect.right + 0.5;
     if (over && dropped < droppable.length) setFit({ signature, dropped: dropped + 1 });
     else if (fit.signature !== signature) setFit({ signature, dropped });
   });
