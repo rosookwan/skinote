@@ -27,6 +27,10 @@ export function registerServiceWorker(): void {
   }
   // 새 서비스 워커가 창을 맡으면(바꾸기 끝) 한 번만 다시 연다. 처음 설치(맡던 워커가 없던 때)는 다시 열지 않는다.
   const hadController = navigator.serviceWorker.controller !== null;
+  // 새 서비스 워커가 설치될 때 묻는다: 이 화면은 새 판 바꾸기를 안다(답하지 않는 옛 화면만 바로 맡음, sw.js).
+  navigator.serviceWorker.addEventListener('message', (event: MessageEvent) => {
+    if (event.data && event.data.type === 'skinote:ping') event.source?.postMessage({ type: 'skinote:pong' });
+  });
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (!hadController || reloading) return;
     reloading = true;

@@ -17,11 +17,27 @@ const CACHE = PREFIX + VERSION;
 const here = (path) => new URL(path, self.location.href).href;
 const SHELL = here('index.html');
 
+// 열린 화면이 새 판 바꾸기를 아는가(앱의 pwa.ts가 'skinote:pong'으로 답함). 답하지 않는 화면은 스스로 바꾸지 못하는 옛 판이다.
+async function legacyClientOpen() {
+  const windows = await self.clients.matchAll({ type: 'window' });
+  if (!windows.length) return false;
+  const answered = new Set();
+  const listen = (event) => { if (event.data && event.data.type === 'skinote:pong' && event.source) answered.add(event.source.id); };
+  self.addEventListener('message', listen);
+  for (const client of windows) client.postMessage({ type: 'skinote:ping' });
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  self.removeEventListener('message', listen);
+  return windows.some((client) => !answered.has(client.id));
+}
+
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE);
     // HTTP 저장을 건너뛰고 새로 받는다(같은 이름의 옛 파일이 섞이지 않게).
     await cache.addAll(FILES.map((file) => new Request(here(file), { cache: 'reload' })));
+    // 스스로 바꾸지 못하는 옛 판 화면이 열려 있으면 기다리지 않고 바로 맡는다(그 화면은 다음 새로 고침에 새 판).
+    // 새 판 화면끼리는 기다렸다가 앱이 쉬는 때에 '지금 바꾸기'를 보낸다(pwa.ts).
+    if (await legacyClientOpen()) self.skipWaiting();
   })());
 });
 
