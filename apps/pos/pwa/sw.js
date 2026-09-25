@@ -19,7 +19,8 @@ const SHELL = here('index.html');
 
 // 열린 화면이 새 판 바꾸기를 아는가(앱의 pwa.ts가 'skinote:pong'으로 답함). 답하지 않는 화면은 스스로 바꾸지 못하는 옛 판이다.
 async function legacyClientOpen() {
-  const windows = await self.clients.matchAll({ type: 'window' });
+  // 설치 중인 워커는 아직 아무 화면도 맡지 않으므로 맡지 않은 화면까지 센다.
+  const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
   if (!windows.length) return false;
   const answered = new Set();
   const listen = (event) => { if (event.data && event.data.type === 'skinote:pong' && event.source) answered.add(event.source.id); };
