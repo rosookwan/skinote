@@ -18,6 +18,9 @@ const here = (path) => new URL(path, self.location.href).href;
 const SHELL = here('index.html');
 
 // 열린 화면이 새 판 바꾸기를 아는가(앱의 pwa.ts가 'skinote:pong'으로 답함). 답하지 않는 화면은 스스로 바꾸지 못하는 옛 판이다.
+// 답하지 않은 옛 판 화면의 id. 맡은 뒤(activate) 그 화면을 한 번 다시 열어 새 판으로 바꾼다(옛 판은 스스로 다시 열지 못한다).
+const legacyIds = new Set();
+
 async function legacyClientOpen() {
   // 설치 중인 워커는 아직 아무 화면도 맡지 않으므로 맡지 않은 화면까지 센다.
   const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
@@ -28,7 +31,8 @@ async function legacyClientOpen() {
   for (const client of windows) client.postMessage({ type: 'skinote:ping' });
   await new Promise((resolve) => setTimeout(resolve, 1500));
   self.removeEventListener('message', listen);
-  return windows.some((client) => !answered.has(client.id));
+  for (const client of windows) if (!answered.has(client.id)) legacyIds.add(client.id);
+  return legacyIds.size > 0;
 }
 
 self.addEventListener('install', (event) => {
@@ -36,7 +40,7 @@ self.addEventListener('install', (event) => {
     const cache = await caches.open(CACHE);
     // HTTP 저장을 건너뛰고 새로 받는다(같은 이름의 옛 파일이 섞이지 않게).
     await cache.addAll(FILES.map((file) => new Request(here(file), { cache: 'reload' })));
-    // 스스로 바꾸지 못하는 옛 판 화면이 열려 있으면 기다리지 않고 바로 맡는다(그 화면은 다음 새로 고침에 새 판).
+    // 스스로 바꾸지 못하는 옛 판 화면이 열려 있으면 기다리지 않고 바로 맡고, 맡은 뒤 그 화면을 한 번 다시 연다(activate).
     // 새 판 화면끼리는 기다렸다가 앱이 쉬는 때에 '지금 바꾸기'를 보낸다(pwa.ts).
     if (await legacyClientOpen()) self.skipWaiting();
   })());
@@ -49,6 +53,13 @@ self.addEventListener('activate', (event) => {
     }
     // 처음 설치한 뒤 새로 고치지 않아도 지금 열린 창이 이 서비스 워커를 쓴다(한 번 연 뒤 오프라인에서 열림).
     await self.clients.claim();
+    // 옛 판 화면(새 판 바꾸기를 모르는 화면)은 이제 이 워커가 맡았으니 한 번 다시 열어 새 판을 띄운다. 새 판 화면은 건드리지 않는다.
+    if (legacyIds.size) {
+      for (const client of await self.clients.matchAll({ type: 'window' })) {
+        if (legacyIds.has(client.id) && 'navigate' in client) client.navigate(client.url).catch(() => { /* 닫힌 화면 */ });
+      }
+      legacyIds.clear();
+    }
   })());
 });
 
