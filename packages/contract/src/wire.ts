@@ -8,7 +8,7 @@
 // 문제 글은 칸의 자리와 까닭만 적고 보낸 값은 적지 않는다(이름 · 전화가 기록에 남지 않게).
 import { ACTION_KEYS, DEVICE_CLASS_KEYS } from './vocab.ts';
 import { COMMAND_TYPES, type AnyCommandEnvelope, type CommandType, type QueryName, type QueryParams, type ViewParams } from './client.ts';
-import type { ChallengeRequest, EnrollRequest, LoginRequest, StaffListRequest } from './auth.ts';
+import type { ChallengeRequest, EnrollRequest, LoginRequest, OpenEnrollRequest, StaffListRequest } from './auth.ts';
 
 // ── 작은 검사 말(DSL) ──────────────────────────────────────────────────
 
@@ -439,14 +439,20 @@ const b64url = (length: number) => str({ min: length, max: length, pattern: B64U
 
 /** 기기 등록 · 로그인 본문 규칙. P-256 공개 열쇠(JWK)의 x · y는 32바이트(base64url 43자), 비밀 열쇠(d)는 모르는 칸이라 거절된다. */
 function authRules() {
-  const { requestId, flag } = common();
+  const { id, requestId, flag } = common();
   const publicKey = obj({
     kty: lit('EC'), crv: lit('P-256'), x: b64url(43), y: b64url(43), ext: opt(flag), key_ops: opt(arr(lit('verify'), { max: 1 })),
   });
+  const agent = str({ max: 80, text: true });
+  const driver = (kind: string) => obj({ kind: lit(kind), vehicleId: id, publicKey, agent });
   return {
-    enroll: obj({ code: str({ max: 12, pattern: /^\d{12}$/ }), publicKey, agent: str({ max: 80, text: true }) }),
+    enroll: obj({ code: str({ max: 12, pattern: /^\d{12}$/ }), publicKey, agent }),
+    // 열린 등록: 카운터는 차량 칸이 없고(있으면 모르는 칸), 기사 기기는 차량 칸이 꼭 있다.
+    openEnroll: union('kind', { pos: obj({ kind: lit('pos'), publicKey, agent }), driver_tablet: driver('driver_tablet'), driver_phone: driver('driver_phone') }),
     challenge: obj({ deviceId: requestId }),
     staff: obj({ deviceId: requestId, nonce: b64url(43), signature: b64url(86) }),
+    // 열린 등록 기기 놓기: staff와 같은 서명(한 번 값 · 기기 열쇠).
+    openRelease: obj({ deviceId: requestId, nonce: b64url(43), signature: b64url(86) }),
     login: obj({ ticket: b64url(43), staffId: requestId, pin: str({ min: 4, max: 6, pattern: /^\d{4,6}$/ }) }),
   };
 }
@@ -454,8 +460,10 @@ let authRuleCache: ReturnType<typeof authRules> | undefined;
 
 export interface AuthBodies {
   enroll: EnrollRequest;
+  openEnroll: OpenEnrollRequest;
   challenge: ChallengeRequest;
   staff: StaffListRequest;
+  openRelease: StaffListRequest;
   login: LoginRequest;
 }
 

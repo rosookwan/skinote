@@ -56,6 +56,22 @@ test('sessions: stored by token hash only; touched at most once a minute; one re
   assert.equal(control.session(c.id)?.revokeReason, 'logout');
 });
 
+test('the last user agent of a device: newest session that recorded one (the CLI status tells self-registered devices apart)', () => {
+  const { control, accountIds } = setup();
+  const make = (token: string, device: string, at: number, userAgent?: string) => control.createSession({
+    tokenHash: sha256(token), accountId: accountIds[0]!, tenantId: 'shop0test', deviceId: device, staffMemberId: 'st-1', idleTimeoutS: 60, expiresAt: at + HOUR, now: at,
+    ...(userAgent !== undefined ? { userAgent } : {}),
+  });
+  assert.equal(control.lastUserAgent('shop0test', 'dev-a'), undefined);
+  make('ua-1', 'dev-a', T0, 'Android Chrome');
+  make('ua-2', 'dev-a', T0 + MINUTE, 'Windows Edge');
+  make('ua-3', 'dev-a', T0 + 2 * MINUTE);
+  make('ua-4', 'dev-b', T0 + 3 * MINUTE, 'iPhone Safari');
+  assert.equal(control.lastUserAgent('shop0test', 'dev-a'), 'Windows Edge');
+  assert.equal(control.lastUserAgent('shop0test', 'dev-b'), 'iPhone Safari');
+  assert.equal(control.lastUserAgent('other', 'dev-a'), undefined);
+});
+
 test('login attempts: failures counted per (account, device), per account and per address; a success restarts the count', () => {
   const { control, accountIds } = setup();
   const acc = accountIds[0]!;
@@ -71,6 +87,31 @@ test('login attempts: failures counted per (account, device), per account and pe
   control.recordAttempt({ loginId: 'staff-1', accountId: acc, tenantId: 'shop0test', deviceId: 'dev-a', method: 'pin', succeeded: true, reason: 'ok', now: T0 + 7 * MINUTE });
   assert.equal(control.failuresSince({ accountId: acc, deviceId: 'dev-a', method: 'pin' }, since), 0, 'reset by the success on that device');
   assert.equal(control.failuresSince({ accountId: acc, deviceId: 'dev-b', method: 'pin' }, since), 1, 'the other device keeps its count');
+});
+
+test('login attempts can be counted over a set of devices, or leaving a set out (open-enrolled devices counted as one)', () => {
+  const { control, accountIds } = setup();
+  const acc = accountIds[0]!;
+  const fail = (device: string | undefined, at: number) => control.recordAttempt({
+    loginId: 'staff-1', accountId: acc, tenantId: 'shop0test', ...(device ? { deviceId: device } : {}), method: 'pin', succeeded: false, reason: 'bad_pin', now: at,
+  });
+  fail('open-1', T0);
+  fail('open-2', T0 + MINUTE);
+  fail('open-3', T0 + 2 * MINUTE);
+  fail('code-1', T0 + 3 * MINUTE);
+  fail(undefined, T0 + 4 * MINUTE);
+  const since = T0 - 15 * MINUTE;
+  const pool = ['open-1', 'open-2', 'open-3'];
+  assert.equal(control.failuresSince({ accountId: acc, deviceIds: pool, method: 'pin' }, since), 3);
+  assert.equal(control.failuresSince({ deviceIds: pool, method: 'pin' }, since), 3);
+  assert.equal(control.failuresSince({ accountId: acc, deviceIds: [], method: 'pin' }, since), 0, 'an empty set matches nothing');
+  assert.equal(control.failuresSince({ accountId: acc, notDeviceIds: pool, method: 'pin' }, since), 2, 'the rest, attempts without a device included');
+  assert.equal(control.failuresSince({ accountId: acc, notDeviceIds: [], method: 'pin' }, since), 5);
+  control.recordAttempt({ loginId: 'staff-1', accountId: acc, tenantId: 'shop0test', deviceId: 'open-2', method: 'pin', succeeded: true, reason: 'ok', now: T0 + 5 * MINUTE });
+  assert.equal(control.failuresSince({ accountId: acc, deviceIds: pool, method: 'pin' }, since), 0, 'a success on one device of the set restarts the set');
+  assert.equal(control.failuresSince({ accountId: acc, notDeviceIds: pool, method: 'pin' }, since), 2, 'the rest keeps its count');
+  assert.equal(control.failureCount({ deviceIds: pool, method: 'pin' }, since), 3, 'failureCount counts every failure, successes or not');
+  assert.equal(control.failureCount({ deviceIds: pool, method: 'pin' }, T0 + MINUTE), 1, 'after since only');
 });
 
 test('enrollment routes: a code hash routes to one shop code id; claim and use stamp once', () => {

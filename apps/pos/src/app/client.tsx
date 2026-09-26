@@ -17,6 +17,8 @@ export interface DemoControls {
   driverOffline(): boolean;
   /** 미리 보기(#/preview/login)의 직원 타일 이름(견본 직원). 화면이 도메인을 가져오지 않게 체험판이 넘긴다. */
   previewStaff(): string[];
+  /** 미리 보기(#/preview/choose)의 차량 타일(체험 매장의 차량: id와 이름). */
+  previewVehicles(): { id: string; name: string }[];
 }
 
 export type AppClient = DomainClient & Partial<DemoControls>;

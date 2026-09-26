@@ -10,6 +10,12 @@
 #                                    rotate-pin · revoke-device · status)을 돌린다. 요청은 ssh 표준 입력의 JSON으로 가고(서버의 고정 입구
 #                                    deploy/shop-cli.sh), 비밀번호 · 등록 번호는 이 터미널에만 찍힌다(파일 · 기록 없음).
 #                                    provision · load-sample · reset-test-shop은 서버를 잠깐 멈췄다가 다시 켠다.
+#   deploy/deploy.sh --set-env <이름>=<값>
+#                                    서버 설정(/etc/skinote/skinote.env)의 허락한 줄 하나를 바꾸고 서버를 다시 켠다. 허락한 것:
+#                                    SKINOTE_TEST_OPEN_ENROLL=on|off(시험 매장의 열린 기기 등록, README 9-2: 실제 손님 자료 전에 off.
+#                                    on은 마지막 영업일 SKINOTE_TEST_OPEN_ENROLL_UNTIL을 오늘 + 7일로 함께 적고, off는 그 줄을 지운다),
+#                                    SKINOTE_TEST_OPEN_ENROLL_UNTIL=YYYY-MM-DD(오늘 ~ 오늘 + 14일, 켜 둔 기한 바꾸기).
+#                                    비밀값 · 경로 · 포트는 이것으로 바꾸지 않는다. 배포(설치)는 이 줄을 바꾸지 않는다.
 #
 # 선택: --allow-dirty(커밋하지 않은 변경을 시험 배포), --allow-stale-dist(낡은 빌드인 줄 알고), --force(되돌리기에서만),
 #       --allow-no-e2e(서버 끝까지 시험 기록 없이: 시험 배포만)
@@ -57,6 +63,7 @@ ALLOW_STALE_DIST=0
 ALLOW_DIRTY=0
 ALLOW_NO_E2E=0
 SHOP_CLI_ARGS=()
+SET_ENV=
 
 say() { printf '%s\n' "$*"; }
 step() { printf '\n== %s\n' "$*"; }
@@ -80,6 +87,12 @@ while [[ $# -gt 0 ]]; do
     --allow-stale-dist) ALLOW_STALE_DIST=1 ;;
     --allow-dirty) ALLOW_DIRTY=1 ;;
     --allow-no-e2e) ALLOW_NO_E2E=1 ;;
+    --set-env)
+      MODE=set-env
+      [[ $# -ge 2 ]] || die '--set-env 다음에 이름=값이 필요합니다(예: SKINOTE_TEST_OPEN_ENROLL=off)'
+      SET_ENV="$2"
+      shift
+      ;;
     --shop-cli)
       MODE=shop-cli
       shift
@@ -92,6 +105,22 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+# --set-env로 바꿀 수 있는 설정(이름과 값 모양). 비밀값 · 경로 · 포트는 넣지 않는다: 값이 이 터미널 · 서버 기록에 찍힌다.
+# 틀린 값은 찍지 않는다(허락하지 않은 이름에 비밀을 적어 보냈을 수도 있다). ssh 전에 본다.
+SET_ENV_KEY=
+SET_ENV_VALUE=
+check_set_env() {
+  [[ "$SET_ENV" =~ ^([A-Z][A-Z0-9_]*)=(.*)$ ]] || die '--set-env 다음에는 이름=값을 적습니다(예: SKINOTE_TEST_OPEN_ENROLL=off)'
+  SET_ENV_KEY="${BASH_REMATCH[1]}"
+  SET_ENV_VALUE="${BASH_REMATCH[2]}"
+  case "$SET_ENV_KEY" in
+    SKINOTE_TEST_OPEN_ENROLL) [[ "$SET_ENV_VALUE" =~ ^(on|off)$ ]] || die 'SKINOTE_TEST_OPEN_ENROLL은 on 또는 off입니다' ;;
+    SKINOTE_TEST_OPEN_ENROLL_UNTIL) [[ "$SET_ENV_VALUE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die 'SKINOTE_TEST_OPEN_ENROLL_UNTIL은 YYYY-MM-DD입니다(오늘 ~ 오늘 + 14일)' ;;
+    *) die "--set-env로 바꿀 수 없는 설정입니다: $SET_ENV_KEY (허락: SKINOTE_TEST_OPEN_ENROLL · SKINOTE_TEST_OPEN_ENROLL_UNTIL)" ;;
+  esac
+}
+[[ "$MODE" != set-env ]] || check_set_env
 
 # deploy/.env.local: KEY=VALUE 줄만 읽는다(실행하지 않음). 이미 있는 환경 변수가 이긴다.
 load_env_file() {
@@ -360,8 +389,8 @@ preflight() {
   done
   say "계정 uid $(get uid) · sudo $(get sudo) · node $node_version · caddy ${caddy_version%% *} · 지금 릴리스 $(get current || true)"
 
-  # 매장 명령줄은 Caddy 조각을 보지 않는다.
-  [[ "$MODE" != shop-cli ]] || return 0
+  # 매장 명령줄 · 설정 바꾸기는 Caddy 조각을 보지 않는다.
+  [[ "$MODE" != shop-cli && "$MODE" != set-env ]] || return 0
   # 공통 static_app 조각: root나 인자({args…})가 있으면 스키노트의 root를 덮거나 빈 값으로 가져온다.
   local snippet
   snippet="$(printf '%s\n' "$out" | sed -n 's/^snippet| //p')"
@@ -391,6 +420,15 @@ fetch("http://127.0.0.1:" + port + "/api/health", { signal: AbortSignal.timeout(
     const warn = (h.warnings || []).length ? " · 주의 " + h.warnings.join(",") : "";
     const disk = h.disk ? " · 디스크 " + h.disk.usedPercent + "% 사용" : "";
     console.log("  [서버] 상태 ok=" + h.ok + " · 릴리스 " + h.release + " · " + dbs + warn + disk);
+    const open = h.testOpenEnroll;
+    if (open && open.flag === "on") {
+      const state = open.active
+        ? "켜짐(시험 매장 " + open.shopId + " · " + open.until + "까지 " + open.daysLeft + "일 남음 · 열린 기기 " + open.devices + "/" + open.cap + "대 · 24시간 새 기기 " + open.enrolled24h + " · 틀린 비밀번호 " + open.pinFailures24h + ")"
+        : open.expired ? "기한 지남(" + open.until + ", 새 기기는 등록 번호로 · 스스로 붙은 기기는 끊김)" : "설정만 켜짐(쓰지 않음: 서버의 매장이 시험 매장 하나가 아님)";
+      console.log("  [서버] 주의: 열린 기기 등록 " + state + " · 실제 손님 자료 전에 끄기: deploy/deploy.sh --set-env SKINOTE_TEST_OPEN_ENROLL=off");
+    }
+    if (open && open.cutAtStart) console.log("  [서버] 열린 기기 등록 꺼짐: 시작할 때 스스로 붙은 시험 기기 " + open.cutAtStart + "대를 끊음(다시 쓰려면 등록 번호)");
+    if (open && !open.active && open.devices > 0) console.log("  [서버] 주의: 열린 등록이 꺼졌는데 스스로 붙은 기기 " + open.devices + "대가 남음(서버가 곧 끊음, 또는 --shop-cli revoke-device --shop <매장 id> --open-all)");
     process.exit(h.ok === true && (!want || h.release === want) ? 0 : 1);
   }, e => { console.log("  [서버] 상태 확인 실패: " + e.message); process.exit(1); });
 '
@@ -486,6 +524,11 @@ fi
 chown root:skinote "$SECRETS_FILE"
 chmod 640 "$SECRETS_FILE"
 for n in $SECRET_NAMES; do grep -q "^$n=" "$SECRETS_FILE" || fail "$SECRETS_FILE에 $n이(가) 없습니다"; done
+# 시험 매장의 열린 기기 등록은 설정 파일에서만 켠다(--set-env): 비밀값 파일이 덮으면 --status가 설정 파일만 보고 틀리게 알린다.
+if grep -q '^SKINOTE_TEST_OPEN_ENROLL' "$SECRETS_FILE"; then fail "$SECRETS_FILE에 SKINOTE_TEST_OPEN_ENROLL 줄이 있습니다: 지운 뒤 다시 하세요(설정은 --set-env)"; fi
+if grep -q '^SKINOTE_TEST_OPEN_ENROLL=on' "$ENV_FILE" && ! grep -Eq '^SKINOTE_TEST_OPEN_ENROLL_UNTIL=[0-9]{4}-[0-9]{2}-[0-9]{2}$' "$ENV_FILE"; then
+  fail "열린 기기 등록이 켜져 있는데 기한(SKINOTE_TEST_OPEN_ENROLL_UNTIL)이 없습니다: --set-env SKINOTE_TEST_OPEN_ENROLL=on으로 다시 켜거나 off"
+fi
 env_port="$(sed -n 's/^SKINOTE_PORT=//p' "$ENV_FILE" | tail -n 1)"
 [ -z "$env_port" ] || [ "$env_port" = "$PORT" ] || fail "설정의 SKINOTE_PORT($env_port)가 Caddy · 유닛 · 배포의 포트($PORT)와 다릅니다"
 env_data="$(sed -n 's/^SKINOTE_DATA_DIR=//p' "$ENV_FILE" | tail -n 1)"
@@ -787,6 +830,20 @@ remote_status_script() {
 set -uo pipefail
 PORT="$1"; BASE=/srv/skinote; NODE=/usr/local/bin/node; OPS=/var/log/skinote-ops
 echo "지금: $(readlink "$BASE/current" 2>/dev/null || echo 없음)"
+# 열린 기기 등록: 도는 서버의 값(상태 확인)이 기준이고 설정 파일의 줄은 참고로 보인다(secrets.env · 유닛 덧붙임이 덮으면 둘이 다르다).
+file_open="$(sed -n 's/^SKINOTE_TEST_OPEN_ENROLL=//p' /etc/skinote/skinote.env 2>/dev/null | tail -n 1)"; file_open="${file_open:-off}"
+file_until="$(sed -n 's/^SKINOTE_TEST_OPEN_ENROLL_UNTIL=//p' /etc/skinote/skinote.env 2>/dev/null | tail -n 1)"
+run_open="$("$NODE" -e 'fetch("http://127.0.0.1:" + process.argv[1] + "/api/health", { signal: AbortSignal.timeout(5000) }).then(r => r.json()).then(h => { const o = h.testOpenEnroll || {}; console.log((o.flag || "?") + " " + (o.until || "-")); }, () => console.log("? -"))' "$PORT" 2>/dev/null || echo '? -')"
+run_flag="${run_open%% *}"; run_until="${run_open#* }"
+echo "설정 SKINOTE_TEST_OPEN_ENROLL(시험 매장의 열린 기기 등록): 도는 서버 $run_flag${run_until:+ · 기한 $run_until} · 설정 파일 $file_open${file_until:+ · 기한 $file_until}"
+if [ "$run_flag" != "?" ] && [ "$run_flag" != "$file_open" ]; then
+  echo "  주의: 도는 서버($run_flag)와 설정 파일($file_open)이 다릅니다(secrets.env · systemctl cat skinote-server의 덧붙임, 또는 다시 켜지 않음)"
+fi
+if [ "$run_flag" = on ] || [ "$file_open" = on ]; then
+  alerts="$(journalctl -u skinote-server --since -24h -o cat --no-pager 2>/dev/null | grep -E '^ALERT open_enroll' || true)"
+  echo "열린 기기 등록 경보(24시간 $(printf '%s' "$alerts" | grep -c . || true)줄, 마지막 5줄):"
+  printf '%s\n' "$alerts" | tail -n 5 | sed '/^$/d; s/^/  /'
+fi
 echo "릴리스:"; ls -1 "$BASE/releases" 2>/dev/null | sed 's/^/  /'
 echo "서비스: $(systemctl is-active skinote-server.service 2>/dev/null) · 백업 타이머: $(systemctl is-active skinote-backup.timer 2>/dev/null) · 마지막 백업: $(systemctl show -p Result --value skinote-backup.service 2>/dev/null)"
 systemctl list-timers skinote-backup.timer --no-pager 2>/dev/null | sed -n '1,2p' | sed 's/^/  /'
@@ -798,6 +855,92 @@ if [ -n "$last" ]; then
   tail -n 15 "$last" | sed 's/^/  /'
 fi
 if [ -s "$OPS/alerts" ]; then echo "알림(마지막 5줄, $OPS/alerts):"; tail -n 5 "$OPS/alerts" | sed 's/^/  /'; fi
+}
+REMOTE
+}
+
+# 서버 설정 한 줄 바꾸기(root로, --set-env): 인자 = 포트, 이름, 값. 맥이 본 허락 목록을 서버에서도 본다. 배포 작업과 같은 잠금을 잡고,
+# 설정 파일을 바꾼 뒤(root:skinote 0640 그대로) 서버를 다시 켜고 서버 안의 상태를 보인다. 떼어 낸 작업이 아니다(몇 초).
+# SKINOTE_TEST_OPEN_ENROLL=on은 마지막 영업일(오늘 + 7일, 매장 시간대 · 하루 기준 시각)을 함께 적고, off는 그 줄을 지운다(끄면 서버가
+# 스스로 붙은 기기를 모두 끊는다). SKINOTE_TEST_OPEN_ENROLL_UNTIL은 오늘 ~ 오늘 + 14일만.
+remote_set_env_script() {
+  health_js_line
+  cat <<'REMOTE'
+{
+set -euo pipefail
+PORT="$1"; KEY="$2"; VALUE="$3"
+ENV_FILE=/etc/skinote/skinote.env; SECRETS_FILE=/etc/skinote/secrets.env; NODE=/usr/local/bin/node
+DEFAULT_DAYS=7; MAX_DAYS=14
+log() { printf '  [서버] %s\n' "$*" || true; }
+fail() { printf '  [서버] 실패: %s\n' "$*" >&2 || true; exit 1; }
+case "$KEY" in
+  SKINOTE_TEST_OPEN_ENROLL) case "$VALUE" in on | off) ;; *) fail "SKINOTE_TEST_OPEN_ENROLL은 on 또는 off입니다" ;; esac ;;
+  SKINOTE_TEST_OPEN_ENROLL_UNTIL) [[ "$VALUE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || fail "SKINOTE_TEST_OPEN_ENROLL_UNTIL은 YYYY-MM-DD입니다" ;;
+  *) fail "바꿀 수 없는 설정입니다: $KEY" ;;
+esac
+exec 9>/run/skinote-deploy.lock
+flock -n 9 || fail "다른 배포 작업이 도는 중입니다(/run/skinote-deploy.lock). 끝난 뒤 다시 하세요"
+[ -f "$ENV_FILE" ] || fail "설정 파일이 없습니다: $ENV_FILE (먼저 배포)"
+if [ -f "$SECRETS_FILE" ] && grep -q '^SKINOTE_TEST_OPEN_ENROLL' "$SECRETS_FILE"; then
+  fail "$SECRETS_FILE에 SKINOTE_TEST_OPEN_ENROLL 줄이 있습니다(설정 파일을 덮음): 그 줄을 지운 뒤 다시 하세요"
+fi
+# 오늘 영업일(매장 시간대 · 하루 기준 시각, 설정 파일 값 또는 기본 Asia/Seoul · 06:00).
+tz="$(sed -n 's/^SKINOTE_TZ=//p' "$ENV_FILE" | tail -n 1)"; tz="${tz:-Asia/Seoul}"
+cutoff="$(sed -n 's/^SKINOTE_CUTOFF=//p' "$ENV_FILE" | tail -n 1)"; cutoff="${cutoff:-06:00}"
+[[ "$cutoff" =~ ^[0-9]{2}:[0-9]{2}$ ]] || fail "SKINOTE_CUTOFF 모양이 틀렸습니다"
+today="$(TZ="$tz" date -d "-$((10#${cutoff%%:*})) hours -$((10#${cutoff##*:})) minutes" +%F)"
+latest="$(date -d "$today +$MAX_DAYS days" +%F)"
+case "$KEY" in
+  SKINOTE_TEST_OPEN_ENROLL_UNTIL)
+    [ "$(date -d "$VALUE" +%F 2>/dev/null || true)" = "$VALUE" ] || fail "없는 날짜입니다: $VALUE"
+    { [[ ! "$VALUE" < "$today" ]] && [[ ! "$VALUE" > "$latest" ]]; } || fail "기한은 오늘($today) ~ $latest 안이어야 합니다: $VALUE"
+    ;;
+esac
+line_of() { sed -n "s/^$1=//p" "$ENV_FILE" | tail -n 1; }
+before="$(line_of "$KEY")"
+until_before="$(line_of SKINOTE_TEST_OPEN_ENROLL_UNTIL)"
+tmp="$(mktemp /etc/skinote/skinote.env.XXXXXX)"
+cp "$ENV_FILE" "$tmp"
+# set_line 이름 값: 있으면 바꾸고 없으면 끝에 더한다. del_line 이름: 지운다.
+set_line() { if grep -q "^$1=" "$tmp"; then sed -i "s/^$1=.*/$1=$2/" "$tmp"; else printf '\n# deploy.sh --set-env\n%s=%s\n' "$1" "$2" >>"$tmp"; fi; }
+del_line() { sed -i "/^$1=/d" "$tmp"; }
+until=""
+case "$KEY=$VALUE" in
+  SKINOTE_TEST_OPEN_ENROLL=on)
+    until="$(date -d "$today +$DEFAULT_DAYS days" +%F)"
+    set_line SKINOTE_TEST_OPEN_ENROLL on
+    set_line SKINOTE_TEST_OPEN_ENROLL_UNTIL "$until"
+    ;;
+  SKINOTE_TEST_OPEN_ENROLL=off)
+    set_line SKINOTE_TEST_OPEN_ENROLL off
+    del_line SKINOTE_TEST_OPEN_ENROLL_UNTIL
+    ;;
+  SKINOTE_TEST_OPEN_ENROLL_UNTIL=*)
+    [ "$(line_of SKINOTE_TEST_OPEN_ENROLL)" = on ] || { rm -f "$tmp"; fail "열린 기기 등록이 꺼져 있습니다: 먼저 --set-env SKINOTE_TEST_OPEN_ENROLL=on"; }
+    until="$VALUE"
+    set_line SKINOTE_TEST_OPEN_ENROLL_UNTIL "$VALUE"
+    ;;
+esac
+chown root:skinote "$tmp"
+chmod 640 "$tmp"
+mv -f "$tmp" "$ENV_FILE"
+until_note=""
+if [ -n "$until" ]; then until_note=" · SKINOTE_TEST_OPEN_ENROLL_UNTIL ${until_before:-없음} → $until"; elif [ -n "$until_before" ]; then until_note=" · SKINOTE_TEST_OPEN_ENROLL_UNTIL 지움"; fi
+log "설정 바꿈: $KEY ${before:-없음(off)} → $VALUE$until_note ($ENV_FILE)"
+live() { "$NODE" -e "fetch('http://127.0.0.1:$PORT/api/health/live',{signal:AbortSignal.timeout(2000)}).then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"; }
+wait_live() { local until_s=$((SECONDS + $1)); while [ "$SECONDS" -lt "$until_s" ]; do if live; then return 0; fi; sleep 1; done; return 1; }
+systemctl reset-failed skinote-server.service >/dev/null 2>&1 || true
+systemctl restart skinote-server.service
+if ! wait_live 120; then
+  journalctl -u skinote-server -n 30 --no-pager >&2 || true
+  fail "서버가 다시 뜨지 않았습니다(journalctl -u skinote-server). 설정을 되돌리려면 같은 명령에 전 값($KEY=${before:-off})"
+fi
+"$NODE" -e "$HEALTH_JS" "" "$PORT" || true
+if [ "$KEY" = SKINOTE_TEST_OPEN_ENROLL ] && [ "$VALUE" = on ]; then
+  log "켬($until까지): 서버의 매장이 시험 매장 하나일 때만 새 기기가 등록 번호 없이 스스로 등록합니다. 그날이 지나면 저절로 꺼집니다"
+  log "켜 둔 동안 앱 주소를 아는 누구나 모든 직원 이름(사장님 · 관리자 포함)과 차량 이름을 봅니다: 직원은 시험용 이름이나 이름만, 차량은 'N호 차량', 비밀번호는 6자리로(--shop-cli rotate-pin --pin-digits 6), README 9-2"
+  log "실제 손님 자료 전에 --set-env SKINOTE_TEST_OPEN_ENROLL=off (스스로 붙은 기기는 모두 끊김)"
+fi
 }
 REMOTE
 }
@@ -901,6 +1044,12 @@ case "$MODE" in
     preflight
     step '서버 상태'
     remote_run "$(remote_status_script)" "$APP_PORT"
+    ;;
+  set-env)
+    setup_ssh
+    preflight
+    step "서버 설정: $SET_ENV_KEY=$SET_ENV_VALUE (서버를 다시 켭니다)"
+    remote_run "$(remote_set_env_script)" "$APP_PORT" "$SET_ENV_KEY" "$SET_ENV_VALUE" || die '서버 설정을 바꾸지 못했습니다(위의 [서버] 줄, deploy.sh --status)'
     ;;
   rollback)
     setup_ssh

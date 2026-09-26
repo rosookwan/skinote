@@ -5,6 +5,9 @@
 //                         Via 머리가 있음)에는 { ok }만 준다. Caddy는 바깥의 이 길을 아예 404로 막는다(두 겹).
 //   GET /api/health/live  프로세스가 살아 있는지(글자 ok, 200). 바깥 가동 확인 · 배포 스크립트가 부른다
 //   /api/v2/*             기기 등록 · 로그인(auth.js)과 장부 API(api.js), 알림 연결(sse.js). SKINOTE_API=off면 없다(404).
+//                         시험 매장의 열린 기기 등록(SKINOTE_TEST_OPEN_ENROLL, auth.js)은 켜져 있는 동안 자세한 상태의 warnings에
+//                         TEST_OPEN_ENROLL(기한이 지나면 TEST_OPEN_ENROLL_EXPIRED), testOpenEnroll에 켜짐 · 기한 · 매장 · 열린 기기 수를
+//                         싣는다. 시작할 때 열린 등록을 받지 않는 매장의 스스로 붙은 기기를 끊는다(설정을 끈 뒤 다시 켠 때).
 // 그 밖은 모두 404 JSON. 요청 기록은 표준 출력(journald)에 '방법 경로 상태 시간'만 적는다: 물음표 뒤(query)와 본문은 적지 않고,
 // 절대 주소 모양의 요청(GET http://host/path)은 경로만 적는다(사용자 정보 · 호스트를 적지 않음). 끝까지 보내지 못한 답은 'aborted'.
 //
@@ -20,6 +23,7 @@ import { startAdminSocket } from './admin-socket.js';
 import { createApi } from './api.js';
 import { createAuth } from './auth.js';
 import { createLastBackupsReader } from './backup.js';
+import { businessDate } from './clock.js';
 import { ConfigError } from './config.js';
 import { canWrite, closeDatabases, openDatabases } from './databases.js';
 import { buildHealth, healthOk } from './health.js';
@@ -39,7 +43,9 @@ import { createHub, PING_MS } from './sse.js';
  */
 
 /** 본문 한도(바이트, plan §5-1). */
-export const BODY_LIMITS = Object.freeze({ enroll: 4096, challenge: 1024, staff: 4096, login: 1024, logout: 16, query: 32 * 1024, command: 64 * 1024 });
+export const BODY_LIMITS = Object.freeze({
+  enroll: 4096, openEnroll: 4096, openRelease: 4096, challenge: 1024, staff: 4096, login: 1024, logout: 16, query: 32 * 1024, command: 64 * 1024,
+});
 
 const JSON_HEADERS = Object.freeze({
   'content-type': 'application/json; charset=utf-8',
@@ -131,7 +137,8 @@ export async function startServer(config, { log = console.log, now = () => new D
       sendJson(req, res, 503, { ok: false, service: 'skinote-server', release: config.release, starting: true });
       return;
     }
-    const { status, body } = buildHealth({ config, entries, startedAt, now: now(), lastBackups: lastBackups(), shuttingDown });
+    const openEnroll = auth ? auth.openEnrollStatus() : { flag: config.testOpenEnroll, active: false };
+    const { status, body } = buildHealth({ config, entries, startedAt, now: now(), lastBackups: lastBackups(), shuttingDown, openEnroll });
     sendJson(req, res, status, body);
   };
   /** @param {IncomingMessage} req @param {ServerResponse} res */
@@ -245,12 +252,21 @@ export async function startServer(config, { log = console.log, now = () => new D
       ports.set(shopId, shopPort ? shopPort(real) : real);
     }
     if (control) {
-      auth = createAuth({ secrets, control, shops: ports, hub: liveHub, nowMs, log, ...(sleep ? { sleep } : {}) });
+      auth = createAuth({
+        secrets, control, shops: ports, hub: liveHub, nowMs, log, ...(sleep ? { sleep } : {}),
+        testOpenEnroll: config.testOpenEnroll === 'on', openEnrollUntil: config.testOpenEnrollUntil ?? null, shopCount: config.shopIds.length,
+        businessDateOf: ms => businessDate(new Date(ms), config.timeZone, config.cutoffMinutes),
+      });
       const api = createApi({ hub: liveHub, nowMs, log });
       const gate = { publicOrigin: config.publicOrigin, sessionOf: auth.sessionOf, csrfOk: auth.csrfOk, sessionLimit: auth.sessionLimit };
       const a = auth.handlers;
       routes.set('/api/v2/session', { GET: openGetRoute(a.session, gate) });
-      routes.set('/api/v2/device/enroll', { POST: postRoute({ limit: BODY_LIMITS.enroll, ipLimit: auth.ipLimit('enroll'), handle: a.enroll }, gate) });
+      routes.set('/api/v2/device/enroll', {
+        GET: openGetRoute(a.enrollMode, gate),
+        POST: postRoute({ limit: BODY_LIMITS.enroll, ipLimit: auth.ipLimit('enroll'), handle: a.enroll }, gate),
+      });
+      routes.set('/api/v2/device/open-enroll', { POST: postRoute({ limit: BODY_LIMITS.openEnroll, ipLimit: auth.ipLimit('openEnroll'), handle: a.openEnroll }, gate) });
+      routes.set('/api/v2/device/open-release', { POST: postRoute({ limit: BODY_LIMITS.openRelease, ipLimit: auth.ipLimit('login'), handle: a.openRelease }, gate) });
       routes.set('/api/v2/device/challenge', { POST: postRoute({ limit: BODY_LIMITS.challenge, ipLimit: auth.ipLimit('challenge'), handle: a.challenge }, gate) });
       routes.set('/api/v2/login/staff', { POST: postRoute({ limit: BODY_LIMITS.staff, ipLimit: auth.ipLimit('login'), handle: a.staff }, gate) });
       routes.set('/api/v2/login', { POST: postRoute({ limit: BODY_LIMITS.login, ipLimit: auth.ipLimit('login'), handle: a.login }, gate) });
@@ -301,11 +317,24 @@ export async function startServer(config, { log = console.log, now = () => new D
       log('control 파일에 쓸 수 없어 로그인 · 장부 API를 열지 않았습니다(503)');
       const unavailable = () => { throw new HttpError(503, 'SHOP_UNAVAILABLE'); };
       for (const path of ['/api/v2/session', '/api/v2/head', '/api/v2/stream']) routes.set(path, { GET: unavailable });
-      for (const path of ['/api/v2/device/enroll', '/api/v2/device/challenge', '/api/v2/login/staff', '/api/v2/login', '/api/v2/logout', '/api/v2/query', '/api/v2/command']) {
+      for (const path of ['/api/v2/device/open-enroll', '/api/v2/device/open-release', '/api/v2/device/challenge', '/api/v2/login/staff', '/api/v2/login', '/api/v2/logout', '/api/v2/query', '/api/v2/command']) {
         routes.set(path, { POST: unavailable });
       }
+      routes.set('/api/v2/device/enroll', { GET: unavailable, POST: unavailable });
     }
     log(`API 켬 · 매장 ${ports.size}곳${config.publicOrigin ? '' : ' · 앱 주소 없음(Host로 확인)'}`);
+  }
+  // 열린 등록을 받지 않는 매장의 스스로 붙은 기기는 시작할 때 모두 끊는다(설정을 끔 · 기한 지남: 다시 쓰려면 등록 번호로).
+  const cut = auth ? auth.cutAtStartup() : 0;
+  if (cut > 0) log(`열린 기기 등록 꺼짐 · 스스로 붙은 시험 기기 ${cut}대를 끊었습니다(세션 끝, 다시 쓰려면 등록 번호)`);
+  if (config.testOpenEnroll === 'on') {
+    // 시험 매장의 열린 기기 등록: 켜진 동안 늘 알린다(실제 손님 자료 전에 끈다, deploy/README 9-2).
+    const open = auth?.openEnrollStatus();
+    log(open?.active
+      ? `주의: 열린 기기 등록 켬(SKINOTE_TEST_OPEN_ENROLL=on) · 시험 매장 ${open.shopId} · ${config.testOpenEnrollUntil}까지 · 등록 번호 없이 기기가 스스로 등록합니다. 실제 손님 자료 전에 끄세요`
+      : open?.expired
+        ? `주의: SKINOTE_TEST_OPEN_ENROLL=on이지만 기한(${config.testOpenEnrollUntil})이 지나 쓰지 않습니다 · 등록 번호로 등록합니다`
+        : '주의: SKINOTE_TEST_OPEN_ENROLL=on이지만 쓰지 않습니다(서버의 매장이 시험 매장 하나일 때만) · 등록 번호로 등록합니다');
   }
 
   /** @type {Promise<void> | null} */

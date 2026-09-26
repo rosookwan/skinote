@@ -69,13 +69,17 @@ html, body { margin: 0; height: 100%; overflow: hidden; }
 .pos-card.pos-enroll { flex-direction: row; flex-wrap: wrap; align-items: flex-start; }
 .pos-enroll-text { display: flex; flex-direction: column; gap: var(--sn-space-m); flex: 1 1 12em; min-width: 0; }
 .pos-enroll > .sn-numpad { flex: 1 1 16em; min-width: 0; padding: 0; }
-/* 로그인: 종이가 화면 높이를 다 쓰고, 직원 타일은 남은 높이로 쪽을 나눈다(잰 높이, 반쯤 잘린 줄 없음). */
-.pos-card.pos-login { height: 100%; min-height: 0; }
-.pos-login-tiles { display: grid; grid-auto-rows: var(--sn-choice-h); align-content: start; gap: var(--sn-space-s); flex: 1 1 0; min-height: 0; }
-.pos-login-tile { min-width: 0; height: var(--sn-choice-h); padding: 0 var(--sn-space-m); font-size: var(--sn-font-big); font-weight: 900; }
-.pos-login-tile .sn-fit { flex: 1 1 auto; text-align: center; }
-.pos-login-note { color: var(--sn-ink); }
+/* 로그인: 종이가 화면 높이를 다 쓰고, 직원 타일은 남은 높이로 쪽을 나눈다(잰 높이, 반쯤 잘린 줄 없음).
+   시험 매장의 기기 선택(열린 등록)의 차량 타일도 같은 모양이다. 바닥줄은 `이전`과 쪽 넘김(좁으면 두 줄로 접는다). */
+.pos-card.pos-login, .pos-card.pos-choose-vehicles { height: 100%; min-height: 0; }
+.pos-login-tiles, .pos-choose-tiles { display: grid; grid-auto-rows: var(--sn-choice-h); align-content: start; gap: var(--sn-space-s); flex: 1 1 0; min-height: 0; }
+.pos-login-tile, .pos-choose-tile { min-width: 0; height: var(--sn-choice-h); padding: 0 var(--sn-space-m); font-size: var(--sn-font-big); font-weight: 900; }
+.pos-login-tile .sn-fit, .pos-choose-tile .sn-fit { flex: 1 1 auto; text-align: center; }
+.pos-login-note, .pos-choose-note { color: var(--sn-ink); }
 .pos-login-pager { display: flex; justify-content: center; flex: none; }
+/* 스스로 붙은 기기(시험 매장의 열린 등록): 바닥줄 왼쪽에 `기기 선택`, 오른쪽에 쪽 넘김(좁으면 두 줄로 접는다). */
+.pos-login-pager.pos-login-foot { flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sn-space-s); }
+.pos-choose-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sn-space-s); flex: none; }
 
 /* 체험판 미리 보기(#/preview/keyboard): 입력한 글(40자)은 글자마다 줄을 바꿔 종이 안에 남는다. */
 .pos-preview-text { color: var(--sn-ink); word-break: break-all; overflow-wrap: anywhere; }

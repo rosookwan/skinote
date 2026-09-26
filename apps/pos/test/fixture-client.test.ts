@@ -351,6 +351,8 @@ describe('찾기 · 저장 · 체험 시계', () => {
     const list = await second.client.ledgerView('collection_list', { vehicleId: 'v1' });
     expect(list.vehicle?.label).toBe('1호 차량');
     expect(second.client.previewStaff()).toHaveLength(3);
+    // 기기 선택 미리 보기의 차량(체험 매장의 차량: id와 이름만).
+    expect(second.client.previewVehicles()).toEqual([{ id: 'v1', name: '1호 차량' }, { id: 'v2', name: '2호 차량' }]);
   });
 
   it('저장소가 막히거나 망가져도 처음 자료로 돈다', async () => {

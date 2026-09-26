@@ -3,9 +3,10 @@
 // #/ledger는 오늘 장부, #/collection/:date는 수거 목록의 줄임 주소(같은 화면). 화면 안의 하위 경로(sys_screens에 따로 없음):
 // #/orders/new/schedule 새 접수 ② 일정, #/orders/:orderId/pay 일괄 수납(접수증의 수납), #/driver/:date/deliveries 배달 목록,
 // #/manage/settings/:tab 매장 설정(탭, 기본 운영 규칙). 체험판 전용 경로: #/ 처음 화면, #/exit 나가기(?from=driver면 기사 기기의
-// 나가기), 기사 화면의 ?device=phone 휴대폰 모양으로 보기, 미리 보기 #/preview/keyboard · enroll · login · offline · exit(화면 키보드,
-// 서버 모드의 기기 등록 · 로그인 · 연결 끊김 · 나가기 화면. 어디에도 연결하지 않은 주소 — 규칙 검사기가 기기 크기마다 재려고 연다.
-// ?device=phone · tablet이면 기사 기기, 없으면 카운터. 로그인 미리 보기의 ?many는 쪽 넘김을 보려고 예시 이름을 여러 번 늘어놓는다).
+// 나가기), 기사 화면의 ?device=phone 휴대폰 모양으로 보기, 미리 보기 #/preview/keyboard · enroll · choose · login · offline · exit(화면
+// 키보드, 서버 모드의 기기 등록 · 기기 선택(시험 매장의 열린 등록) · 로그인 · 연결 끊김 · 나가기 화면. 어디에도 연결하지 않은 주소 —
+// 규칙 검사기가 기기 크기마다 재려고 연다. ?device=phone · tablet이면 기사 기기, 없으면 카운터. 로그인 · 기기 선택 미리 보기의 ?many는
+// 쪽 넘김을 보려고 예시 이름 · 차량을 여러 번 늘어놓는다).
 // 온 곳(장부의 탭 · 쪽 · 고른 줄)은 브라우저 기록 상태에 넣어, 접수증의 '‹ 장부'가 그 쪽 그 줄로 돌아간다(ui 3-6, N9).
 import type { ScreenKey } from '@skinote/contract';
 import { useSyncExternalStore } from 'react';
@@ -20,7 +21,7 @@ export const SETTINGS_TABS = ['info', 'places', 'slots', 'pricing', 'fleet', 'ru
 export type SettingsTab = (typeof SETTINGS_TABS)[number];
 
 /** 체험판 전용 미리 보기(계획 6-3): 화면 키보드, 서버 모드의 기기 등록 · 로그인 · 연결 끊김 · 나가기(로그아웃) 화면(규칙 검사기가 잰다). */
-export const PREVIEW_VIEWS = ['keyboard', 'enroll', 'login', 'offline', 'exit'] as const;
+export const PREVIEW_VIEWS = ['keyboard', 'enroll', 'choose', 'login', 'offline', 'exit'] as const;
 export type PreviewView = (typeof PREVIEW_VIEWS)[number];
 
 export type Route =

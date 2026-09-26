@@ -1,7 +1,7 @@
 # 서버 배포(상태 확인 · 마이그레이션 · 날마다 백업 · 장부 API · 매장 명령줄)
 
 작성 2026-09-25. 고침 2026-09-26: 서버 장부(API · 저장소)가 붙었다 — 릴리스에 저장소 · 도메인 · 계약 패키지와 서버 표시를 찍은 앱 뼈대, 비밀값 파일,
-앱 주소(`SKINOTE_PUBLIC_ORIGIN`), 앞단 표, 관리 소켓 자리(`/run/skinote`), 배포 전 끝까지 시험 기록, 매장 명령줄(`--shop-cli`, 9절), 시험 매장 새로 만들기(9-1). 스키노트 중앙 서버의 **첫 뼈대**를 여러 앱이 함께 쓰는 VPS 한 대에 올리는 방법이다. 설계는 [deployment.md](../docs/architecture/deployment.md)(ADR-19 클라우드 중심)이고, 이 문서는 그 가운데 지금 만든 부분만 다룬다. 서버 주소 · IP · 계정 정보는 저장소에 적지 않는다(공개 저장소). 주소는 배포할 때 환경 변수로 준다.
+앱 주소(`SKINOTE_PUBLIC_ORIGIN`), 앞단 표, 관리 소켓 자리(`/run/skinote`), 배포 전 끝까지 시험 기록, 매장 명령줄(`--shop-cli`, 9절), 시험 매장 새로 만들기(9-1), 같은 날 시험 매장의 열린 기기 등록과 서버 설정 바꾸기(`--set-env`, 9-2). 스키노트 중앙 서버의 **첫 뼈대**를 여러 앱이 함께 쓰는 VPS 한 대에 올리는 방법이다. 설계는 [deployment.md](../docs/architecture/deployment.md)(ADR-19 클라우드 중심)이고, 이 문서는 그 가운데 지금 만든 부분만 다룬다. 서버 주소 · IP · 계정 정보는 저장소에 적지 않는다(공개 저장소). 주소는 배포할 때 환경 변수로 준다.
 
 > **이 서버에는 아직 실제 손님 자료를 넣지 않는다.** 백업이 같은 서버의 같은 디스크에만 있고 암호화 · 다른 구역 복제가 없다(7절). 시험 · 체험 자료만 둔다. 실제 매장이 쓰기 전에 deployment 6-1의 복제 · 암호화와 sync 10-2의 되살리기 순서를 먼저 만든다.
 
@@ -16,7 +16,7 @@
 | 마이그레이션 백업 | `/var/lib/skinote/backups/migrations/` | 실행기가 적용 전 · 뒤에 남기는 사본. 파일 · 종류마다 가장 새 판 2개, 판마다 3개 |
 | 알림 자리 | `skinote-alert@.service` | 서버 · 백업 유닛이 실패하면 journald에 crit 한 줄과 `/var/log/skinote-ops/alerts`에 한 줄. 감시 서비스를 붙일 곳 |
 | 앞단 | Caddy(공통 설정) + `/etc/caddy/sites/skinote.caddy` | HTTPS 인증서, `/api/*` → `127.0.0.1:3100`(`/api/health`는 바깥에서 404), 나머지는 정적 파일, 안전 머리(CSP · HSTS …) |
-| 설정 | `/etc/skinote/skinote.env`(root:skinote 0640) | 자료 폴더 · 포트 · 앱 주소 · 매장 id · 시간대 · 하루 기준 시각 · 백업 여유. 비밀값 없음([skinote.env.example](skinote.env.example)) |
+| 설정 | `/etc/skinote/skinote.env`(root:skinote 0640) | 자료 폴더 · 포트 · 앱 주소 · 매장 id · 시간대 · 하루 기준 시각 · 백업 여유 · 시험 매장의 열린 기기 등록(`SKINOTE_TEST_OPEN_ENROLL`, 기본 off, 9-2). 비밀값 없음([skinote.env.example](skinote.env.example)) |
 | 비밀값 | `/etc/skinote/secrets.env`(root:skinote 0640) | 배포가 없을 때 한 번 만든다: `SKINOTE_PIN_PEPPER` · `SKINOTE_SESSION_KEY` · `SKINOTE_FINGERPRINT_KEY` · `SKINOTE_IP_KEY` · `SKINOTE_PROXY_TOKEN`(앞단 표). 값은 이 파일에만 있다(저장소 · 기록 · 화면 · 백업에 없음) |
 | 기록 | journald, `/var/log/skinote-ops/deploy/` | `journalctl -u skinote-server` · `-u skinote-backup` · `-u caddy`, 배포 작업마다 `<작업>.log` |
 
@@ -150,7 +150,7 @@ deploy/deploy.sh --status                        # 맥에서
 
 `/api/health`는 모든 파일이 쓰기 가능하면 200, 아니면 503이다. **자세한 본문은 서버 안에서만 준다**(판 · Node 판 · 매장 id · 파일 크기 · 백업 시각 · 디스크는 운영 내부 사정이다). Caddy는 바깥의 `/api/health`를 404로 막고, 그래도 앞단을 거쳐 온 요청(`X-Forwarded-*` · `Forwarded` · `Via`)에는 서버가 `{ "ok": … }`만 준다. 바깥 가동 확인 서비스에는 `/api/health/live`(글자 `ok`)를 건다.
 
-본문: `ok`, `release`, `node`, `serverTime`(UTC), `warnings`(5절), 매장마다 `businessDate`(하루 기준 시각 06:00을 넣은 영업일) · `writable`, 파일마다 `kind` · `shopId` · `file`(이름만) · `status`(`migrated` · `up_to_date` · `refused` · `failed`) · `mode` · `schemaVersion` · `knownVersion` · `migrationCount` · `reason`(코드만, 예: `UNKNOWN_MIGRATION` · `CONTROL_UNAVAILABLE` · `SQLITE_READONLY` · `SQLITE_CORRUPT`) · `warnings` · `journalMode` · `pageCount` · `pageSize` · `lastBackupAt`, 디스크 여유. 손님 · 직원 자료와 경로는 싣지 않는다.
+본문: `ok`, `release`, `node`, `serverTime`(UTC), `warnings`(5절, 그리고 시험 매장의 열린 기기 등록이 켜져 있으면 `TEST_OPEN_ENROLL` · 기한이 지났으면 `TEST_OPEN_ENROLL_EXPIRED` · 꺼졌는데 스스로 붙은 기기가 남았으면 `TEST_OPEN_DEVICES_LEFT` — 9-2), `testOpenEnroll`(설정 `flag` · 켜짐 `active` · 기한 `until` · 남은 날 `daysLeft` · 기한 지남 `expired` · 끊기지 않은 열린 기기 수 `devices` · 시작할 때 끊은 수 `cutAtStart`, 켜졌으면 `shopId` · 끝 수 `cap` · 24시간의 새 기기 `enrolled24h` · 열린 기기의 틀린 비밀번호 `pinFailures24h`), 매장마다 `businessDate`(하루 기준 시각 06:00을 넣은 영업일) · `writable`, 파일마다 `kind` · `shopId` · `file`(이름만) · `status`(`migrated` · `up_to_date` · `refused` · `failed`) · `mode` · `schemaVersion` · `knownVersion` · `migrationCount` · `reason`(코드만, 예: `UNKNOWN_MIGRATION` · `CONTROL_UNAVAILABLE` · `SQLITE_READONLY` · `SQLITE_CORRUPT`) · `warnings` · `journalMode` · `pageCount` · `pageSize` · `lastBackupAt`, 디스크 여유. 손님 · 직원 자료와 경로는 싣지 않는다.
 
 쓰기를 막는 경우(파일의 `writable: false`):
 
@@ -180,7 +180,7 @@ deploy/deploy.sh --status                        # 맥에서
 
 | 파일 | 무엇 |
 |---|---|
-| [deploy.sh](deploy.sh) | 배포 · 되돌리기 · 상태 · 사본 점검 · 매장 명령줄(`--shop-cli`) |
+| [deploy.sh](deploy.sh) | 배포 · 되돌리기 · 상태 · 사본 점검 · 매장 명령줄(`--shop-cli`) · 서버 설정 한 줄 바꾸기(`--set-env`, 허락한 이름만) |
 | [shop-cli.sh](shop-cli.sh) | 서버 쪽 매장 명령줄 입구(릴리스와 함께 놓임, 표준 입력의 JSON → skinote 계정의 `bin/shop.js --stdin`, 혼자 쓰는 명령 `provision` · `load-sample` · `reset-test-shop`은 서버를 잠깐 멈춤) |
 | [shop-cli-request.mjs](shop-cli-request.mjs) | 맥 쪽: `bin/shop.js`와 같은 깃발을 요청 JSON 하나로(명세 파일은 객체로 넣음) |
 | [skinote-server.service](skinote-server.service) | 서버 유닛(막기 설정, 메모리 512 MB, 포트 3100만, 백업 폴더 읽기 전용, 늦춰 가며 다시 시작) |
@@ -206,7 +206,7 @@ deploy/deploy.sh --shop-cli device-code --shop <매장 id> --kind pos --label "�
 deploy/deploy.sh --shop-cli device-code --shop <매장 id> --kind driver_phone --label "1호 차량 기사 휴대폰" --vehicle <차량 id>   # 첫 매장 기사는 개인 휴대폰(태블릿이면 --kind driver_tablet)
 deploy/deploy.sh --shop-cli rotate-pin --shop <매장 id> --staff "<이름>"      # 새 비밀번호(한 번), 잠금 풀기
 deploy/deploy.sh --shop-cli revoke-device --shop <매장 id> --device "카운터 1" # 기기 끊기(세션 · 알림 연결이 끝남)
-deploy/deploy.sh --shop-cli status --shop <매장 id>                           # rev · 영업일 · 접수 수 · 기기 · 직원 수
+deploy/deploy.sh --shop-cli status --shop <매장 id>                           # rev · 영업일 · 접수 수 · 기기 · 직원 수(스스로 붙은 기기는 기기마다 한 줄, 9-2)
 ```
 
 - 서버가 도는 동안 `device-code` · `rotate-pin` · `revoke-device` · `status`는 관리 소켓(`/run/skinote/admin.sock`, 서버 유닛의 `RuntimeDirectory`)으로 서버에 보낸다. `provision` · `load-sample` · `reset-test-shop`은 매장 파일을 혼자 써야 해서 입구가 서버를 멈췄다가 끝나면(실패해도) 다시 켠다.
@@ -232,3 +232,43 @@ deploy/deploy.sh --shop-cli load-sample --shop <매장 id> --date today         
 - 두 번 해도 된다: 할 때마다 사본이 하나 더 생기고 epoch이 하나 오른다. 도중에 멈추면(죽임 · 디스크) 제자리의 파일은 옛 것이거나 새 것 하나다. 다시 하면 남은 임시 파일을 치우고 처음부터 한다. 새 파일로 바뀐 뒤 control 기록 전에 멈췄으면 다시 한 번 하면 맞는다.
 - **옛 자료로 되돌리기:** 5절의 '매장 파일 하나 되살리기'와 같은 순서에서 백업 대신 `backups/resets`의 사본을 쓴다(`cd /var/lib/skinote/backups/resets && sudo -u skinote sha256sum -c SHA256SUMS`로 먼저 확인). 직원 · 기기 id가 같아 로그인은 그대로 이어진다. control `tenant_epochs`에는 새로 만들 때의 epoch 줄이 남는다(시험 매장이라 그대로 둔다).
 - `backups/resets`의 사본은 날마다 백업이 지우지 않는다. 쓸모가 끝난 사본은 사람이 지운다(운영 자료라 저장소 · AI 도구 · 해외 서비스에 올리지 않는다).
+
+### 9-2. 시험 매장의 열린 기기 등록(`SKINOTE_TEST_OPEN_ENROLL`)
+
+2026-09-26 사용자 요청("일단 테스트 중이니 등록번호는 좀 빼줘"): 시험하는 동안 기기마다 `device-code`로 번호를 받아 12자리를 치지 않게 한다. 설계는 [deployment 5-3](../docs/architecture/deployment.md)의 '시험 매장의 예외', 화면 말은 [wording 3-19](../docs/design/wording.md)다.
+
+- **언제 켜지나:** 설정 `SKINOTE_TEST_OPEN_ENROLL=on`이고, 기한 `SKINOTE_TEST_OPEN_ENROLL_UNTIL`(마지막 영업일, 오늘 ~ 오늘 + 14일)이 지나지 않았고, 이 서버의 매장이 하나(`SKINOTE_SHOP_IDS`)이며, 그 매장이 시험 매장(`provision --test`: control과 매장 파일이 모두 `is_test`)일 때만. `on`인데 기한 줄이 없거나 14일보다 멀면 서버가 시작하지 않는다(설정 오류). 설정 예시와 처음 배포가 만드는 설정은 `off`이고, **배포(설치)는 이 줄을 바꾸지 않는다**(비밀값 파일 `secrets.env`에 이 줄이 있으면 설치가 멈춘다). 켜져 있어도 조건이 맞지 않으면(실제 매장 · 매장 둘 이상) 번호 등록 그대로이고 서버 시작 기록에 `주의: SKINOTE_TEST_OPEN_ENROLL=on이지만 쓰지 않습니다`가 남는다. **기한이 지나면 저절로 꺼진다**(끈 것과 같다, 아래).
+- **켜지면:** 등록하지 않은 기기가 앱을 열면 `기기 등록`(12자리) 대신 `기기 선택`이 나온다. 휴대폰 폭이면 `기사 휴대폰`이 먼저이고 주 버튼, 카운터 폭이면 `카운터(포스)`가 먼저다. `카운터(포스)`를 누르면 바로, `기사 휴대폰` · `기사 태블릿`은 `차량 선택`(매장의 차량)에서 차량을 고르면 등록된다. 이름은 `시험 기기 N`(N = 기기 번호). 그다음은 번호 등록과 같다: 직원 타일 → 비밀번호, 기사 기기는 기사만. 로그인 화면의 매장 이름 줄에 기기 모양(`기사 휴대폰 · 1호 차량`)이 붙는다. 스스로 붙은 기사 기기의 차량 범위는 **그 기사의 차량이 먼저**다(기기를 붙인 사람이 고른 차량이 아니라: 기사에게 차량이 없을 때만 기기의 차량).
+- **종류 · 차량을 잘못 골랐을 때:** 로그인 화면 바닥줄의 `기기 선택`을 누르면 그 기기의 등록을 끊고(자리가 빈다) 다시 `기기 선택`으로 간다. 로그인한 뒤면 나가기 → `로그아웃` → `기기 선택`. 번호로 붙인 기기에는 이 버튼이 없다.
+- **막는 것:**
+  - 주소마다 15분에 10번(번호 등록과 따로 셈), 끊기지 않은 열린 기기 30대까지(넘으면 화면에 `기기 수 초과 · 관리자 확인 필요`). 붙은 뒤 한 시간 넘게 한 번도 로그인하지 않은 열린 기기는 새 기기가 붙을 때 먼저 끊는다(자리를 비움).
+  - **비밀번호 잠금은 스스로 붙은 기기 모두가 한 기기다:** 한 계정을 열린 기기들에서 15분 안에 모두 합쳐 5번 틀리면 그 계정이 모든 열린 기기에서 잠기고(10분, 설정 `login_lockout`), 열린 기기들이 모두 합쳐 한 시간에 20번 틀리면 모든 열린 기기의 비밀번호 로그인을 30분 쉰다(`ALERT open_enroll_pin` 한 줄). 기기를 더 붙여 맞춰 보는 길을 늘리지 못한다. 번호로 붙인 기기의 로그인은 이 셈에 들지 않는다(열린 기기의 시도가 진짜 직원을 막거나 늦추지 않음).
+  - 등록마다 `journalctl -u skinote-server`에 `ALERT open_enroll <매장 id> <종류> <N>번 · 열린 기기 n/30` 한 줄, 끝 수에 닿으면 `ALERT open_enroll_limit`(한 시간에 한 줄). `deploy.sh --status`가 지난 24시간의 `ALERT open_enroll*` 줄 수와 마지막 다섯 줄을 보인다.
+- **누가 붙었는지 볼 때 · 끊을 때:**
+
+  ```sh
+  deploy/deploy.sh --status                                             # 설정 줄(도는 서버 · 설정 파일) · '주의: 열린 기기 등록 켜짐(…)' · 경보 줄
+  deploy/deploy.sh --shop-cli status --shop <매장 id>                    # openDevices: 기기마다 이름표 · 종류 · 차량 · 붙은 때 · 로그인 수 · 마지막 로그인 · 브라우저 모양(직원 이름 없음)
+  deploy/deploy.sh --shop-cli revoke-device --shop <매장 id> --device "시험 기기 3"   # 한 대 끊기(세션이 곧 끝남)
+  deploy/deploy.sh --shop-cli revoke-device --shop <매장 id> --open-all              # 스스로 붙은 기기 모두 끊기(번호로 붙인 기기는 그대로)
+  ```
+
+  켜 둔 동안에는 끊긴 기기도 `기기 선택`으로 다시 붙을 수 있다. **모르는 기기가 붙어 비밀번호를 맞춰 보면 끊기보다 설정을 끈다**(`--set-env SKINOTE_TEST_OPEN_ENROLL=off`: 스스로 붙은 기기가 모두 끊기고 새 기기는 번호로만 붙는다).
+- **켜기 · 끄기**(맥에서, 서버를 다시 켠다 — 몇 초 동안 기기가 `연결 끊김`을 보였다가 돌아온다):
+
+  ```sh
+  deploy/deploy.sh --set-env SKINOTE_TEST_OPEN_ENROLL=on                    # 기한 = 오늘(영업일) + 7일을 함께 적는다. 시험 매장 하나일 때만 쓰인다
+  deploy/deploy.sh --set-env SKINOTE_TEST_OPEN_ENROLL_UNTIL=2026-10-09      # 켜 둔 기한 바꾸기(오늘 ~ 오늘 + 14일)
+  deploy/deploy.sh --set-env SKINOTE_TEST_OPEN_ENROLL=off                   # 끄기: 기한 줄을 지우고, 스스로 붙은 기기를 모두 끊는다
+  ```
+
+  `--set-env`는 허락한 이름(`SKINOTE_TEST_OPEN_ENROLL` · `SKINOTE_TEST_OPEN_ENROLL_UNTIL`)과 값(`on` · `off`, 날짜)만 받고, 틀리면 ssh에 붙기 전에 멈춘다(틀린 값은 찍지 않는다). 서버에서는 배포 작업과 같은 잠금을 잡고 `/etc/skinote/skinote.env`의 그 줄을 바꾸거나 더한 뒤(권한 root:skinote 0640 그대로) `systemctl restart skinote-server` → 살아 있음 → 서버 안의 상태 한 줄을 보인다. `on`이면 아래 '켜는 조건'을 다시 찍고, `off`면 `열린 기기 등록 꺼짐: 시작할 때 스스로 붙은 시험 기기 N대를 끊음`을 찍는다. 비밀값 · 경로 · 포트는 이것으로 바꾸지 않는다(설정 파일을 손으로 고치고 다시 켠다, 6절).
+- **끄면(기한이 지나도, 매장이 둘이 되거나 시험 매장이 아니게 되어도):** 스스로 붙은 기기(`시험 기기 N`)는 **모두 끊긴다** — 서버가 시작할 때(그리고 그런 기기의 요청을 볼 때) 기기 행을 끊고(`revoke_reason` `open_enroll_off` · `open_enroll_expired` · `open_enroll_closed`) 그 세션(기사 기기의 14일 세션 포함) · 알림 연결을 끝낸다. 기록에 `ALERT open_enroll_cut <매장 id> · … · 시험 기기 N대 끊음`. 그 기기들은 곧 `기기 등록`(등록 번호) 화면으로 가고, 계속 쓰려면 `device-code`로 다시 붙인다. 번호로 붙인 기기는 그대로다. 다시 켜도 끊긴 기기는 돌아오지 않는다(새로 `기기 선택`).
+- **켜져 있는 동안 보이는 것:** 서버 안의 `/api/health`의 `warnings`에 `TEST_OPEN_ENROLL`(기한이 지났으면 `TEST_OPEN_ENROLL_EXPIRED`도, 꺼졌는데 스스로 붙은 기기가 남았으면 `TEST_OPEN_DEVICES_LEFT`), `testOpenEnroll`에 설정 · 켜짐 · 기한 · 남은 날 · 매장 · 열린 기기 수 · 끝 수 · 24시간의 새 기기 · 열린 기기의 틀린 비밀번호 수(경고는 `ok`를 바꾸지 않음). `deploy.sh --status`의 설정 줄은 **도는 서버의 값**(상태 확인)을 기준으로 보이고 설정 파일의 줄과 다르면 `주의: 도는 서버(…)와 설정 파일(…)이 다릅니다`를 더한다. 서버 시작 기록의 `주의:` 줄.
+- **내주는 것 · 켜는 조건:** 켜 둔 동안에는 앱 주소를 아는 누구나 기기를 붙여(30대까지) **모든 직원 이름(사장님 · 관리자 포함)을 볼 수 있고** 비밀번호를 맞춰 볼 수 있다(위의 한 기기 잠금 · 쉼으로 한 시간에 20번쯤). 등록 방법 묻기(로그인 전)는 매장 차량 이름도 보인다. 그래서 켜기 전에:
+  - 시험 자료만 있는 시험 매장에서, 시험하는 동안만(기한 7일, 길어도 14일) 켠다.
+  - 시험 매장의 직원 이름은 시험용 이름이나 이름만(성 없이) 쓴다(`provision --staff`). 실제 사람의 성명을 넣지 않는다.
+  - 비밀번호는 6자리로 한다(`--shop-cli rotate-pin --shop <매장 id> --staff <이름> --pin-digits 6`, 처음 만들 때 `provision --pin-digits 6`).
+  - 차량 이름은 `1호 차량`처럼 번호로만 쓴다(번호판 · 기사 이름을 넣지 않는다).
+- **실제 손님 자료를 넣기 전에 끈다**(`--set-env SKINOTE_TEST_OPEN_ENROLL=off`). 끄면 스스로 붙은 `시험 기기`는 모두 끊기므로 남길 기기는 `device-code`로 다시 붙인다. 실제 매장은 늘 등록 번호(`device-code`)로 붙인다.
+

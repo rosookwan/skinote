@@ -45,6 +45,8 @@ import { acquireWriterLock, currentSetting, openShopStore } from '@skinote/store
  *   staff(): StaffRow[],
  *   permissions(roleKey: string): Map<string, string>,
  *   devices: DeviceRows,
+ *   isTest(): boolean,
+ *   vehicles(now: number): { id: string, name: string }[],
  *   authSettings(now: number): AuthSettings,
  *   limits(now: number): { maxQuantity: number },
  *   orderCount(now: number): number,
@@ -92,6 +94,9 @@ export function openShopPort(entry, { secrets, onCommit, log }) {
     staff: () => store.staff(),
     permissions: roleKey => store.permissions(roleKey),
     devices: store.devices,
+    // 시험 매장인지(shops.is_test)와 쓰는 차량(열린 기기 등록의 차량 고르기: id와 이름만).
+    isTest: () => store.isTest(),
+    vehicles: now => store.state(now).registry.vehicles.map(v => ({ id: v.id, name: v.label })),
     authSettings(now) {
       const idle = currentSetting(/** @type {any} */ (db), shopId, 'session_idle_minutes') ?? {};
       const lockout = currentSetting(/** @type {any} */ (db), shopId, 'login_lockout') ?? {};

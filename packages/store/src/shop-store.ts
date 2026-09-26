@@ -90,6 +90,8 @@ export interface ShopStore {
    */
   importDay(day: ImportDay, requestId: string, now: number, actor: Actor): { orders: number; replay: boolean; rev: number };
   readonly devices: DeviceRows;
+  /** 시험 매장인지(shops.is_test): 견본 불러오기 · 열린 기기 등록(SKINOTE_TEST_OPEN_ENROLL)은 시험 매장에만 된다. */
+  isTest(): boolean;
   staff(): StaffRow[];
   permissions(roleKey: string): Map<string, string>;
   /** 캐시를 버린다(시험 · 다른 연결이 쓴 뒤). */
@@ -399,6 +401,7 @@ export function openShopStore(db: Db, shopId: string, options: ShopStoreOptions)
       }
     },
     devices: deviceRows(db, shopId),
+    isTest: () => num(one(db, 'SELECT is_test FROM shops WHERE id = ?', shopId)?.is_test) === 1,
     staff: () => listStaff(db, shopId),
     permissions: (roleKey) => rolePermissions(db, shopId, roleKey),
     dropCache: () => {

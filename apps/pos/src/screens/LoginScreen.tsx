@@ -2,7 +2,8 @@
 // 타일을 누르면 비밀번호 숫자판(아래 판, 가린 표시 ● ● ● ●, 제목 `{이름} · 비밀번호`)이 올라온다. 보내는 동안은 판에 `처리 중`,
 // 틀리면 판 안에 한 줄(`비밀번호 불일치 · 재입력 필요`). 잠기면 `로그인 잠김 · 16:40 이후 가능`이 그 시각까지 남고 `입력`을 누를 수
 // 없다(숫자를 눌러도 줄이 사라지지 않는다 — 풀리는 시각을 잃지 않게). 다른 사람 타일을 고르거나 시각이 지나면 풀린다.
-// 직원 목록 · 보내기는 부르는 쪽(session.tsx)이 한다.
+// 직원 목록 · 보내기는 부르는 쪽(session.tsx)이 한다. 시험 매장의 열린 등록으로 스스로 붙은 기기면 매장 이름 줄에 기기 종류 · 차량을
+// 더하고(`시험 매장 · 기사 휴대폰 · 1호 차량`) 바닥줄에 `기기 선택`(보통 버튼: 이 기기의 등록을 끊고 기기 선택으로)을 둔다.
 // 체험판 미리 보기(#/preview/login)가 같은 화면을 예시 이름으로 그린다.
 import type { StaffTile } from '@skinote/contract';
 import { cardColumns } from '@skinote/layout';
@@ -20,6 +21,12 @@ export interface LoginScreenProps {
    * 비밀번호를 보낸다. 실패하면 판에 보일 한 줄(잠김이면 풀리는 시각 lockedUntil도), 되면 null(부르는 쪽이 다음 화면으로 간다).
    */
   onPin: (staff: StaffTile, pin: string) => Promise<PinAnswer>;
+  /** 스스로 붙은 기기의 모양(`기사 휴대폰 · 1호 차량`): 매장 이름 뒤에 잇는다. */
+  deviceLine?: string;
+  /** 스스로 붙은 기기만: `기기 선택`(등록을 끊고 기기 선택으로). */
+  onChooseDevice?: () => void;
+  /** `기기 선택`을 보내는 중. */
+  choosing?: boolean;
 }
 
 /** 비밀번호 보내기의 답: null = 됨, 글 = 판의 한 줄, 잠김 = 한 줄 + 풀리는 시각(ISO). */
@@ -32,7 +39,7 @@ export function staffGrid(box: { width: number; height: number }, tile: { height
   return { columns, rows, perPage: columns * rows };
 }
 
-export function LoginScreen({ shopName, staff, note, onPin }: LoginScreenProps) {
+export function LoginScreen({ shopName, staff, note, onPin, deviceLine, onChooseDevice, choosing = false }: LoginScreenProps) {
   const profile = useDeviceProfile();
   const boxRef = useRef<HTMLDivElement>(null);
   const box = useElementSize(boxRef);
@@ -90,7 +97,7 @@ export function LoginScreen({ shopName, staff, note, onPin }: LoginScreenProps) 
     <div className="pos-plain">
       <main className="pos-card pos-login">
         <h1 className="pos-card-title">{say('loginTitle')}</h1>
-        <p className="pos-card-line">{shopName}</p>
+        <p className="pos-card-line">{[shopName, deviceLine].filter(Boolean).join(' · ')}</p>
         {note ? <p className="pos-card-line pos-login-note" role="status">{note}</p> : null}
         <div
           ref={boxRef}
@@ -103,9 +110,12 @@ export function LoginScreen({ shopName, staff, note, onPin }: LoginScreenProps) 
             </button>
           ))}
         </div>
-        {pageCount > 1 ? (
-          <div className="pos-login-pager">
-            <Pager page={current} pageCount={pageCount} onChange={setPage} />
+        {pageCount > 1 || onChooseDevice ? (
+          <div className={'pos-login-pager' + (onChooseDevice ? ' pos-login-foot' : '')}>
+            {onChooseDevice ? (
+              <button type="button" className="sn-button pos-login-choose" disabled={choosing || busy} onClick={onChooseDevice}>{say('chooseTitle')}</button>
+            ) : null}
+            {pageCount > 1 ? <Pager page={current} pageCount={pageCount} onChange={setPage} /> : null}
           </div>
         ) : null}
       </main>

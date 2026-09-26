@@ -9,6 +9,11 @@
 //   BACKUP_MISSING  날마다 백업이 한 번도 없는 파일이 있다
 //   BACKUP_STALE    마지막 날마다 백업이 26시간보다 오래된 파일이 있다(백업 타이머가 멈췄거나 계속 실패)
 //   DISK_LOW        자료 디스크가 80% 넘게 찼거나 여유가 SKINOTE_BACKUP_RESERVE_MB보다 적다
+//   TEST_OPEN_ENROLL 설정 SKINOTE_TEST_OPEN_ENROLL이 켜져 있다(시험 매장의 열린 기기 등록: 실제 손님 자료 전에 끈다). 본문의
+//                   testOpenEnroll에 설정 · 켜짐(서버의 매장이 시험 매장 하나이고 기한 안일 때만) · 기한 · 남은 날 · 매장 · 열린 기기 수 ·
+//                   끝 수 · 24시간의 새 기기 · 열린 기기의 틀린 비밀번호 수가 있다.
+//   TEST_OPEN_ENROLL_EXPIRED 설정은 켜져 있지만 기한(SKINOTE_TEST_OPEN_ENROLL_UNTIL)이 지나 열린 등록이 꺼졌다(설정을 끄거나 기한을 늘림)
+//   TEST_OPEN_DEVICES_LEFT 열린 등록이 꺼졌는데 스스로 붙은 기기가 끊기지 않고 남아 있다(서버가 다음 요청 · 다시 시작 때 끊는다)
 
 import { statfsSync } from 'node:fs';
 import { businessDate } from './clock.js';
@@ -52,10 +57,11 @@ export function healthOk(entries, shuttingDown) {
  *   now: Date,
  *   lastBackups: Map<string, string>,
  *   shuttingDown?: boolean,
+ *   openEnroll?: { flag: string, active: boolean, expired?: boolean, devices?: number | null } & Record<string, unknown>,
  * }} input
  * @returns {{ status: number, body: Record<string, unknown> }}
  */
-export function buildHealth({ config, entries, startedAt, now, lastBackups, shuttingDown = false }) {
+export function buildHealth({ config, entries, startedAt, now, lastBackups, shuttingDown = false, openEnroll }) {
   const databases = entries.map(entry => {
     const info = inspectConnection(entry.db);
     return {
@@ -93,6 +99,9 @@ export function buildHealth({ config, entries, startedAt, now, lastBackups, shut
     warnings.push('BACKUP_STALE');
   }
   if (disk && ((disk.usedPercent ?? 0) >= DISK_LOW_PERCENT || disk.freeBytes < config.backupReserveBytes)) warnings.push('DISK_LOW');
+  if (config.testOpenEnroll === 'on') warnings.push('TEST_OPEN_ENROLL');
+  if (openEnroll?.expired === true) warnings.push('TEST_OPEN_ENROLL_EXPIRED');
+  if (openEnroll && !openEnroll.active && (openEnroll.devices ?? 0) > 0) warnings.push('TEST_OPEN_DEVICES_LEFT');
 
   return {
     status: ok ? 200 : 503,
@@ -108,6 +117,7 @@ export function buildHealth({ config, entries, startedAt, now, lastBackups, shut
       cutoff: config.cutoff,
       ...(shuttingDown ? { shuttingDown: true } : {}),
       warnings,
+      testOpenEnroll: openEnroll ?? { flag: config.testOpenEnroll, active: false },
       shops,
       databases,
       disk,

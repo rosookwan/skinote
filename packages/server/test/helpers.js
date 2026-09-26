@@ -7,7 +7,8 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadConfig } from '../src/config.js';
+import { businessDate } from '../src/clock.js';
+import { addDays, loadConfig } from '../src/config.js';
 import { loadSecrets, newSecretsEnv } from '../src/secrets.js';
 
 export const PACKAGE_DIR = fileURLToPath(new URL('../', import.meta.url));
@@ -76,6 +77,14 @@ export function corruptPages(file, { from = 20, to = 800, step = 7, pageSize = 4
 /** 시험의 앱 주소(SKINOTE_PUBLIC_ORIGIN). 요청의 Origin 머리로도 보낸다. */
 export const ORIGIN = 'https://shop.test';
 
+/**
+ * 열린 기기 등록을 켜는 설정(SKINOTE_TEST_OPEN_ENROLL=on과 마지막 영업일 = 오늘 + days, 서울 06:00 기준).
+ * @param {number} [days] @param {Date} [from]
+ */
+export function openEnrollEnv(days = 7, from = new Date()) {
+  return { SKINOTE_TEST_OPEN_ENROLL: 'on', SKINOTE_TEST_OPEN_ENROLL_UNTIL: addDays(businessDate(from, 'Asia/Seoul', 360), days) };
+}
+
 /** 시험의 매장 id. */
 export const SHOP = 'shop0test';
 
@@ -115,10 +124,11 @@ export function codeOf(out) {
 }
 
 /**
- * 시험 매장 하나: 서버를 한 번 띄워 파일을 마이그레이션하고 닫은 뒤, 명령줄로 견본 명세 + 시험 직원을 만든다.
- * @param {string} dataDir @param {Record<string, string>} [extraEnv]
+ * 시험 매장 하나: 서버를 한 번 띄워 파일을 마이그레이션하고 닫은 뒤, 명령줄로 견본 명세 + 시험 직원을 만든다. test: false면 시험 매장이
+ * 아닌 매장(provision에 --test 없음).
+ * @param {string} dataDir @param {Record<string, string>} [extraEnv] @param {{ test?: boolean }} [options]
  */
-export async function provisionedShop(dataDir, extraEnv = {}) {
+export async function provisionedShop(dataDir, extraEnv = {}, { test = true } = {}) {
   const { startServer } = await import('../src/server.js');
   const env = {
     SKINOTE_DATA_DIR: dataDir, SKINOTE_SHOP_IDS: SHOP, SKINOTE_RELEASE: 'test', SKINOTE_BACKUP_RESERVE_MB: '0', SKINOTE_ADMIN_SOCKET: 'off',
@@ -126,7 +136,7 @@ export async function provisionedShop(dataDir, extraEnv = {}) {
   };
   const first = await startServer(testConfig(dataDir, env), { log: () => {} });
   await first.close();
-  const made = await cli(['provision', '--shop', SHOP, '--code', 'test-shop', '--name', '시험 매장', '--sample', '--test', ...STAFF.flatMap(s => ['--staff', s])], env);
+  const made = await cli(['provision', '--shop', SHOP, '--code', 'test-shop', '--name', '시험 매장', '--sample', ...(test ? ['--test'] : []), ...STAFF.flatMap(s => ['--staff', s])], env);
   if (made.code !== 0) throw new Error('provision 실패: ' + made.err);
   return { env, pins: pinsOf(made.out) };
 }
@@ -191,12 +201,30 @@ export function device(port, { origin = ORIGIN, forwardedFor } = {}) {
       if (res.status === 200) state.deviceId = (await res.clone().json()).deviceId;
       return res;
     },
+    /**
+     * 열린 등록(시험 매장): 새 기기 열쇠 + 고른 종류 · 차량. vehicleId가 undefined면 칸을 보내지 않는다.
+     * @param {string} kind @param {string} [vehicleId]
+     */
+    async openEnroll(kind, vehicleId) {
+      state.key = await deviceKey();
+      const res = await self.post('/api/v2/device/open-enroll', { kind, ...(vehicleId !== undefined ? { vehicleId } : {}), publicKey: state.key.publicKey, agent: 'test · node' });
+      if (res.status === 200) state.deviceId = (await res.clone().json()).deviceId;
+      return res;
+    },
     /** 한 번 값 → 서명 → 직원 타일(로그인 표). */
     async staffList() {
+      return self.post('/api/v2/login/staff', await self.signed());
+    },
+    /** 한 번 값에 서명한 본문(직원 타일 · 열린 기기 놓기). */
+    async signed() {
       const challenge = await (await self.post('/api/v2/device/challenge', { deviceId: state.deviceId })).json();
       const key = /** @type {NonNullable<typeof state.key>} */ (state.key);
       const signature = await key.sign(`skinote-login-v1|${ORIGIN}|${state.deviceId}|${challenge.nonce}`);
-      return self.post('/api/v2/login/staff', { deviceId: state.deviceId, nonce: challenge.nonce, signature });
+      return { deviceId: state.deviceId, nonce: challenge.nonce, signature };
+    },
+    /** 열린 기기 놓기(스스로 붙은 기기가 자기 등록을 끊는다). */
+    async release() {
+      return self.post('/api/v2/device/open-release', await self.signed());
     },
     /** 직원 이름 · 비밀번호로 로그인(성공이면 CSRF를 기억). @param {string} name @param {string} pin */
     async login(name, pin) {

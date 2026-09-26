@@ -6,8 +6,8 @@
 // 글자 칸(새 접수 대표자 · 현금 점검 직접 입력)은 화면 키보드(keyboardWalk): 편집 칸이 없는지, 키로 친 ㄱ ㅣ ㅁ이 `김`인지, 치는 중에는
 // 안내가 없고 `입력`을 누른 뒤에만 낱자모 안내(제목은 그대로), `닫기`가 키 줄 밖인지, 자모 키 글자의 먹 높이, 쌍자음(글자로 보이는 키) ·
 // 가장 넓은 글자(뷁)로 한도까지 채운 표시 칸 · 숫자 쪽을 잰다. 기사 기기 크기는 미리 보기 #/preview/keyboard(40자)에서 잰다.
-// 서버 모드의 화면(기기 등록 · 로그인 타일 쪽 · 비밀번호 숫자판 · 연결 끊김 · 로그아웃)은 미리 보기 #/preview/enroll · login · offline ·
-// exit에서 잰다(connectWalk).
+// 서버 모드의 화면(기기 등록 · 기기 선택(시험 매장의 열린 등록)과 차량 선택 쪽 · 로그인 타일 쪽 · 비밀번호 숫자판 · 연결 끊김 · 로그아웃)은
+// 미리 보기 #/preview/enroll · choose · login · offline · exit에서 잰다(connectWalk).
 // 규칙(ui-rules-measure.mjs): 등급 최소보다 작은 글자 · 누르는 곳, 가로 넘침 · 화면 밖, 잘린 · 넘친 글자, 말줄임표,
 // 스크롤 영역 · 스크롤 목록 · 반쯤 잘린 줄 · 페이지 스크롤, 주 버튼 둘 이상 · 강조색이 아닌 주 버튼, 늦지 않은 것의 빨강, 영어 글자,
 // 화면이 고른 기기 등급. 크기 숫자는 DeviceProfile(@skinote/ui/device-profile)에서만 읽는다: 검사 크기(checkSizes), 최소 글자(minFontPx),
@@ -2085,6 +2085,11 @@ async function numberedDriver(w) {
 /**
  * 서버 모드의 화면(계획 work/impl-server/plan.md 6-3 · 6-4): 체험판 미리 보기로 이 크기의 등급에서 잰다.
  *   #/preview/enroll: 기기 등록(화면 안 숫자판) → 12자리(넷씩 끊어 보임) → 입력(체험판 미지원 한 줄).
+ *   #/preview/choose: 기기 선택(종류 셋: 기사 등급이면 기사 휴대폰이 먼저이고 보라 주 버튼, 카운터 등급이면 카운터(포스)가 먼저이고
+ *   주황 주 버튼) → 카운터(바로 보냄: 한 줄) → 기사 휴대폰 → 차량 선택(견본 차량 타일, 어느 크기에서나 기사 등급: 태블릿 크기의 `이전`도
+ *   56px) → 차량(한 줄) → 이전. ?many면 기사 태블릿 → 차량 24대의 쪽마다. ?none이면 차량 없는 매장(한 줄 `차량 없음 · 관리자 확인
+ *   필요`, 기사 기기 버튼은 눌리지 않음).
+ *   #/preview/login?open: 스스로 붙은 기기의 로그인(매장 이름 줄의 기기 모양, 바닥줄의 `기기 선택`, 많으면 쪽 넘김과 함께).
  *   #/preview/login?many: 직원 타일 24개(쪽마다) → 타일 → 비밀번호 숫자판(가린 표시 ● ● ● ●) → 입력(한 줄) → 닫기. 셋이면 한 쪽.
  *   #/preview/offline: 연결 끊김(마지막 연결 · 재시도). #/preview/exit: 로그인한 기기의 나가기와 로그아웃 묻는 창.
  * 기사 크기는 ?device=tablet · phone(기사 등급), 포스 크기는 카운터 등급.
@@ -2108,6 +2113,65 @@ async function connectWalk(w) {
   await w.scene('enroll-note');
   if (!(await pad.locator('.sn-keypad-note').count())) w.fail('enroll-note', '보낸 뒤 한 줄이 없음');
 
+  const noteSettled = () => page.waitForFunction(() => {
+    const note = document.querySelector('.pos-choose-note');
+    return !!note && (note.textContent ?? '').trim() !== '처리 중';
+  }, null, { timeout: 5_000 }).catch(() => {});
+  const bigChoice = (name) => page.locator('.pos-choose .pos-big-choice', { hasText: name });
+  await w.visit('#/preview/choose' + query(''), '.pos-choose', role);
+  await w.scene('choose');
+  const choices = page.locator('.pos-choose .pos-big-choice');
+  const kinds = (await choices.allTextContents()).map((text) => text.trim());
+  // 차례와 주 버튼은 이 화면의 등급을 따른다(휴대폰 폭의 기사가 카운터를 잘못 고르지 않게).
+  const order = driver ? ['기사 휴대폰', '기사 태블릿', '카운터'] : ['카운터', '기사 휴대폰', '기사 태블릿'];
+  if (kinds.length !== 3 || order.some((name, i) => !(kinds[i] ?? '').startsWith(name))) {
+    w.fail('choose', '종류 버튼 차례가 ' + order.join(' · ') + '이 아님: ' + kinds.join(' | '));
+  }
+  const firstPrimary = (await page.locator('.pos-choose .pos-big-choice[data-primary="true"]').allTextContents()).map((text) => text.trim());
+  if (firstPrimary.length !== 1 || !(firstPrimary[0] ?? '').startsWith(order[0])) {
+    w.fail('choose', '주 버튼이 첫 버튼(' + order[0] + ') 하나가 아님: ' + firstPrimary.join(' | '));
+  }
+  await w.click(bigChoice('카운터'));
+  await noteSettled();
+  await w.scene('choose-note');
+  if (!(await page.locator('.pos-choose-note').count())) w.fail('choose-note', '카운터를 보낸 뒤 한 줄이 없음');
+  await w.click(bigChoice('기사 휴대폰'));
+  await page.waitForSelector('.pos-choose-tile', { timeout: 5_000 }).catch(() => {});
+  // 차량 선택은 앱처럼 기사 등급이다(카운터 크기에서도: 1024×600 기사 태블릿 가로의 `이전`이 56px).
+  w.route('driver');
+  await w.scene('choose-vehicle');
+  const vanTiles = await page.locator('.pos-choose-tile').allTextContents();
+  if ((await page.locator('.pos-choose-vehicles h1').textContent())?.trim() !== '차량 선택' || vanTiles.length < 1) {
+    w.fail('choose-vehicle', '차량 선택 화면 · 차량 타일이 없음: ' + vanTiles.join(', '));
+  }
+  await w.click(page.locator('.pos-choose-tile').first());
+  await noteSettled();
+  await w.scene('choose-vehicle-note');
+  if (!(await page.locator('.pos-choose-note').count())) w.fail('choose-vehicle-note', '차량을 보낸 뒤 한 줄이 없음');
+  await w.click(page.locator('.pos-choose-foot').getByRole('button', { name: '이전', exact: true }));
+  w.route(role);
+  if ((await choices.count()) !== 3) w.fail('choose-back', '이전을 눌러도 종류 버튼으로 돌아오지 않음');
+  await w.visit('#/preview/choose' + query('many'), '.pos-choose', role);
+  await w.click(bigChoice('기사 태블릿'));
+  await page.waitForSelector('.pos-choose-tile', { timeout: 5_000 }).catch(() => {});
+  w.route('driver');
+  const vanPager = page.locator('.pos-choose-foot');
+  const [, vanPages] = await w.pageInfo(vanPager);
+  if (vanPages < 2) w.fail('choose-many', '차량 24대가 한 쪽에 들어감(쪽 넘김을 재지 못함): ' + (await page.locator('.pos-choose-tile').count()) + '대');
+  for (let p = 1; p <= vanPages; p += 1) {
+    await w.toPage(p, vanPager);
+    await w.scene('choose-many-p' + p);
+  }
+  // 차량 없는 매장: 기사 기기 버튼은 눌리지 않고 까닭을 한 줄로(카운터 등급은 카운터(포스)가 주 버튼, 기사 등급은 주 버튼이 없음).
+  await w.visit('#/preview/choose' + query('none'), '.pos-choose', role);
+  await w.scene('choose-no-vans');
+  const noVanLine = ((await page.locator('.pos-choose-note').textContent().catch(() => '')) ?? '').trim();
+  if (noVanLine !== '차량 없음 · 관리자 확인 필요') w.fail('choose-no-vans', '차량이 없는데 한 줄이 없음: ' + noVanLine);
+  const live = (await page.locator('.pos-choose .pos-big-choice:enabled').allTextContents()).map((text) => text.trim());
+  if (live.length !== 1 || !(live[0] ?? '').startsWith('카운터')) w.fail('choose-no-vans', '차량이 없을 때 누를 수 있는 버튼이 카운터(포스) 하나가 아님: ' + live.join(' | '));
+  const noVanPrimary = await page.locator('.pos-choose [data-primary="true"]').count();
+  if (noVanPrimary !== (driver ? 0 : 1)) w.fail('choose-no-vans', '차량이 없을 때의 주 버튼 수 ' + noVanPrimary);
+
   await w.visit('#/preview/login' + query('many'), '.pos-login-tile', role);
   const pager = page.locator('.pos-login-pager');
   const [, total] = await w.pageInfo(pager);
@@ -2129,6 +2193,25 @@ async function connectWalk(w) {
   await w.closeTo(0);
   await w.visit('#/preview/login' + query(''), '.pos-login-tile', role);
   await w.scene('login-few');
+  // 스스로 붙은 기기(시험 매장의 열린 등록): 매장 이름 줄의 기기 모양, 바닥줄의 `기기 선택`(쪽 넘김과 함께).
+  for (const extra of ['open', 'open&many']) {
+    await w.visit('#/preview/login' + query(extra), '.pos-login-tile', role);
+    const release = page.locator('.pos-login-foot').getByRole('button', { name: '기기 선택', exact: true });
+    const label = 'login-' + extra.replace('&', '-');
+    await w.scene(label);
+    if (!(await release.count())) w.fail(label, '스스로 붙은 기기의 로그인 화면에 기기 선택이 없음');
+    if (extra === 'open') {
+      await w.click(release);
+      await w.scene(label + '-note');
+    } else {
+      const openPager = page.locator('.pos-login-foot');
+      const [, openPages] = await w.pageInfo(openPager);
+      if (openPages > 1) {
+        await w.toPage(openPages, openPager);
+        await w.scene(label + '-p' + openPages);
+      }
+    }
+  }
 
   await w.visit('#/preview/offline' + query(''), '.pos-card', role);
   await w.scene('offline');

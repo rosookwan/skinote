@@ -111,11 +111,27 @@ export async function rotatePinOp(ctx, args) {
 }
 
 /**
- * 기기 끊기: 새 세션을 막고 그 기기의 세션을 끝낸다(서버가 돌면 알림 연결도 곧바로 닫는다).
- * @param {OpsContext} ctx @param {{ device?: unknown }} args
+ * 기기 끊기: 새 세션을 막고 그 기기의 세션을 끝낸다(서버가 돌면 알림 연결도 곧바로 닫는다). openAll이면 열린 등록으로 스스로 붙은
+ * 기기(`시험 기기 N`)를 모두 끊는다(번호로 붙인 기기는 그대로). 열린 등록이 켜져 있으면 끊긴 기기는 다시 기기 선택으로 붙을 수 있다:
+ * 모르는 기기를 막으려면 설정을 끈다(deploy.sh --set-env SKINOTE_TEST_OPEN_ENROLL=off, 그러면 서버가 모두 끊는다).
+ * @param {OpsContext} ctx @param {{ device?: unknown, openAll?: unknown }} args
  */
 export function revokeDeviceOp(ctx, args) {
-  if (typeof args.device !== 'string' || args.device === '') throw new OpError('BAD_ARGS', '--device가 없습니다(기기 이름이나 id)');
+  if (args.openAll === true) {
+    if (args.device !== undefined) throw new OpError('BAD_ARGS', '--device와 --open-all은 함께 쓰지 않습니다');
+    const now = ctx.now();
+    const ids = ctx.port.devices.revokeOpen('cli', now);
+    let sessions = 0;
+    let streams = 0;
+    for (const id of ids) {
+      sessions += ctx.control.revokeDeviceSessions(ctx.shopId, id, 'device_revoked', now);
+      const after = ctx.onRevoke?.(id);
+      sessions += after?.sessions ?? 0;
+      streams += after?.streams ?? 0;
+    }
+    return { openAll: true, revoked: ids.length, sessions, streams };
+  }
+  if (typeof args.device !== 'string' || args.device === '') throw new OpError('BAD_ARGS', '--device가 없습니다(기기 이름이나 id, 또는 --open-all)');
   const device = ctx.port.devices.find(args.device);
   if (!device) throw new OpError('NOT_FOUND', '그 기기가 없습니다');
   const now = ctx.now();
@@ -126,7 +142,9 @@ export function revokeDeviceOp(ctx, args) {
 }
 
 /**
- * 매장 상태(이름 없이 수만): rev · 영업일 · 읽은 접수 수 · 기기 · 직원.
+ * 매장 상태(이름 없이 수만): rev · 영업일 · 읽은 접수 수 · 기기 · 직원. 스스로 붙은 기기(열린 등록)가 있으면 기기마다 한 줄(openDevices:
+ * 이름표 · 종류 · 차량 · 붙은 때 · 마지막으로 본 때 · 로그인 수 · 마지막 로그인 · 마지막 세션의 브라우저 모양 80자, 직원 이름 없음):
+ * 자기 기기와 모르는 기기를 가릴 때.
  * @param {OpsContext} ctx
  */
 export function statusOp(ctx) {
@@ -142,6 +160,30 @@ export function statusOp(ctx) {
     orders: ctx.port.orderCount(now),
     devices: { active: devices.filter(d => d.status === 'active').length, revoked: devices.filter(d => d.status === 'revoked').length },
     staff: ctx.port.staff().length,
+    ...openDevicesOf(ctx),
+  };
+}
+
+/** @param {number} ms */
+const isoOf = ms => new Date(ms).toISOString();
+
+/** 브라우저 모양 글의 끝 길이(명령줄 status). */
+const AGENT_MAX = 80;
+
+/** 스스로 붙은 기기 줄(없으면 칸 없음). @param {OpsContext} ctx */
+function openDevicesOf(ctx) {
+  const open = ctx.port.devices.openDevices();
+  if (!open.length) return {};
+  return {
+    openDevices: open.map(d => {
+      const agent = ctx.control.lastUserAgent(ctx.shopId, d.id);
+      return {
+        label: d.label, kind: d.kind, ...(d.vehicleId ? { vehicleId: d.vehicleId } : {}), registeredAt: isoOf(d.registeredAt),
+        ...(d.lastSeenAt !== undefined ? { lastSeenAt: isoOf(d.lastSeenAt) } : {}), signIns: d.signIns,
+        ...(d.lastSignInAt !== undefined ? { lastSignInAt: isoOf(d.lastSignInAt) } : {}),
+        ...(agent ? { agent: agent.slice(0, AGENT_MAX) } : {}),
+      };
+    }),
   };
 }
 

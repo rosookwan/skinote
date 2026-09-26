@@ -2,7 +2,7 @@
 // 너무 긴 목록)은 거절된다. 보냄 대기 칸은 QUEUE_NOT_SUPPORTED, 모르는 명령 · 조회 · 화면은 각자의 코드다.
 import { describe, expect, it } from 'vitest';
 import {
-  COMMAND_TYPES, WIRE_LIMITS, WIRE_QUERY_NAMES, loginMessage, formatEnrollCode, enrollCodeDigits, isEnrollCode, isPin, parseAuthBody, parseEnvelope,
+  COMMAND_TYPES, WIRE_LIMITS, WIRE_QUERY_NAMES, loginMessage, formatEnrollCode, enrollCodeDigits, isEnrollCode, isEnrollMode, isPin, parseAuthBody, parseEnvelope,
   parseQuery, type CommandPayloads, type CommandType, type OrderDraftInput, type QueryName, type QueryParams,
 } from '../src/index.ts';
 
@@ -257,6 +257,34 @@ describe('기기 등록 · 로그인 본문', () => {
     expect(parseAuthBody('login', { ticket: 't'.repeat(43), staffId: RID2, pin: '4821', remember: true }).ok).toBe(false);
     const bad = parseAuthBody('login', { ticket: 't'.repeat(43), staffId: RID2, pin: '48x1' });
     expect(bad.ok ? '' : bad.problems.join(' ')).not.toContain('48x1');
+  });
+  it('열린 등록(시험 매장): 카운터는 차량 없이, 기사 기기는 차량과 함께만', () => {
+    const agent = 'Android · Chrome';
+    expect(parseAuthBody('openEnroll', { kind: 'pos', publicKey: jwk, agent }).ok).toBe(true);
+    expect(parseAuthBody('openEnroll', { kind: 'driver_phone', vehicleId: 'v1', publicKey: jwk, agent }).ok).toBe(true);
+    expect(parseAuthBody('openEnroll', { kind: 'driver_tablet', vehicleId: 'v2', publicKey: jwk, agent }).ok).toBe(true);
+    expect(parseAuthBody('openEnroll', { kind: 'driver_phone', publicKey: jwk, agent }).ok).toBe(false);
+    expect(parseAuthBody('openEnroll', { kind: 'pos', vehicleId: 'v1', publicKey: jwk, agent }).ok).toBe(false);
+    expect(parseAuthBody('openEnroll', { kind: 'admin', publicKey: jwk, agent }).ok).toBe(false);
+    expect(parseAuthBody('openEnroll', { kind: 'driver_phone', vehicleId: '../v1', publicKey: jwk, agent }).ok).toBe(false);
+    expect(parseAuthBody('openEnroll', { kind: 'pos', publicKey: { ...jwk, d: 'secret' }, agent }).ok).toBe(false);
+    expect(parseAuthBody('openEnroll', { kind: 'pos', publicKey: jwk, agent, label: '카운터 1' }).ok).toBe(false);
+    expect(parseAuthBody('openEnroll', { kind: 'pos', publicKey: jwk, agent: 'x'.repeat(81) }).ok).toBe(false);
+  });
+  it('열린 등록 기기 놓기는 staff와 같은 서명 본문만', () => {
+    const body = { deviceId: RID, nonce: 'n'.repeat(43), signature: 's'.repeat(86) };
+    expect(parseAuthBody('openRelease', body).ok).toBe(true);
+    expect(parseAuthBody('openRelease', { ...body, kind: 'pos' }).ok).toBe(false);
+    expect(parseAuthBody('openRelease', { deviceId: RID, nonce: 'n'.repeat(43) }).ok).toBe(false);
+  });
+  it('등록 방법 답의 모양(번호 · 열린 등록과 차량), 다른 것은 아님', () => {
+    expect(isEnrollMode({ mode: 'code' })).toBe(true);
+    expect(isEnrollMode({ mode: 'open', vehicles: [{ id: 'v1', name: '1호 차량' }] })).toBe(true);
+    expect(isEnrollMode({ mode: 'open', vehicles: [] })).toBe(true);
+    expect(isEnrollMode({ mode: 'open' })).toBe(false);
+    expect(isEnrollMode({ mode: 'open', vehicles: [{ id: 'v1' }] })).toBe(false);
+    expect(isEnrollMode({ ok: false, error: 'method_not_allowed' })).toBe(false);
+    expect(isEnrollMode(null)).toBe(false);
   });
   it('서명 문장 · 등록 번호 모양 · 비밀번호 모양', () => {
     expect(loginMessage('https://shop.example', RID, 'abc')).toBe('skinote-login-v1|https://shop.example|' + RID + '|abc');

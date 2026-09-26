@@ -13,7 +13,8 @@
 //                                  → 등록 번호 1234-5678-9012(한 번)                                                              [온라인 가능]
 //   node bin/shop.js rotate-pin    --shop <id> --staff <이름|id> [--pin-digits 4] → 새 비밀번호(한 번), 잠금 풀기                     [온라인 가능]
 //   node bin/shop.js revoke-device --shop <id> --device <기기 이름|id> → 기기 끊기(세션 · 알림 연결이 끝남)                           [온라인 가능]
-//   node bin/shop.js status        --shop <id> → rev · 영업일 · 접수 수 · 기기 · 직원 수(이름 없음)                                   [온라인 가능]
+//   node bin/shop.js revoke-device --shop <id> --open-all → 열린 등록으로 스스로 붙은 기기(`시험 기기 N`)를 모두 끊기                [온라인 가능]
+//   node bin/shop.js status        --shop <id> → rev · 영업일 · 접수 수 · 기기 · 직원 수(이름 없음), 스스로 붙은 기기마다 한 줄          [온라인 가능]
 //   node bin/shop.js --stdin       표준 입력의 { "op": "…", "args": { … } } 한 JSON(deploy.sh --shop-cli). args.spec은 명세 객체여도 된다.
 //
 // [혼자] 명령은 매장의 쓰는 사람 잠금을 스스로 잡는다: 서버가 돌고 있으면 거절한다(서버를 멈추거나 deploy.sh --shop-cli).
@@ -75,6 +76,7 @@ const FLAGS = /** @type {Record<string, { key: string, kind: 'bool' | 'value' | 
   '--vehicle': { key: 'vehicle', kind: 'value' },
   '--minutes': { key: 'minutes', kind: 'value' },
   '--device': { key: 'device', kind: 'value' },
+  '--open-all': { key: 'openAll', kind: 'bool' },
 });
 
 const OPS = ['provision', 'load-sample', 'reset-test-shop', 'device-code', 'rotate-pin', 'revoke-device', 'status'];
@@ -361,6 +363,7 @@ function describe(op, result) {
     case 'rotate-pin':
       return `직원\t역할\t비밀번호\n${result.staff}\t${result.role}\t${result.pin}\n`;
     case 'revoke-device':
+      if (result.openAll) return `스스로 붙은 시험 기기 ${result.revoked}대 끊음 · 끝낸 세션 ${result.sessions}개 · 닫은 알림 연결 ${result.streams}개\n`;
       return `기기 ${result.label} ${result.revoked ? '끊음' : '이미 끊겨 있음'} · 끝낸 세션 ${result.sessions}개 · 닫은 알림 연결 ${result.streams}개\n`;
     default:
       return JSON.stringify(result) + '\n';
@@ -409,7 +412,7 @@ export async function runShopCli(argv, io) {
     if (op === 'rotate-pin' && (args.staff?.length ?? 0) > 1) throw new CliError(EXIT.usage, 'rotate-pin은 --staff 하나');
     const opArgs = op === 'rotate-pin' ? { staff: args.staff?.[0], pinDigits: args.pinDigits }
       : op === 'device-code' ? { kind: args.kind, label: args.label, vehicle: args.vehicle, minutes: args.minutes }
-        : op === 'revoke-device' ? { device: args.device } : {};
+        : op === 'revoke-device' ? { device: args.device, ...(args.openAll === true ? { openAll: true } : {}) } : {};
     lock = acquireWriterLock(config.dataDir, shopId);
     if (!lock) {
       // 서버가 돈다: 관리 소켓으로 보낸다(서버가 자기 연결로 처리한다).

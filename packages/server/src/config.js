@@ -16,11 +16,20 @@
 //                      아님)로 API를 켜거나 운영(NODE_ENV=production, 유닛이 넣음)이면 꼭 있어야 한다. 루프백 로컬 실행에서 없으면 요청의
 //                      Host로 만든 주소와 맞춰 본다
 //   SKINOTE_ADMIN_SOCKET  관리 소켓 경로(기본 /run/skinote/admin.sock, 'off'면 열지 않음). 100바이트까지(macOS 104)
+//   SKINOTE_TEST_OPEN_ENROLL  off(기본) · on. 시험 매장의 열린 기기 등록(2026-09-26 시험 중 요청): on이고 서버의 매장이 시험 매장
+//                      하나(control tenants.is_test와 매장 파일 shops.is_test가 모두 1)일 때만 새 기기가 등록 번호 없이 종류 · 차량을 골라
+//                      스스로 등록한다(직원 비밀번호 로그인 · 다섯 번 잠금은 그대로). 그 밖에는 아무것도 바뀌지 않는다. 켜져 있는 동안
+//                      /api/health의 warnings에 TEST_OPEN_ENROLL이 뜬다. 실제 손님 자료를 넣기 전에 끈다(deploy/README 9-2,
+//                      deployment 5-3). 끄면(또는 기한이 지나면) 스스로 붙은 기기는 모두 끊긴다(다시 쓰려면 등록 번호).
+//   SKINOTE_TEST_OPEN_ENROLL_UNTIL  열린 기기 등록의 마지막 영업일(YYYY-MM-DD). on이면 꼭 있어야 하고 오늘(영업일)에서 14일 안이어야
+//                      한다(deploy.sh --set-env …=on이 오늘 + 7일로 적는다). 그날이 지나면 열린 등록이 저절로 꺼진다(경고
+//                      TEST_OPEN_ENROLL_EXPIRED). off면 읽지 않는다.
 // 비밀값 넷(SKINOTE_PIN_PEPPER · SKINOTE_SESSION_KEY · SKINOTE_FINGERPRINT_KEY · SKINOTE_IP_KEY)은 secrets.js가 따로 읽는다.
 
 import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { businessDate } from './clock.js';
 
 export const DEFAULTS = Object.freeze({
   dataDir: './data',
@@ -33,7 +42,25 @@ export const DEFAULTS = Object.freeze({
   backupReserveMb: 2048,
   api: 'on',
   adminSocket: '/run/skinote/admin.sock',
+  testOpenEnroll: 'off',
 });
+
+/** 열린 기기 등록의 기한(영업일): deploy.sh --set-env …=on이 오늘 + default일로 적고, 설정은 오늘 + max일보다 먼 날을 받지 않는다. */
+export const OPEN_ENROLL_DAYS = Object.freeze({ default: 7, max: 14 });
+const DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** 'YYYY-MM-DD'가 있는 날짜인지. @param {string} text */
+function isRealDate(text) {
+  const m = DATE_PATTERN.exec(text);
+  if (!m) return false;
+  const at = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  return at.toISOString().slice(0, 10) === text;
+}
+
+/** 날짜 + n일(YYYY-MM-DD). @param {string} date @param {number} days */
+export function addDays(date, days) {
+  return new Date(Date.parse(date + 'T00:00:00Z') + days * 86_400_000).toISOString().slice(0, 10);
+}
 
 /** 매장 id: 파일 이름으로 안전한 모양(점 · 빗금 · 공백 없음). ULID(26자)도 이 모양이다. */
 export const SHOP_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
@@ -76,6 +103,8 @@ export class ConfigError extends Error {
  *   api: 'on' | 'off',
  *   publicOrigin: string | null,
  *   adminSocket: string | null,
+ *   testOpenEnroll: 'on' | 'off',
+ *   testOpenEnrollUntil: string | null,
  *   secrets?: import('./secrets.js').Secrets | null,
  * }} ServerConfig
  */
@@ -189,10 +218,10 @@ function readReleaseFile(file) {
 /**
  * 환경 변수에서 설정을 읽는다. 상대 경로(SKINOTE_DATA_DIR)는 cwd 기준으로 푼다.
  * @param {Record<string, string | undefined>} [env]
- * @param {{ cwd?: string, releaseFile?: string }} [options]
+ * @param {{ cwd?: string, releaseFile?: string, now?: Date }} [options] now = 열린 기기 등록 기한을 볼 때의 지금(시험)
  * @returns {Readonly<ServerConfig>}
  */
-export function loadConfig(env = process.env, { cwd = process.cwd(), releaseFile = RELEASE_FILE } = {}) {
+export function loadConfig(env = process.env, { cwd = process.cwd(), releaseFile = RELEASE_FILE, now = new Date() } = {}) {
   /** @type {string[]} */
   const problems = [];
 
@@ -252,6 +281,22 @@ export function loadConfig(env = process.env, { cwd = process.cwd(), releaseFile
     problems.push(`SKINOTE_ADMIN_SOCKET은 절대 경로로 ${ADMIN_SOCKET_MAX_BYTES}바이트까지이거나 off입니다`);
   }
 
+  const openRaw = (read(env, 'SKINOTE_TEST_OPEN_ENROLL') ?? DEFAULTS.testOpenEnroll).toLowerCase();
+  if (openRaw !== 'on' && openRaw !== 'off') problems.push(`SKINOTE_TEST_OPEN_ENROLL은 on 또는 off입니다(${JSON.stringify(openRaw)})`);
+  const testOpenEnroll = openRaw === 'on' ? 'on' : 'off';
+  /** @type {string | null} */
+  let testOpenEnrollUntil = null;
+  if (testOpenEnroll === 'on') {
+    const untilRaw = read(env, 'SKINOTE_TEST_OPEN_ENROLL_UNTIL');
+    if (untilRaw === undefined || !isRealDate(untilRaw)) {
+      problems.push('SKINOTE_TEST_OPEN_ENROLL=on이면 SKINOTE_TEST_OPEN_ENROLL_UNTIL=YYYY-MM-DD(마지막 영업일)가 있어야 합니다(deploy.sh --set-env SKINOTE_TEST_OPEN_ENROLL=on이 적습니다)');
+    } else if (cutoffMinutes !== undefined && isValidTimeZone(timeZone) && untilRaw > addDays(businessDate(now, timeZone, cutoffMinutes), OPEN_ENROLL_DAYS.max)) {
+      problems.push(`SKINOTE_TEST_OPEN_ENROLL_UNTIL은 오늘(영업일)에서 ${OPEN_ENROLL_DAYS.max}일 안이어야 합니다(${untilRaw})`);
+    } else {
+      testOpenEnrollUntil = untilRaw;
+    }
+  }
+
   if (problems.length) throw new ConfigError(problems);
 
   const dbDir = join(dataDir, 'db');
@@ -274,6 +319,8 @@ export function loadConfig(env = process.env, { cwd = process.cwd(), releaseFile
     api: /** @type {'on' | 'off'} */ (api),
     publicOrigin,
     adminSocket,
+    testOpenEnroll: /** @type {'on' | 'off'} */ (testOpenEnroll),
+    testOpenEnrollUntil,
     secrets: null,
   });
 }

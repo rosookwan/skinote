@@ -140,3 +140,38 @@ test('API settings: SKINOTE_API on/off, the public origin (required off loopback
   assert.equal(problemsOf({ SKINOTE_ADMIN_SOCKET: 'relative.sock' }).length, 1);
   assert.equal(problemsOf({ SKINOTE_ADMIN_SOCKET: '/' + 'x'.repeat(120) }).length, 1, 'socket paths stay under 100 bytes');
 });
+
+test('SKINOTE_TEST_OPEN_ENROLL (test shops only): off by default, on/off in any case, on needs a last business day within 14 days', () => {
+  // 2026-09-26 12:00 서울 = 영업일 2026-09-26.
+  const now = new Date('2026-09-26T03:00:00Z');
+  const at = { ...noRelease, now };
+  const on = { SKINOTE_TEST_OPEN_ENROLL: 'on', SKINOTE_TEST_OPEN_ENROLL_UNTIL: '2026-10-03' };
+  assert.equal(loadConfig({}, at).testOpenEnroll, 'off');
+  assert.equal(loadConfig({}, at).testOpenEnrollUntil, null);
+  assert.deepEqual([loadConfig(on, at).testOpenEnroll, loadConfig(on, at).testOpenEnrollUntil], ['on', '2026-10-03']);
+  assert.equal(loadConfig({ ...on, SKINOTE_TEST_OPEN_ENROLL: ' ON ' }, at).testOpenEnroll, 'on');
+  assert.equal(loadConfig({ SKINOTE_TEST_OPEN_ENROLL: 'off' }, at).testOpenEnroll, 'off');
+  assert.equal(loadConfig({ SKINOTE_TEST_OPEN_ENROLL: '' }, at).testOpenEnroll, 'off', 'a blank counts as unset');
+  assert.equal(loadConfig({ SKINOTE_TEST_OPEN_ENROLL: 'off', SKINOTE_TEST_OPEN_ENROLL_UNTIL: 'soon' }, at).testOpenEnrollUntil, null, 'off ignores the date');
+  for (const bad of ['yes', '1', 'true', 'open']) {
+    assert.match(problemsOf({ SKINOTE_TEST_OPEN_ENROLL: bad })[0] ?? '', /SKINOTE_TEST_OPEN_ENROLL은 on 또는 off/, bad);
+  }
+  const problems = (/** @type {Record<string, string>} */ env) => {
+    try {
+      loadConfig(env, { cwd: temp.dir, ...at });
+    } catch (error) {
+      return /** @type {ConfigError} */ (error).problems;
+    }
+    return [];
+  };
+  assert.match(problems({ SKINOTE_TEST_OPEN_ENROLL: 'on' })[0] ?? '', /SKINOTE_TEST_OPEN_ENROLL_UNTIL=YYYY-MM-DD/, 'on without a date stops the start');
+  for (const bad of ['2026-02-30', '2026-9-30', 'next week']) {
+    assert.match(problems({ ...on, SKINOTE_TEST_OPEN_ENROLL_UNTIL: bad })[0] ?? '', /SKINOTE_TEST_OPEN_ENROLL_UNTIL=YYYY-MM-DD/, bad);
+  }
+  assert.equal(loadConfig({ ...on, SKINOTE_TEST_OPEN_ENROLL_UNTIL: '2026-10-10' }, at).testOpenEnrollUntil, '2026-10-10', 'today + 14 is the furthest');
+  assert.match(problems({ ...on, SKINOTE_TEST_OPEN_ENROLL_UNTIL: '2026-10-11' })[0] ?? '', /14일 안/);
+  assert.equal(loadConfig({ ...on, SKINOTE_TEST_OPEN_ENROLL_UNTIL: '2026-09-20' }, at).testOpenEnrollUntil, '2026-09-20', 'a past day starts (open enrollment is just off, with a warning)');
+  // 05:00 서울은 아직 전 영업일(09-25)이라 10-10은 15일 뒤.
+  const early = { cwd: temp.dir, ...noRelease, now: new Date('2026-09-25T20:00:00Z') };
+  assert.throws(() => loadConfig({ ...on, SKINOTE_TEST_OPEN_ENROLL_UNTIL: '2026-10-10' }, early), /14일 안/, 'the business day uses the 06:00 cutoff');
+});

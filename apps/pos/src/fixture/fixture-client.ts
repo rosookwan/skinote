@@ -168,6 +168,11 @@ export class FixtureClient implements DomainClient {
     return SAMPLE_STAFF.map((s) => s.name);
   }
 
+  /** 미리 보기 화면(기기 선택의 차량 타일): 체험 매장의 차량(id와 이름). */
+  previewVehicles(): { id: string; name: string }[] {
+    return this.state.registry.vehicles.map((v) => ({ id: v.id, name: v.label }));
+  }
+
   // ── DomainClient ──────────────────────────────────────────────────
 
   async config(): Promise<UiConfig> {

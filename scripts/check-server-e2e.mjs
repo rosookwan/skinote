@@ -17,7 +17,15 @@
 //   D(카운터 3): 관리자 비밀번호를 다섯 번 틀림 → `로그인 잠김 · … 이후 가능`, B는 그대로 로그인
 //   화면 키보드 875×600(A의 새 접수) 찍기 → 우리 주소의 ?demo는 서버 모드 그대로(기기 등록 화면) → 표시를 찍지 않는 둘째 앞단(체험판)의
 //   360×640 미리 보기 키보드 → A 로그아웃(로그인 화면, 머리 401) → 다시 로그인하면 장부(나가기 화면이 아님) → 명령줄로 C 기기 끊기(관리
-//   소켓) → C가 기기 등록 화면으로 → 서버 · 앞단을 멈추고 기록에 처리 오류 · 비밀번호 · 등록 번호가 없는지
+//   소켓) → C가 기기 등록 화면으로
+//   열린 기기 등록(시험 매장, SKINOTE_TEST_OPEN_ENROLL=on인 둘째 서버 · 앞단, 등록 번호 없음): 첫 서버의 등록 방법은 번호(code) →
+//   O(1024×600): 기기 선택(카운터(포스)가 먼저 · 주 버튼) → `카운터(포스)` → 로그인 타일 → 비밀번호 → 장부(`시험 기기 1`) →
+//   Q(360×640): 기기 선택(휴대폰 등급: 기사 휴대폰이 먼저 · 주 버튼, 카운터(포스)는 맨 뒤) → 잘못 고른 `카운터(포스)` → 로그인 줄의
+//   기기 모양 → `기기 선택`(등록을 끊고 돌아감) → `기사 휴대폰` → 차량 선택 `1호 차량` · `2호 차량` → `1호 차량` → 로그인 줄 `기사 휴대폰 ·
+//   1호 차량` → 기사 타일 → 비밀번호 → 수거 목록(휴대폰 등급, 1호 차량, `시험 기기 3`) → 서버 안의 상태에 TEST_OPEN_ENROLL 경고 · 열린
+//   기기 2대 → 명령줄로 Q 기기 끊기 → Q는 다시 기기 선택으로 → 설정을 끄고 다시 켠 서버: O는 끊겨 기기 등록(등록 번호)으로, 기기 선택에
+//   있던 Q는 숫자판과 한 줄 `기기 선택 종료 · 등록 번호 필요`로
+//   → 서버 · 앞단을 멈추고 기록에 처리 오류 · 비밀번호 · 등록 번호가 없는지, 열린 등록마다 경보 줄이 있는지
 //
 // 접수 걸음(새 접수 확정 · 지급 · 새로 고침 · 다른 기기의 장부)은 서버 저장소가 접수를 표에 적는다(계획 C3a ~ C3e). 서버가 그래도
 // `미지원 기능 · 처리 불가`로 거절하면 그 걸음들은 실패가 아니라 '막힘'으로 적고 끝 코드 3으로 끝난다(모든 걸음 통과 0, 실패 1).
@@ -31,6 +39,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { businessDate } from '../packages/server/src/clock.js';
+import { addDays } from '../packages/server/src/config.js';
 import { newSecretsEnv } from '../packages/server/src/secrets.js';
 import { startLocalProxy } from './lib/local-proxy.mjs';
 
@@ -39,6 +49,8 @@ const DIST = join(ROOT, 'apps/pos/dist');
 const SERVER_MAIN = join(ROOT, 'packages/server/src/main.js');
 const SHOP_CLI = join(ROOT, 'packages/server/bin/shop.js');
 const SHOP = 'e2e0shop';
+/** 열린 기기 등록을 켠 둘째 서버의 시험 매장. */
+const OPEN_SHOP = 'e2e1open';
 const STAFF = { manager: '정하늘', counter: '김카운터', driver: '박기사' };
 const TEAM = { name: '김민수', keys: ['ㄱ', 'ㅣ', 'ㅁ', 'ㅁ', 'ㅣ', 'ㄴ', 'ㅅ', 'ㅜ'], phone: '01000001234' };
 const UNSUPPORTED_LINE = '미지원 기능 · 처리 불가';
@@ -259,12 +271,34 @@ async function main() {
   let server = null;
   let proxy = null;
   let demoProxy = null;
+  let openServer = null;
+  let openProxy = null;
   let browser = null;
   let serverRuns = 0;
+  let openRuns = 0;
   const startServer = async () => {
     serverRuns += 1;
     const child = startChild([SERVER_MAIN], env, serverLog.replace(/\.log$/, '-' + serverRuns + '.log'));
     await waitHealthy(serverPort, child);
+    return child;
+  };
+  // 둘째 서버: 시험 매장 하나 + 열린 기기 등록(SKINOTE_TEST_OPEN_ENROLL=on). 자료 폴더 · 포트 · 관리 소켓 · 비밀값이 따로다.
+  const openServerPort = await freePort();
+  const openEnv = {
+    ...env,
+    ...newSecretsEnv(),
+    SKINOTE_DATA_DIR: join(tmp, 'open-data'),
+    SKINOTE_SHOP_IDS: OPEN_SHOP,
+    SKINOTE_PORT: String(openServerPort),
+    SKINOTE_ADMIN_SOCKET: join(tmp, 'o.sock'),
+    SKINOTE_TEST_OPEN_ENROLL: 'on',
+    // 켜면 마지막 영업일이 꼭 있다(deploy.sh --set-env …=on처럼 오늘 + 7일, 서울 · 06:00).
+    SKINOTE_TEST_OPEN_ENROLL_UNTIL: addDays(businessDate(new Date(), 'Asia/Seoul', 6 * 60), 7),
+  };
+  const startOpenServer = async () => {
+    openRuns += 1;
+    const child = startChild([SERVER_MAIN], openEnv, join(OUT, 'open-server-' + openRuns + '.log'));
+    await waitHealthy(openServerPort, child);
     return child;
   };
   try {
@@ -614,8 +648,125 @@ async function main() {
     await shot(e, 'e-revoked-360x640');
     check('E: 끊은 기사 휴대폰은 곧 기기 등록 화면으로(세션 끝)', phoneOut);
 
+    // ── 열린 기기 등록(시험 매장, SKINOTE_TEST_OPEN_ENROLL=on인 둘째 서버) ─────────────────────
+    const codeMode = await fetch(`http://127.0.0.1:${serverPort}/api/v2/device/enroll`).then((r) => r.json()).catch(() => null);
+    check('첫 서버(설정 없음)의 등록 방법은 등록 번호(code)', codeMode?.mode === 'code', JSON.stringify(codeMode));
+    openServer = await startOpenServer();
+    await stopChild(openServer);
+    openServer = null;
+    const openMade = await runCli(['provision', '--shop', OPEN_SHOP, '--code', 'e2e-open', '--name', '시험 매장 열린 등록', '--sample', '--test',
+      '--staff', STAFF.manager + ':manager', '--staff', STAFF.counter + ':counter', '--staff', STAFF.driver + ':driver:v1'], openEnv, cliLog);
+    const openPins = Object.fromEntries(openMade.out.trim().split('\n').slice(1).map((line) => line.split('\t')).map(([name, , pin]) => [name, pin]));
+    if (!check('열린 등록 서버: 시험 매장 provision(등록 번호는 만들지 않음)', openMade.code === 0 && Object.keys(openPins).length === 3, '끝 코드 ' + openMade.code)) {
+      throw new Error('열린 등록 서버의 매장을 만들지 못함');
+    }
+    secretsSeen.push(...Object.values(openPins));
+    openServer = await startOpenServer();
+    openProxy = await startLocalProxy({ port: await freePort(), serverPort: openServerPort, log: (line) => proxyLines.push(line) });
+
+    // O: 카운터(1024×600) — 기기 선택 → 카운터(포스) → 로그인 → 장부.
+    const ctxO = await newContext();
+    const o = await ctxO.newPage();
+    watch(o, 'O');
+    await o.goto(openProxy.url);
+    const chooser = await o.waitForSelector('.pos-choose', { timeout: STEP_MS }).then(() => true, () => false);
+    await shot(o, 'o-choose-1024x600');
+    check('O: 열린 등록 서버의 새 기기는 등록 번호 대신 `기기 선택`', chooser && (await o.locator('.pos-choose h1').textContent())?.trim() === '기기 선택' && !(await o.locator('.pos-enroll').count()));
+    const oKinds = (await o.locator('.pos-choose .pos-big-choice').allTextContents()).map((t) => t.trim());
+    const oPrimary = (await o.locator('.pos-choose .pos-big-choice[data-primary="true"]').allTextContents()).map((t) => t.trim());
+    check('O: 종류는 카운터 · 기사 휴대폰 · 기사 태블릿(카운터 폭은 카운터(포스)가 주 버튼)', oKinds.length === 3 && /^카운터/.test(oKinds[0]) && /^기사 휴대폰/.test(oKinds[1])
+      && /^기사 태블릿/.test(oKinds[2]) && oPrimary.length === 1 && /^카운터/.test(oPrimary[0]), oKinds.join(' | '));
+    await o.locator('.pos-choose .pos-big-choice', { hasText: '카운터' }).click();
+    await o.waitForSelector('.pos-login-tile', { timeout: STEP_MS });
+    const oTiles = await o.locator('.pos-login-tile').allTextContents();
+    check('O: 카운터 선택 → 로그인 화면(직원 타일 셋)', [STAFF.manager, STAFF.counter, STAFF.driver].every((n) => oTiles.some((t) => t.includes(n))), oTiles.join(', '));
+    await login(o, STAFF.counter, openPins[STAFF.counter]);
+    await o.waitForSelector('.sn-header', { timeout: STEP_MS });
+    await shot(o, 'o-ledger-1024x600');
+    check('O: 비밀번호 로그인 → 카운터의 첫 화면(오늘 장부)', /#\/ledger/.test(o.url()), o.url().replace(openProxy.url, '/'));
+    const oSession = await o.evaluate(() => fetch('api/v2/session', { cache: 'no-store' }).then((r) => r.json()));
+    check('O: 스스로 등록한 카운터 = 시험 기기 1(포스)', oSession?.device?.label === '시험 기기 1' && oSession?.device?.kind === 'pos', JSON.stringify(oSession?.device));
+
+    // Q: 기사 휴대폰(360×640) — 기기 선택 → (잘못 고른 카운터 → 기기 선택) → 기사 휴대폰 → 차량 선택 1호 차량 → 기사 로그인 → 수거 목록.
+    const ctxQ = await newContext({ width: 360, height: 640 });
+    const q = await ctxQ.newPage();
+    watch(q, 'Q');
+    await q.goto(openProxy.url);
+    await q.waitForSelector('.pos-choose', { timeout: STEP_MS });
+    const chooseClass = await q.evaluate(() => document.querySelector('.sn-root')?.getAttribute('data-device'));
+    const qKinds = (await q.locator('.pos-choose .pos-big-choice').allTextContents()).map((t) => t.trim());
+    const qPrimary = (await q.locator('.pos-choose .pos-big-choice[data-primary="true"]').allTextContents()).map((t) => t.trim());
+    await shot(q, 'q-choose-360x640');
+    check('Q: 휴대폰 폭의 기기 선택은 기사 휴대폰 등급(56px 누르는 곳) · 기사 휴대폰이 먼저이고 주 버튼, 카운터(포스)는 맨 뒤', chooseClass === 'driver_phone'
+      && /^기사 휴대폰/.test(qKinds[0] ?? '') && /^기사 태블릿/.test(qKinds[1] ?? '') && /^카운터/.test(qKinds[2] ?? '') && qPrimary.length === 1 && /^기사 휴대폰/.test(qPrimary[0] ?? ''),
+    String(chooseClass) + ' · ' + qKinds.join(' | '));
+    // 잘못 고름: 카운터(포스) → 로그인 줄에 기기 모양, 바닥줄의 `기기 선택`으로 이 기기의 등록을 끊고 기기 선택으로 돌아간다.
+    await q.locator('.pos-choose .pos-big-choice', { hasText: '카운터' }).click();
+    await q.waitForSelector('.pos-login-tile', { timeout: STEP_MS });
+    const wrongLine = (await q.locator('.pos-login .pos-card-line').first().textContent())?.trim() ?? '';
+    const releaseButton = q.locator('.pos-login-foot').getByRole('button', { name: '기기 선택', exact: true });
+    await shot(q, 'q-wrong-kind-360x640');
+    check('Q: 잘못 고른 카운터의 로그인 줄에 기기 모양(카운터(포스)) · 바닥줄에 기기 선택', / · 카운터\(포스\)$/.test(wrongLine) && (await releaseButton.count()) === 1, wrongLine);
+    await releaseButton.click();
+    const reChoose = await q.waitForSelector('.pos-choose', { timeout: STEP_MS }).then(() => true, () => false);
+    check('Q: 기기 선택 → 이 기기의 등록을 끊고 다시 기기 선택으로', reChoose);
+    await q.locator('.pos-choose .pos-big-choice', { hasText: '기사 휴대폰' }).click();
+    await q.waitForSelector('.pos-choose-tile', { timeout: STEP_MS });
+    const vans = (await q.locator('.pos-choose-tile').allTextContents()).map((t) => t.trim());
+    const vanTitle = (await q.locator('.pos-choose-vehicles h1').textContent())?.trim();
+    await shot(q, 'q-vehicle-360x640');
+    check('Q: 기사 휴대폰 → `차량 선택` 1호 차량 · 2호 차량(매장 차량)', vanTitle === '차량 선택' && vans.join(',') === '1호 차량,2호 차량', vanTitle + ' · ' + vans.join(','));
+    await q.locator('.pos-choose-tile', { hasText: '1호 차량' }).click();
+    await q.waitForSelector('.pos-login-tile', { timeout: STEP_MS });
+    const qTiles = (await q.locator('.pos-login-tile').allTextContents()).map((t) => t.trim());
+    const qLine = (await q.locator('.pos-login .pos-card-line').first().textContent())?.trim() ?? '';
+    check('Q: 기사 기기의 로그인 타일은 기사만 · 로그인 줄에 기사 휴대폰 · 1호 차량', qTiles.join(',') === STAFF.driver && / · 기사 휴대폰 · 1호 차량$/.test(qLine), qTiles.join(',') + ' · ' + qLine);
+    await login(q, STAFF.driver, openPins[STAFF.driver]);
+    await q.waitForFunction(() => /#\/driver\/\d{4}-\d{2}-\d{2}/.test(location.hash), null, { timeout: STEP_MS });
+    await q.waitForSelector('.sn-header', { timeout: STEP_MS });
+    await shot(q, 'q-driver-360x640');
+    const qClass = await q.evaluate(() => document.querySelector('.sn-root')?.getAttribute('data-device'));
+    const qSession = await q.evaluate(() => fetch('api/v2/session', { cache: 'no-store' }).then((r) => r.json()));
+    check('Q: 비밀번호 로그인 → 기사 휴대폰 등급의 수거 목록, 1호 차량 · 시험 기기 3(놓은 2는 다시 쓰지 않음)', qClass === 'driver_phone'
+      && qSession?.device?.kind === 'driver_phone' && qSession?.device?.vehicleId === 'v1' && qSession?.device?.label === '시험 기기 3', JSON.stringify(qSession?.device));
+    const ledgerQ = await pageQuery(q, { name: 'ledgerView', params: { viewKey: 'day_ledger' } });
+    check('Q: 스스로 등록한 기사 휴대폰도 장부 조회는 403', ledgerQ.status === 403, String(ledgerQ.status));
+
+    const openHealth = await fetch(`http://127.0.0.1:${openServerPort}/api/health`).then((r) => r.json()).catch(() => null);
+    check('열린 등록 서버 안의 상태: TEST_OPEN_ENROLL 경고 · 켜짐 · 열린 기기 2대', openHealth?.warnings?.includes('TEST_OPEN_ENROLL')
+      && openHealth?.testOpenEnroll?.active === true && openHealth?.testOpenEnroll?.devices === 2 && openHealth?.ok === true, JSON.stringify(openHealth?.testOpenEnroll));
+    const firstHealth = await fetch(`http://127.0.0.1:${serverPort}/api/health`).then((r) => r.json()).catch(() => null);
+    check('첫 서버 안의 상태에는 TEST_OPEN_ENROLL 경고가 없음', Array.isArray(firstHealth?.warnings) && !firstHealth.warnings.includes('TEST_OPEN_ENROLL'), JSON.stringify(firstHealth?.warnings));
+
+    // 기기 끊기는 그대로: 명령줄(관리 소켓)로 Q를 끊으면 세션이 끝나고 다시 기기 선택으로(열린 등록이 켜져 있으니 번호 화면이 아님).
+    const revokeOpen = await runCli(['revoke-device', '--shop', OPEN_SHOP, '--device', '시험 기기 3'], openEnv, cliLog);
+    check('명령줄 revoke-device: 스스로 등록한 기사 휴대폰(시험 기기 3)', revokeOpen.code === 0, revokeOpen.out.trim());
+    const backToChoose = await q.waitForSelector('.pos-choose', { timeout: 20_000 }).then(() => true, () => false);
+    await shot(q, 'q-revoked-360x640');
+    check('Q: 끊은 기기는 곧 기기 선택으로(세션 끝 · 열쇠 지움)', backToChoose);
+
+    // 설정을 끄고 다시 켜면 스스로 붙은 기기는 모두 끊긴다. O는 서버가 없는 동안 빈 주소로 두었다가(알림 연결의 오류 줄 없이) 다시 열면 기기
+    // 등록(등록 번호) 화면, 기기 선택에 있던 Q는 등록 방법을 다시 물어(화면이 다시 보임) 숫자판과 한 줄로.
+    await o.goto('about:blank');
+    await stopChild(openServer);
+    openServer = null;
+    openRuns += 1;
+    openServer = startChild([SERVER_MAIN], { ...openEnv, SKINOTE_TEST_OPEN_ENROLL: 'off' }, join(OUT, 'open-server-' + openRuns + '.log'));
+    await waitHealthy(openServerPort, openServer);
+    await o.goto(openProxy.url);
+    const oCut = await o.waitForSelector('.pos-enroll', { timeout: STEP_MS }).then(() => true, () => false);
+    await shot(o, 'o-cut-1024x600');
+    const offHealth = await fetch(`http://127.0.0.1:${openServerPort}/api/health`).then((r) => r.json()).catch(() => null);
+    check('설정을 끄고 다시 켠 서버: 스스로 붙은 O가 끊겨 기기 등록 화면으로, 상태 확인은 끊은 1대 · 경고 없음', oCut && offHealth?.testOpenEnroll?.flag === 'off'
+      && offHealth?.testOpenEnroll?.devices === 0 && offHealth?.testOpenEnroll?.cutAtStart === 1 && !offHealth?.warnings?.includes('TEST_OPEN_ENROLL'), JSON.stringify(offHealth?.testOpenEnroll));
+    await q.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    const qClosed = await q.waitForSelector('.pos-enroll .sn-keypad-note', { timeout: STEP_MS }).then(() => true, () => false);
+    const qClosedNote = qClosed ? (await q.locator('.pos-enroll .sn-keypad-note').textContent())?.trim() : '';
+    await shot(q, 'q-closed-360x640');
+    check('Q: 기기 선택에 있던 기기는 숫자판으로, 한 줄 `기기 선택 종료 · 등록 번호 필요`', qClosedNote === '기기 선택 종료 · 등록 번호 필요', String(qClosedNote));
+
     check('페이지 오류 없음', pageErrors.length === 0, pageErrors.slice(0, 5).join(' | '));
-    for (const ctx of [ctxA, ctxB, ctxC, ctxD, ctxE]) await ctx.close();
+    for (const ctx of [ctxA, ctxB, ctxC, ctxD, ctxE, ctxO, ctxQ]) await ctx.close();
   } catch (error) {
     check('끝까지 돌기', false, String(error?.stack ?? error).split('\n').slice(0, 4).join(' | '));
     // 실패한 때의 화면(열린 창마다).
@@ -625,12 +776,20 @@ async function main() {
     await browser?.close().catch(() => {});
     await proxy?.close().catch(() => {});
     await demoProxy?.close().catch(() => {});
+    await openProxy?.close().catch(() => {});
     await stopChild(server);
+    await stopChild(openServer);
     writeFileSync(join(OUT, 'proxy.log'), proxyLines.join('\n') + '\n');
     // 기록 확인: 처리 오류 · 처리하지 않은 예외 · 비밀번호 · 등록 번호.
+    const openLogs = [1, 2, 3].map((n) => join(OUT, 'open-server-' + n + '.log')).filter(existsSync).map((f) => readFileSync(f, 'utf8')).join('\n');
     const logs = [1, 2, 3].map((n) => join(OUT, 'server-' + n + '.log')).filter(existsSync).map((f) => readFileSync(f, 'utf8')).join('\n')
-      + '\n' + (existsSync(cliLog) ? readFileSync(cliLog, 'utf8') : '') + '\n' + proxyLines.join('\n');
+      + '\n' + openLogs + '\n' + (existsSync(cliLog) ? readFileSync(cliLog, 'utf8') : '') + '\n' + proxyLines.join('\n');
     const leaks = secretsSeen.filter((s) => s && logs.includes(s));
+    if (openRuns > 1) {
+      check('열린 등록 서버 기록: 시작의 주의 줄 · 등록마다 ALERT open_enroll 세 줄 · 끈 뒤 시작의 끊음 줄', /주의: 열린 기기 등록 켬/.test(openLogs)
+        && (openLogs.match(/ALERT open_enroll e2e1open/g) ?? []).length === 3 && (openRuns < 3 || /ALERT open_enroll_cut e2e1open · 열린 등록 꺼짐\(open_enroll_off\) · 시험 기기 1대 끊음/.test(openLogs)),
+        (openLogs.match(/ALERT open_enroll.*/g) ?? []).join(' | ').slice(0, 200));
+    }
     check('서버 · 명령줄 · 앞단 기록에 처리 오류 · 예외가 없음', !/처리 오류|Unhandled|uncaught/i.test(logs), (/.*(처리 오류|Unhandled|uncaught).*/i.exec(logs) ?? [''])[0].slice(0, 200));
     check('기록에 비밀번호 · 등록 번호가 없음', leaks.length === 0, leaks.length + '개');
     if (process.env.SKINOTE_E2E_KEEP === '1') console.log('임시 자료 폴더: ' + tmp);

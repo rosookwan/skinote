@@ -55,6 +55,10 @@ export type AttemptMethod = 'pin' | 'password' | 'enrollment' | 'pin_reset';
 export interface AttemptFilter {
   accountId?: string;
   deviceId?: string;
+  /** 이 기기들 가운데 하나(서버가 열린 등록 기기를 한 기기처럼 셀 때). 빈 목록이면 아무것도 맞지 않는다. */
+  deviceIds?: readonly string[];
+  /** 이 기기들이 아닌 것(기기 없는 시도 포함). */
+  notDeviceIds?: readonly string[];
   ipHash?: string;
   method?: AttemptMethod;
 }
@@ -87,11 +91,15 @@ export interface ControlStore {
   revokeDeviceSessions(tenantId: string, deviceId: string, reason: string, now: number): number;
   /** 한 기기의 열린 세션(스트림 닫기 · 시험). */
   openSessionsOfDevice(tenantId: string, deviceId: string, now: number): Session[];
+  /** 한 기기의 가장 새 세션이 적은 브라우저 모양(user_agent, 명령줄 status가 스스로 붙은 기기를 가릴 때). 없으면 undefined. */
+  lastUserAgent(tenantId: string, deviceId: string): string | undefined;
   recordAttempt(input: {
     loginId: string; accountId?: string; tenantId?: string; deviceId?: string; method: AttemptMethod; succeeded: boolean; reason?: string; ipHash?: string; now: number;
   }): void;
   /** since 뒤의 실패 수(같은 조건의 마지막 성공 뒤만 센다: 성공하면 셈이 다시 시작한다). */
   failuresSince(filter: AttemptFilter, since: number): number;
+  /** since 뒤의 실패 수(성공과 상관없이 모두: 서버 안의 상태 확인에 싣는 셈). */
+  failureCount(filter: AttemptFilter, since: number): number;
   insertRoute(input: { codeHash: string; tenantId: string; codeId: string; expiresAt: number; now: number }): void;
   /**
    * 매장의 epoch 기록(tenant_epochs): 매장 파일을 잃어도 control에 남아 되살릴 때 rev_floor(지금까지 본 가장 큰 rev + 1,000,000)를 셀 수
@@ -105,6 +113,26 @@ export interface ControlStore {
   route(codeHash: string): EnrollmentRoute | undefined;
   claimRoute(codeHash: string, now: number): void;
   useRoute(codeHash: string, now: number): void;
+}
+
+/** login_attempts의 조건(부르는 쪽이 'succeeded …'를 잇는다). */
+function attemptWhere(filter: AttemptFilter): { cond: string; params: InValue[] } {
+  const where: string[] = [];
+  const params: InValue[] = [];
+  for (const [col, value] of [['account_id', filter.accountId], ['device_id', filter.deviceId], ['ip_hash', filter.ipHash], ['method_key', filter.method]] as const) {
+    if (value === undefined) continue;
+    where.push(col + ' = ?');
+    params.push(value);
+  }
+  if (filter.deviceIds !== undefined) {
+    where.push(filter.deviceIds.length ? 'device_id IN (' + filter.deviceIds.map(() => '?').join(', ') + ')' : '0');
+    params.push(...filter.deviceIds);
+  }
+  if (filter.notDeviceIds !== undefined && filter.notDeviceIds.length) {
+    where.push('(device_id IS NULL OR device_id NOT IN (' + filter.notDeviceIds.map(() => '?').join(', ') + '))');
+    params.push(...filter.notDeviceIds);
+  }
+  return { cond: where.length ? where.join(' AND ') + ' AND ' : '', params };
 }
 
 const tenantOf = (r: Row): Tenant => ({
@@ -227,6 +255,10 @@ export function openControlStore(db: Db): ControlStore {
     openSessionsOfDevice(tenantId, deviceId, now) {
       return all(db, 'SELECT * FROM sessions WHERE tenant_id = ? AND device_id = ? AND revoked_at IS NULL AND expires_at > ? ORDER BY created_at', tenantId, deviceId, isoOf(now)).map(sessionOf);
     },
+    lastUserAgent(tenantId, deviceId) {
+      return text(one(db, 'SELECT user_agent FROM sessions WHERE tenant_id = ? AND device_id = ? AND user_agent IS NOT NULL ORDER BY created_at DESC LIMIT 1',
+        tenantId, deviceId)?.user_agent);
+    },
     recordAttempt(input) {
       insert(db, 'login_attempts', {
         login_id: input.loginId, account_id: input.accountId, tenant_id: input.tenantId, device_id: input.deviceId, method_key: input.method,
@@ -234,14 +266,7 @@ export function openControlStore(db: Db): ControlStore {
       });
     },
     failuresSince(filter, since) {
-      const where: string[] = [];
-      const params: InValue[] = [];
-      for (const [col, value] of [['account_id', filter.accountId], ['device_id', filter.deviceId], ['ip_hash', filter.ipHash], ['method_key', filter.method]] as const) {
-        if (value === undefined) continue;
-        where.push(col + ' = ?');
-        params.push(value);
-      }
-      const cond = where.length ? where.join(' AND ') + ' AND ' : '';
+      const { cond, params } = attemptWhere(filter);
       const lastOk = text(one(db, 'SELECT max(at) AS at FROM login_attempts WHERE ' + cond + 'succeeded = 1', ...params)?.at);
       // 새 비밀번호(pin_reset)는 그 계정의 셈을 다시 시작한다(계정이 걸린 셈만: 기기 쉼은 기기의 일이다).
       const lastReset = filter.accountId !== undefined
@@ -250,6 +275,10 @@ export function openControlStore(db: Db): ControlStore {
       const marks = [lastOk, lastReset].filter((x): x is string => x !== undefined).map(msOf);
       const from = Math.max(since, ...marks);
       return num(one(db, 'SELECT count(*) AS n FROM login_attempts WHERE ' + cond + 'succeeded = 0 AND at > ?', ...params, isoOf(from))?.n);
+    },
+    failureCount(filter, since) {
+      const { cond, params } = attemptWhere(filter);
+      return num(one(db, 'SELECT count(*) AS n FROM login_attempts WHERE ' + cond + 'succeeded = 0 AND at > ?', ...params, isoOf(since))?.n);
     },
     insertRoute(input) {
       insert(db, 'enrollment_routes', {
