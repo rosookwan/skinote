@@ -2,6 +2,8 @@
 // 수단 · 할인 · 결제 팀을 인자로 checkoutSheet를 다시 묻고, 서버(체험 자료)가 칸 글 · 결제 팀 줄 · 받을 금액 줄 · 주 버튼 · 명령을 쓴다.
 // 확정은 order.create 하나(접수 · 품목 줄 · 일정 · 칸마다 돈 한 건 · 보증금 입금 · 결제 팀). 시안의 순간은 16:25 이민호 팀(스키 4 ·
 // 의류 95 × 2 · 100 × 1 · 헬멧 중 1 · 야간권 성인 4매, 반납 오늘 22:00 매장 직접). 뒷이야기 16:26 ~ 16:35 새 접수 네 팀 · 21:55 반납.
+// 첫 매장(체험판 기본, 2026-09-26)은 권 보증금이 없어 칸이 둘(장비 · 리프트권)이고 받을 금액에 보증금이 없다. 보증금 칸(한 줄 · 현금)과
+// 보증금 입금은 그것을 켠 매장(shop 'numbered')으로 계속 본다.
 import {
   CHECKOUT_KEYS, createdOrder, draftToEnvelope, openCommandDraft, type CheckoutSheetParams, type CheckoutSheetView, type CommandOutcome,
   type OrderDraftInput, type RichText,
@@ -9,7 +11,7 @@ import {
 import { openOrRestoreDraft } from '@skinote/ui';
 import { describe, expect, it } from 'vitest';
 import { checkoutEnvelope, choicesOf, withDiscount, withMethod, withPayer, withSectionPayer } from '../src/components/CheckoutDialog.tsx';
-import { discountedAmounts, type FxOrder, type FxState, heldAmount, heldNumbers, kstAt, othersDue, ownDue } from '@skinote/domain';
+import { discountedAmounts, type FxOrder, type FxState, heldAmount, heldNumbers, kstAt, othersDue, ownDue, type SampleShop } from '@skinote/domain';
 import { applyCommand } from '../src/fixture/demo.ts';
 import { FixtureClient } from '../src/fixture/fixture-client.ts';
 import { STORY } from '../src/fixture/story.ts';
@@ -20,9 +22,9 @@ const pick = <T extends { label: string; secondLine?: string; selected: boolean;
   options.map((o) => o.label + (o.secondLine ? '/' + o.secondLine : '') + (o.selected ? '*' : '') + (o.enabled ? '' : '!'));
 
 /** 체험 시계를 15:40에서 minutes만큼. 16:25 = 45분(뒷이야기는 기본으로 끔). */
-function at(minutes: number, story = false) {
+function at(minutes: number, story = false, shop: SampleShop = 'first') {
   let real = 1_800_000_000_000;
-  const client = new FixtureClient({ realNow: () => real, story });
+  const client = new FixtureClient({ realNow: () => real, story, shop });
   client.advanceClock(minutes);
   const state = () => (client as unknown as { state: FxState }).state;
   return { client, state, pass: (m: number) => { real += m * 60_000; } };
@@ -54,9 +56,38 @@ async function confirm(client: FixtureClient, view: CheckoutSheetView, requestId
 
 const orderOf = (state: FxState, last4: string): FxOrder => state.orders.find((o) => o.last4 === last4)!;
 
-describe('V4 창의 읽기 모델(checkoutSheet) — 16:25 이민호 팀', () => {
-  it('처음 연 상태(#card): 칸 셋(장비 · 리프트권 두 줄, 보증금 한 줄), 칸의 기본 수단(장비 카드 · 리프트권 현금), 결제 팀 줄은 자리만', async () => {
+describe('V4 창의 읽기 모델(checkoutSheet) — 16:25 이민호 팀 · 첫 매장(보증금 없음)', () => {
+  it('처음 연 상태(#card): 칸 둘(장비 · 리프트권), 칸의 기본 수단(장비 카드 · 리프트권 현금), 받을 금액에 보증금 없음', async () => {
     const { client } = at(45);
+    const view = await client.query('checkoutSheet', { draft: MINHO });
+    expect(view.sections.map((s) => [s.key, s.label, s.items, s.amount])).toEqual([
+      ['gear', '장비', '스키 4 · 의류 3 · 헬멧 1', 225_000], ['lift', '리프트권', '야간권 성인 4매', 140_000],
+    ]);
+    expect(pick(view.sections[0]!.methods!)).toEqual(['카드*', '현금', '계좌이체', '후불', '기타']);
+    expect(pick(view.sections[1]!.methods!)).toEqual(['카드', '현금*', '계좌이체', '후불', '기타']);
+    expect(text(view.due)).toBe('받을 금액 카드 225,000원 · 현금 140,000원');
+    expect(view.primary).toEqual({
+      label: '접수 확정 · 카드 225,000원 · 현금 140,000원', alts: ['접수 확정 · 카드 225,000원 · 현금 140,000원', '접수 확정 · 365,000원', '접수 확정'], enabled: true,
+    });
+    expect(JSON.stringify(view)).not.toContain('보증금');
+  });
+
+  it('그린 상태: 장비 후불 → 결제 팀 이정호 · 0032, 받을 금액 현금 140,000원(리프트권만), 명령의 칸은 둘', async () => {
+    const { client } = at(45);
+    const view = await client.query('checkoutSheet', DRAWN);
+    expect([view.sections[0]!.payerNote, view.sections[0]!.amountMuted]).toEqual(['이정호 팀 결제 예정', true]);
+    expect(text(view.due)).toBe('받을 금액 현금 140,000원');
+    expect(view.primary.label).toBe('접수 확정 · 현금 140,000원');
+    expect(view.command).toMatchObject({ type: 'order.create', payload: { payerOrderId: 'o32', choices: [{ sectionKey: 'gear', methodKey: 'later' }, { sectionKey: 'lift', methodKey: 'cash' }] } });
+    const both = await client.query('checkoutSheet', { draft: MINHO, choices: [{ sectionKey: 'gear', methodKey: 'later' }, { sectionKey: 'lift', methodKey: 'later' }], payerOrderId: 'o32' });
+    expect(text(both.due)).toBe('받을 금액 없음');
+    expect(both.primary).toMatchObject({ label: '접수 확정', enabled: true });
+  });
+});
+
+describe('V4 창의 읽기 모델(checkoutSheet) — 16:25 이민호 팀 · 권 보증금을 켠 매장(numbered)', () => {
+  it('처음 연 상태(#card): 칸 셋(장비 · 리프트권 두 줄, 보증금 한 줄), 칸의 기본 수단(장비 카드 · 리프트권 현금), 결제 팀 줄은 자리만', async () => {
+    const { client } = at(45, false, 'numbered');
     const view = await client.query('checkoutSheet', { draft: MINHO });
     expect(view.title).toBe('결제 · 이민호 팀');
     expect(view.sections.map((s) => [s.key, s.label, s.items, s.discount ?? '', s.amount, s.amountMuted, s.methods ? 'two' : 'one'])).toEqual([
@@ -84,7 +115,7 @@ describe('V4 창의 읽기 모델(checkoutSheet) — 16:25 이민호 팀', () =>
   });
 
   it('그린 상태: 장비 후불 → 결제 팀 이정호 · 0032(파란 결제 예정 · 옅은 먹 금액), 받을 금액 현금 160,000원 = 리프트권 + 보증금', async () => {
-    const { client } = at(45);
+    const { client } = at(45, false, 'numbered');
     const view = await client.query('checkoutSheet', DRAWN);
     const gear = view.sections[0]!;
     expect([gear.payerNote, gear.amountMuted, gear.amount]).toEqual(['이정호 팀 결제 예정', true, 225_000]);
@@ -110,7 +141,7 @@ describe('V4 창의 읽기 모델(checkoutSheet) — 16:25 이민호 팀', () =>
   });
 
   it('두 칸 모두 후불이면 결제 팀 줄이 두 칸을 적고, 보증금만 받는다', async () => {
-    const { client } = at(45);
+    const { client } = at(45, false, 'numbered');
     const view = await client.query('checkoutSheet', { draft: MINHO, choices: [{ sectionKey: 'gear', methodKey: 'later' }, { sectionKey: 'lift', methodKey: 'later' }], payerOrderId: 'o32' });
     expect(view.payer.label).toBe('장비 · 리프트권 365,000원 · 결제 팀');
     expect(text(view.due)).toBe('받을 금액 현금 20,000원');
@@ -118,7 +149,7 @@ describe('V4 창의 읽기 모델(checkoutSheet) — 16:25 이민호 팀', () =>
   });
 
   it('할인 적용: 칸마다 하나(10% · 10원 단위), 제목 줄 `10% 할인 · 225,000원 → 202,500원`, 가격(quoteHash)이 바뀐다', async () => {
-    const { client } = at(45);
+    const { client } = at(45, false, 'numbered');
     const plain = await client.query('checkoutSheet', { draft: MINHO });
     expect(pick(plain.sections[0]!.discounts!)).toEqual(['할인 없음*', '10% 할인']);
     const view = await client.query('checkoutSheet', { draft: MINHO, choices: [{ sectionKey: 'gear', methodKey: 'card', discountKey: 'ten_percent' }] });
@@ -134,8 +165,8 @@ describe('V4 창의 읽기 모델(checkoutSheet) — 16:25 이민호 팀', () =>
     for (const n of discountedAmounts([33_330, 10_010, 5_000], 4_830)) expect(n % 10).toBe(0);
   });
 
-  it('기타: 빠른 수단이 아닌 수단(간편결제 · 상품권)과 `다른 팀 결제`(이 칸만의 결제 팀)', async () => {
-    const { client } = at(45);
+  it('기타: 빠른 수단이 아닌 수단(견본 매장: 간편결제 · 상품권, 시안 spec 2-3)과 `다른 팀 결제`(이 칸만의 결제 팀)', async () => {
+    const { client } = at(45, false, 'numbered');
     const easy = await client.query('checkoutSheet', { draft: MINHO, choices: [{ sectionKey: 'gear', methodKey: 'easy_pay' }] });
     expect(pick(easy.sections[0]!.methods!)).toEqual(['카드', '현금', '계좌이체', '후불', '기타/간편결제*']);
     expect(pick(easy.sections[0]!.others!)).toEqual(['간편결제*', '상품권', '다른 팀 결제']);
@@ -155,7 +186,7 @@ describe('V4 창의 읽기 모델(checkoutSheet) — 16:25 이민호 팀', () =>
     const view = await client.query('checkoutSheet', { draft: phone });
     expect(view.sections.map((s) => s.key)).toEqual(['gear', 'lift']);
     expect(pick(view.sections[1]!.methods!)).toEqual(['카드', '현금*', '계좌이체', '후불!', '기타']);
-    expect(pick(view.sections[1]!.others!)).toEqual(['간편결제', '상품권']);
+    expect(pick(view.sections[1]!.others!)).toEqual(['간편결제']);
     const later = await client.query('checkoutSheet', { draft: phone, choices: [{ sectionKey: 'gear', methodKey: 'later' }, { sectionKey: 'lift', methodKey: 'later' }] });
     expect(later.primary.enabled).toBe(false);
     const all = await client.query('checkoutSheet', { draft: { ...phone, items: [{ productKey: 'ski', quantity: 1 }] }, choices: [{ sectionKey: 'gear', methodKey: 'later' }] });
@@ -175,8 +206,29 @@ describe('V4 창의 읽기 모델(checkoutSheet) — 16:25 이민호 팀', () =>
 });
 
 describe('접수 확정(order.create)', () => {
-  it('시안대로 확정: 새 접수 261226-019(끝 4자리 0042), 규격마다 한 줄, 리프트권 현금 한 건 · 보증금 입금 20,000원 · 장비 이정호 팀 결제 예정', async () => {
+  it('첫 매장: 새 접수 261226-019, 규격마다 한 줄(수량으로 셈), 리프트권 현금 한 건 · 보증금 없음 · 장비 이정호 팀 결제 예정, 지급은 번호 없이 `지급 처리 · 8개 · 4매`', async () => {
     const { client, state } = at(46);
+    const outcome = await confirm(client, await client.query('checkoutSheet', DRAWN));
+    expect(createdOrder(outcome)).toEqual({ orderId: 'n19', receiptNo: '261226-019' });
+    const s = state();
+    const o = s.orders.find((x) => x.id === 'n19')!;
+    expect(o.lines.map((l) => [l.label, l.qty, l.amount, l.tracking])).toEqual([
+      ['스키', 4, 160_000, 'count'], ['의류 사이즈 95', 2, 40_000, 'count'], ['의류 사이즈 100', 1, 20_000, 'count'], ['헬멧 중 사이즈', 1, 5_000, 'count'], ['야간권 성인', 4, 140_000, 'count'],
+    ]);
+    expect(o.payments.map((p) => [p.section, p.methodKey, p.amount])).toEqual([['lift', 'cash', 140_000]]);
+    expect(s.deposits).toEqual([]);
+    const slip = await client.query('orderSlip', { orderId: 'n19' });
+    expect(slip.money).toMatchObject({ charged: 365_000, paid: 140_000, due: 225_000, promisedBy: { teamName: '이정호 팀', amount: 225_000 } });
+    expect(slip.money.depositHeld ?? 0).toBe(0);
+    const draft = await client.query('confirmDraft', { orderId: 'n19', actionKey: 'stamp.issue' });
+    expect(draft.then).toBeUndefined();
+    expect(draft.confirmLabel).toBe('지급 처리 · 8개 · 4매');
+    expect(applyCommand(s, draftToEnvelope(openCommandDraft(draft.command!, draft.basis)), ms(16, 27)).outcome).toBe('applied');
+    expect(s.orders.find((x) => x.id === 'n19')!.lines.every((l) => l.issued === l.qty && !l.assetIds)).toBe(true);
+  });
+
+  it('번호 · 보증금 매장: 시안대로 확정: 새 접수 261226-019(끝 4자리 0042), 규격마다 한 줄, 리프트권 현금 한 건 · 보증금 입금 20,000원 · 장비 이정호 팀 결제 예정', async () => {
+    const { client, state } = at(46, false, 'numbered');
     const view = await client.query('checkoutSheet', DRAWN);
     const outcome = await confirm(client, view);
     expect(createdOrder(outcome)).toEqual({ orderId: 'n19', receiptNo: '261226-019' });
@@ -251,8 +303,8 @@ describe('접수 확정(order.create)', () => {
     expect(s.nextReceiptSeq).toBe(19);
   });
 
-  it('지급: 같은 종류의 줄 둘(의류 95 · 100)도 번호가 겹치지 않고, 권 4매는 보증금을 다시 묻지 않는다', async () => {
-    const { client, state } = at(45);
+  it('번호 · 보증금 매장 지급: 같은 종류의 줄 둘(의류 95 · 100)도 번호가 겹치지 않고, 권 4매는 보증금을 다시 묻지 않는다', async () => {
+    const { client, state } = at(45, false, 'numbered');
     await confirm(client, await client.query('checkoutSheet', DRAWN));
     const draft = await client.query('confirmDraft', { orderId: 'n19', actionKey: 'stamp.issue' });
     expect(draft.then).toBeUndefined();
@@ -269,7 +321,7 @@ describe('접수 확정(order.create)', () => {
 
 describe('창의 고른 것 → 다시 물을 인자(CheckoutDialog 도우미)', () => {
   it('처음 누르면 창이 보인 선택에서 한 칸만 바꾸고, 할인 · 이 칸만의 팀 · 결제 팀 줄', async () => {
-    const { client } = at(45);
+    const { client } = at(45, false, 'numbered');
     const params: CheckoutSheetParams = { draft: MINHO };
     const view = await client.query('checkoutSheet', params);
     expect(choicesOf(params, view)).toEqual([{ sectionKey: 'gear', methodKey: 'card' }, { sectionKey: 'lift', methodKey: 'cash' }, { sectionKey: 'lift_ticket_card', methodKey: 'cash' }]);
@@ -296,7 +348,7 @@ describe('창의 고른 것 → 다시 물을 인자(CheckoutDialog 도우미)',
 });
 
 describe('뒷이야기 16:26 ~ 16:35 · 21:55(plan.md 4-2)', () => {
-  it('16:40: 새 접수 네 팀(0042 ~ 0045) 지급, 장비는 모두 이정호 팀 결제 예정 → 이정호 팀 받을 금액 485,000원(6팀)', async () => {
+  it('16:40: 새 접수 네 팀(0042 ~ 0045) 지급, 장비는 모두 이정호 팀 결제 예정 → 이정호 팀 받을 금액 485,000원(6팀), 첫 매장은 보증금 없음', async () => {
     const { client, state } = at(60, true);
     const s = state();
     expect(['0042', '0043', '0044', '0045'].map((last4) => { const o = orderOf(s, last4); return [o.receiptNo, o.teamName, o.payerOrderId, ownDue(o), o.lines.every((l) => l.issued === l.qty)]; })).toEqual([
@@ -308,12 +360,22 @@ describe('뒷이야기 16:26 ~ 16:35 · 21:55(plan.md 4-2)', () => {
     expect(ownDue(jungho) + othersDue(s, jungho)).toBe(485_000);
     const slip = await client.query('orderSlip', { orderId: 'o32' });
     expect(slip.money).toMatchObject({ collectTotal: 485_000 });
-    expect(heldAmount(s.deposits.find((d) => d.orderId === orderOf(s, '0042').id))).toBe(20_000);
+    expect(s.deposits).toEqual([]);
     expect(s.storyApplied).toEqual(expect.arrayContaining(['minho-order', 'minho-issue', 'jieun-order', 'jieun-issue', 'junseo-order', 'junseo-issue', 'hayun-order', 'hayun-issue']));
+    // 권 보증금을 켠 매장이면 이민호 팀 권 4매 보증금 20,000원을 맡는다.
+    const numbered = at(60, true, 'numbered').state();
+    expect(heldAmount(numbered.deposits.find((d) => d.orderId === orderOf(numbered, '0042').id))).toBe(20_000);
   });
 
-  it('22:00: 이민호 팀 매장 반납(권 4매 포함) + 보증금 20,000원 현금 반환(카운터 돈통)', () => {
+  it('22:00 첫 매장: 이민호 팀 매장 반납(권 4매 포함), 보증금 반환 없음', () => {
     const { state } = at(6 * 60 + 20, true);
+    const s = state();
+    expect(orderOf(s, '0042').lines.every((l) => l.returned === l.qty)).toBe(true);
+    expect(s.deposits).toEqual([]);
+  });
+
+  it('22:00 번호 · 보증금 매장: 이민호 팀 매장 반납(권 4매 포함) + 보증금 20,000원 현금 반환(카운터 돈통)', () => {
+    const { state } = at(6 * 60 + 20, true, 'numbered');
     const s = state();
     const o = orderOf(s, '0042');
     expect(o.lines.every((l) => l.returned === l.qty)).toBe(true);

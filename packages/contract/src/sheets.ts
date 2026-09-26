@@ -110,7 +110,10 @@ export interface ReturnPieceLine {
   lineId: string;
   /** '스키', '야간권 성인'. */
   label: string;
-  /** 둘째 줄: 일정별 수('설천 2 · 두솔동 1', '설천 2대') 또는 '대여 6개'. 'N개 중'은 쓰지 않는다. */
+  /**
+   * 둘째 줄(모든 매장): 일정이 둘 이상이면 일정별 수('설천 2 · 두솔동 1'), 하나면 번호 칸은 '설천 2대', 수량 칸은 차량 수거 장소만('설천',
+   * 매장 일정이면 빈 글). 규격이 있으면 앞에 규격 이름. 'N개 중'은 쓰지 않는다. 확인 창의 수량 칸(ConfirmDraftView.counts)은 규격 이름만.
+   */
   note: string;
   mode: 'unit' | 'count';
   /** 번호 버튼('17번'). picked = 남색 바탕. */
@@ -140,6 +143,11 @@ export interface ReturnSheetView {
   remainder: RichText;
   /** ④ 보증금 줄. 보증금을 맡지 않은 팀이면 없음(④ ⑤가 없는 창, 연 동안 그대로). */
   deposit?: RichText;
+  /**
+   * ④ 자리의 돈 한 줄(보증금 줄이 없는 창): 이 팀이 낼 미수가 있으면 검정 `미수 120,000원`(반납하러 온 손님에게 받을 돈을 놓치지 않게,
+   * 2026-09-26 검토). 늦음이 아니라 빨강이 아니다. 수납은 접수증의 수납 처리.
+   */
+  money?: RichText;
   /** ⑤ 반환 방법 버튼(`현금` · `미수 차감 · 120,000원 → 110,000원`). 이름표 `반환 방법`은 화면 문구. */
   refundMethods?: ChoiceOption[];
   primary: PrimaryLabel;

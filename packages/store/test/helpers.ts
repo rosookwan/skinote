@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { newRequestId, type AnyCommandEnvelope, type CommandOutcome, type CommandPayloads, type CommandType } from '@skinote/contract';
-import { kstAt } from '@skinote/domain';
+import { kstAt, type SampleShop } from '@skinote/domain';
 import { sampleSpec } from '@skinote/domain/sample';
 import { applyPending, openDatabase } from '@skinote/schema';
 import { all, num, one, openShopStore, str, type Actor, type Db, type ShopStore, type ShopStoreOptions } from '../src/index.ts';
@@ -41,12 +41,12 @@ export interface Provisioned {
   reopen(): ShopStore;
 }
 
-/** 견본 명세로 만든 매장(메모리 파일, 또는 file). */
-export function provisioned(file = ':memory:', extra: Partial<ShopStoreOptions> = {}): Provisioned {
+/** 견본 명세로 만든 매장(메모리 파일, 또는 file). shop: 첫 매장(기본, 수량 · 보증금 없음) · 번호 · 권 보증금을 켠 매장(numbered). */
+export function provisioned(file = ':memory:', extra: Partial<ShopStoreOptions> = {}, shop: SampleShop = 'first'): Provisioned {
   const db = migrated('shop', file);
   const options: ShopStoreOptions = { secrets: secrets(), ...extra };
   const store = openShopStore(db, SHOP, options);
-  const { epoch } = store.provision(sampleSpec(), T0, { isTest: true });
+  const { epoch } = store.provision(sampleSpec(shop), T0, { isTest: true });
   return { db, store, epoch, options, reopen: () => openShopStore(db, SHOP, options) };
 }
 

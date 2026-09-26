@@ -13,11 +13,11 @@ import { linesOf } from './lines.ts';
 import { notReceived, notReceivedText } from './closing.ts';
 import { backHeldRefund, depositDueAtIssue, depositDueForIssued, orderDepositHeld } from './deposits.ts';
 import { collectDepositStep, deliverDone, deliverTasks, figureWords, findDeliverTask, onVanToDeliver, spareTickets, type FxDeliverTask } from './driver.ts';
-import { payMethodOf, productOf } from './catalog.ts';
+import { lineNames, payMethodOf, productOf } from './catalog.ts';
 import { currentReturn, findTask, openReturns, orderTasks, taskOrder, type FxTask } from './promises.ts';
 import {
   anyIssued, backCount, bizDay, collectDone, collectLeft, coveredOrders, deliverTaskId, findOrder, isDeliverTaskId, isFinished, isVehiclePickup,
-  isVehicleReturn, lastReturnSlotAt, LATE_AFTER_VEHICLE, moneyLateAt, nextDue, NIGHT_PREP_BEFORE, nightPrepSlotAt, onVan, openPins, orderConditions,
+  isVehicleReturn, lastReturnSlotAt, lateAtOf, moneyLateAt, nextDue, nightNoticeBefore, nightPrepSlotAt, onVan, openPins, orderConditions,
   listTasks, orderIdOfTask, othersDue, ownDue, dueFor, paidTotal, pendingIssue, pendingReturn, pinTask, pinTaskId, placeLabel, placeShortLabel, promisedPayer, routeTasks,
   selfDue, slotKey,
   sortTasks, unitCount, vehicleLabel, visitOutcomeLabel, visitReasons, charged, type DueKind,
@@ -196,10 +196,15 @@ function sortOrders(ctx: ViewContext, orders: readonly FxOrder[]): FxOrder[] {
   return [...orders].sort((a, b) => key(a) - key(b) || a.receiptNo.localeCompare(b.receiptNo));
 }
 
-/** 야간 수거 준비 안내: 그날 차량 수거가 걸린 가장 늦은 반납 타임(야간 22:00)의 60분 전부터 그 시각까지, 가장 많은 장소. */
+/**
+ * 야간 수거 준비 안내: 그날 차량 수거가 걸린 가장 늦은 반납 타임(야간 22:00)의 알림 분(60분) 전부터 그 타임의 수거가 늦음이 되기 전까지,
+ * 아직 받지 않은 팀이 가장 많은 장소.
+ */
 function nightPrep(ctx: ViewContext, orders: readonly FxOrder[]): LedgerViewResult['nightPrep'] {
   const slotAt = nightPrepSlotAt(ctx.state, ctx.state.businessDate);
-  if (slotAt === undefined || ctx.now < slotAt - NIGHT_PREP_BEFORE || ctx.now > slotAt) return undefined;
+  // 준비 안내는 알림 분(night_collection_notice_minutes) 전부터, 그 타임의 차량 수거가 늦음이 되기 전까지(밤 수거가 이어지는 동안 줄이 남는다).
+  const until = slotAt === undefined ? undefined : lateAtOf(ctx.state.settings, { at: slotAt, mode: 'vehicle' });
+  if (slotAt === undefined || until === undefined || ctx.now < slotAt - nightNoticeBefore(ctx.state.settings) || ctx.now >= until) return undefined;
   const byPlace = new Map<string, number>();
   // 차량 일정마다(일정이 나뉜 팀은 장소마다 한 번).
   for (const task of orders.flatMap(orderTasks)) {
@@ -371,8 +376,9 @@ export function collectionList(ctx: ViewContext, params: ViewParams): LedgerView
     const cells: LedgerRow['cells'] = {};
     for (const column of v.columns) {
       if (column.renderer_key === 'stamp') cells[column.column_key] = { renderer: 'stamp', stamp: listStamp(ctx, o, column, counter, pending.has(taskId)) };
-      // 수거 목록의 품목은 차량이 받을 것(내준 반납 품목)만.
-      else if (column.renderer_key === 'items') cells[column.column_key] = { renderer: 'items', items: itemsOf(o.lines.filter((l) => l.returnable && l.issued > 0)) };
+      // 수거 목록의 품목은 차량이 받을 것만: 이 업무 몫에서 내준 것 중 매장에 직접 돌아온 것을 뺀 수(받은 것 + 아직 받을 것). 손님이 일부를
+      // 카운터에 가져왔으면 줄의 품목이 수거 창과 같은 것만 남는다(박준호 보드 · 헬멧 매장 반납 → `야간권 1매`).
+      else if (column.renderer_key === 'items') cells[column.column_key] = { renderer: 'items', items: itemCounts(o.lines.filter((l) => l.returnable), (l) => l.issued - l.returned) };
       else {
         const cell = cellFor(ctx, o, column);
         if (cell) cells[column.column_key] = cell;
@@ -386,8 +392,8 @@ export function collectionList(ctx: ViewContext, params: ViewParams): LedgerView
       id: taskId, orderId: t.order.id, taskId, groupKey: slotOf(t),
       subgroupLabel: placeLabel(ctx.state.registry, t.promise.placeId), subgroupShortLabel: placeShortLabel(ctx.state.registry, t.promise.placeId),
       rank: String(i).padStart(4, '0'), dueAt: iso(t.promise.at),
-      // 차량 수거는 약속 60분 뒤부터 늦음(빨강). 받은 업무는 늦지 않다.
-      ...(done ? {} : { lateAt: iso(t.promise.at + LATE_AFTER_VEHICLE) }),
+      // 차량 수거는 약속 뒤 차량 여유(60분, 야간 반납 타임 뒤는 매장 설정)부터 늦음(빨강). 받은 업무는 늦지 않다.
+      ...(done ? {} : { lateAt: iso(lateAtOf(ctx.state.settings, t.promise)) }),
       finished: false, cells,
       conditions: orderConditions(ctx.state, t.order),
       ...(disabledActions.length ? { disabledActions } : {}),
@@ -457,7 +463,7 @@ function vanStock(ctx: ViewContext, vehicleId: string, date: string) {
   const spare = today ? spareTickets(ctx.state, vehicleId) : [];
   const spareItems = spare.flatMap((x) => {
     const product = productOf(ctx.state.registry, x.productKey);
-    return x.ids.length ? [{ label: product?.shortLabel ?? product?.label ?? x.productKey, qty: x.ids.length, unit: product?.unit ?? '매' }] : [];
+    return x.quantity > 0 ? [{ label: product?.shortLabel ?? product?.label ?? x.productKey, qty: x.quantity, unit: product?.unit ?? '매' }] : [];
   });
   const spareTotal = spareItems.reduce((n, x) => n + x.qty, 0);
   const loaded = (l: FxLine) => onVanToDeliver(l);
@@ -532,7 +538,7 @@ export function deliveryList(ctx: ViewContext, params: ViewParams): LedgerViewRe
         if (cell) cells[column.column_key] = cell;
       }
     }
-    const late = deliverLateAt(o);
+    const late = deliverLateAt(ctx.state, o);
     return {
       id: t.id, orderId: o.id, taskId: t.id, groupKey: groupOf(t),
       subgroupLabel: placeLabel(ctx.state.registry, t.promise.placeId), subgroupShortLabel: placeShortLabel(ctx.state.registry, t.promise.placeId),
@@ -656,7 +662,7 @@ export function orderSlip(ctx: ViewContext, orderId: string, deviceClass: Device
   const returns = openReturns(o).length;
   const promiseLine = (kind: 'pickup' | 'return') => {
     const p = kind === 'pickup' ? o.pickup : currentReturn(o);
-    const lateAt = kind === 'pickup' ? deliverLateAt(o) : returnLateAt(o);
+    const lateAt = kind === 'pickup' ? deliverLateAt(ctx.state, o) : returnLateAt(ctx.state, o);
     return {
       kind,
       at: iso(p.at),
@@ -764,6 +770,16 @@ export function reviewList(ctx: ViewContext): ReviewItem[] {
       message: o.teamName + ' 팀 초과 수납 ' + won(over) + ' · 환불 또는 다른 팀 이동',
     });
   }
+  // 차량 예비권 기록 부족(sys_review_kinds ticket_unavailable 자리): 끊긴 기사 기기가 기록된 차량 재고보다 많이 건넨 권(driver.ts addTicket).
+  // 건넨 사실은 적었고 기록이 모자란 것이라 사람이 차량 재고를 센다. 문구는 wording.md 3-18(확인 대기).
+  for (const x of ctx.state.vanSpares ?? []) {
+    if (x.quantity >= 0) continue;
+    const product = ctx.state.registry.products[x.productKey];
+    out.push({
+      id: 'van_spare:' + x.vehicleId + ':' + x.productKey, kindKey: 'ticket_unavailable', severity: 'action', createdAt: iso(ctx.now),
+      message: vehicleLabel(ctx.state.registry, x.vehicleId) + ' ' + (product?.shortLabel ?? product?.label ?? x.productKey) + ' 재고 기록 부족 ' + -x.quantity + (product?.unit ?? '매') + ' · 차량 재고 확인',
+    });
+  }
   for (const o of ctx.state.orders) {
     const visit = o.visits?.at(-1);
     // 배달 실패는 건넬 때까지, 수거 실패는 받을 때까지 남는다.
@@ -779,7 +795,18 @@ export function reviewList(ctx: ViewContext): ReviewItem[] {
 // ── 확인 창 초안 ─────────────────────────────────────────────────────
 
 const unitWord = (l: FxLine) => l.unit ?? '개';
-const itemLine = (lines: readonly { l: FxLine; qty: number }[]) => lines.map(({ l, qty }) => l.label + ' ' + qty + (l.unit ?? '')).join(' · ');
+
+/**
+ * 창의 품목 한 조각: '스키 4', '야간권 성인 1매'. 규격이 있는 줄(새 접수에서 고른 상품 · 규격)은 상품 · 규격 이름 뒤에 세는 말까지
+ * ('의류 95 2벌', '헬멧 중 1개'): 규격 이름과 수가 붙어 `의류 사이즈 95 2`로 읽히지 않게.
+ */
+function itemText(reg: ShopRegistry, l: FxLine, qty: number): string {
+  const product = productOf(reg, l.productKey);
+  const variant = product ? reg.kinds.find((k) => k.key === product.kindKey)?.variants?.find((v) => v.key === l.variantKey) : undefined;
+  if (product && variant) return product.label + ' ' + variant.label + ' ' + qty + (l.countWord ?? l.unit ?? '개');
+  return l.label + ' ' + qty + (l.unit ?? '');
+}
+const itemLine = (reg: ShopRegistry, lines: readonly { l: FxLine; qty: number }[]) => lines.map(({ l, qty }) => itemText(reg, l, qty)).join(' · ');
 
 /** '6개', '6개 · 3매'(주 버튼의 수와 같은 셈). */
 function countWords(lines: readonly { l: FxLine; qty: number }[]): string {
@@ -809,11 +836,12 @@ function stockDraft(
   const picks = scope.map((l) => ({ l, qty: left(l) })).filter((x) => x.qty > 0);
   const title = actionLabel + ' · ' + o.teamName + ' 팀';
   if (picks.length === 0) return notice(ctx, title, emptyMessage);
+  const reg = ctx.state.registry;
   const base = { basis: head(ctx).basis, title, command: build(picks) };
   // 이어서 보낼 명령(지급 뒤의 보증금 입금)이 있으면 수량 −/+ 없이 잔여 수 그대로: 이어진 명령의 매수 · 금액이 창을 연 때 정해진다.
   const extra = more?.(picks) ?? null;
   if (extra) {
-    return { ...base, summary: [itemLine(picks), extra.summary], confirmLabel: actionLabel + ' · ' + countWords(picks) + ' · ' + extra.label, then: extra.then };
+    return { ...base, summary: [itemLine(reg, picks), extra.summary], confirmLabel: actionLabel + ' · ' + countWords(picks) + ' · ' + extra.label, then: extra.then };
   }
   const single = params.lineIds?.length === 1 && picks.length === 1 ? picks[0]! : null;
   if (single) {
@@ -824,7 +852,31 @@ function stockDraft(
       confirmLabel: actionLabel,
     };
   }
-  return { ...base, summary: [itemLine(picks)], confirmLabel: actionLabel + ' · ' + countWords(picks) };
+  // 수량으로 세는 줄 여럿(첫 매장, 2026-09-26): 줄마다 −/+ 칸. 처음에는 잔여 수 그대로(모두)이고 안 가져온 · 안 준 것만 낮춘다(반납 창 V1과
+  // 같은 모양, ui 3-1). 낮춘 것은 요약의 `잔여 · …` 줄(목록에 남음). 번호로 세는 줄이 섞이면 번호를 골라야 해서 칸 없이 모두.
+  if (picks.every((x) => (x.l.tracking ?? 'unit') === 'count')) {
+    const chosen = picks.map((x) => {
+      const want = params.picked?.find((p) => p.lineId === x.l.id)?.quantity;
+      return { ...x, max: x.qty, qty: want === undefined ? x.qty : Math.max(0, Math.min(x.qty, Math.floor(want))) };
+    });
+    const taken = chosen.filter((x) => x.qty > 0);
+    const rest = chosen.filter((x) => x.qty < x.max).map((x) => ({ l: x.l, qty: x.max - x.qty }));
+    const counts = chosen.map((x) => {
+      const names = lineNames(reg, x.l);
+      return {
+        lineId: x.l.id, label: names.name, note: names.variant ?? '', mode: 'count' as const,
+        quantity: { value: x.qty, min: 0, max: x.max, unit: x.l.countWord ?? unitWord(x.l) },
+        muted: x.qty === 0, wide: false, ...(names.variant ? { ariaLabel: names.name + ' ' + names.variant } : {}),
+      };
+    });
+    return {
+      basis: base.basis, title, counts,
+      summary: [...(taken.length ? [itemLine(reg, taken)] : []), ...(rest.length ? ['잔여 · ' + itemLine(reg, rest)] : [])],
+      confirmLabel: taken.length ? actionLabel + ' · ' + countWords(taken) : actionLabel,
+      ...(taken.length ? { command: build(taken) } : {}),
+    };
+  }
+  return { ...base, summary: [itemLine(reg, picks)], confirmLabel: actionLabel + ' · ' + countWords(picks) };
 }
 
 /**

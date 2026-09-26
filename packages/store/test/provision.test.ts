@@ -6,7 +6,7 @@ import { SAMPLE_STAFF, sampleDay, sampleRegistry, sampleRules, sampleSpec } from
 import { DRAWERS } from '@skinote/domain/sample';
 import type { ShopSpec } from '@skinote/domain';
 import {
-  all, COUNTER_EXCLUDED, DRIVER_PERMISSIONS, isStoreError, loadAssets, loadRegistry, loadShopState, num, one, openShopStore, provision, str, variantId,
+  all, COUNTER_EXCLUDED, defaultVariantId, DRIVER_PERMISSIONS, isStoreError, loadAssets, loadRegistry, loadShopState, num, one, openShopStore, provision, str, variantId,
 } from '../src/index.ts';
 import { countDiff, migrated, provisioned, rowCounts, secrets, SHOP, T0 } from './helpers.ts';
 
@@ -19,17 +19,43 @@ test('the sample shop round-trips: registry, rules and drawers read back exactly
   assert.deepEqual(all(db, 'PRAGMA foreign_key_check'), []);
 });
 
-test('the numbered stock reads back as the spec stock and holds every sample day asset (shop stock + van 1 spare night tickets)', () => {
+test('the first shop (count only, no deposit rule) stock: every product counted per variant (default variant when it has no axis), van 1 spare night tickets 6, no assets', () => {
   const { db } = provisioned();
-  const day = sampleDay({ date: '2026-12-26', epoch: 'x', ids: 'demo' });
   const spec = sampleSpec();
+  assert.deepEqual(loadAssets(db, SHOP), []);
+  assert.equal(num(one(db, 'SELECT count(*) AS n FROM ticket_units')?.n), 0);
+  // 규격 없는 상품(스키 · 보드 · 권)은 기본 규격, 규격 있는 상품은 규격마다. 모든 수량 상품에 기본 규격 행이 있다(규격 없이 적힌 줄의 이동).
+  const balance = (location: string, variant: string) => num(one(db, "SELECT quantity FROM stock_balances WHERE location_id = ? AND variant_id = ? AND condition_id = 'ok'", location, variant)?.quantity);
+  assert.equal(balance('shop', defaultVariantId('ski')), 120);
+  assert.equal(balance('shop', defaultVariantId('night_adult')), 60);
+  assert.equal(balance('shop', variantId('clothes', '100')), 24);
+  assert.equal(balance('vehicle:v1', defaultVariantId('night_adult')), 6);
+  assert.equal(num(one(db, 'SELECT count(*) AS n FROM item_variants WHERE id LIKE \'%:\'')?.n), Object.keys(spec.registry.products).length);
+  const countLines = Object.values(spec.stock.counts).reduce((n, byVariant) => n + Object.keys(byVariant).length, 0) + (spec.stock.vehicleCounts ?? []).length;
+  assert.equal(num(one(db, 'SELECT count(*) AS n FROM stock_movement_lines')?.n), countLines);
+  // 되읽은 상태: 번호 실물 없음, 수량 차량 예비권(보증금 규칙 없음).
+  const state = loadShopState(db, SHOP, T0 + 60_000);
+  assert.deepEqual(state.assets, []);
+  assert.deepEqual(state.vanSpares, [{ vehicleId: 'v1', productKey: 'night_adult', quantity: 6 }]);
+  assert.deepEqual(state.vanSpares, sampleDay({ date: '2026-12-26', epoch: 'x', ids: 'demo' }).vanSpares);
+  assert.equal(state.settings.liftDeposit, null);
+  assert.equal(num(one(db, 'SELECT count(*) AS n FROM deposit_rules')?.n), 0);
+  // 기사 수단(driver_allowed)은 현금 · 계좌이체.
+  assert.deepEqual(all(db, 'SELECT key FROM payment_methods WHERE driver_allowed = 1 ORDER BY sort').map((r) => str(r.key)), ['cash', 'transfer']);
+  assert.deepEqual(all(db, 'PRAGMA foreign_key_check'), []);
+});
+
+test('the numbered stock (numbered shop) reads back as the spec stock and holds every sample day asset (shop stock + van 1 spare night tickets)', () => {
+  const { db } = provisioned(':memory:', {}, 'numbered');
+  const day = sampleDay({ date: '2026-12-26', epoch: 'x', ids: 'demo', shop: 'numbered' });
+  const spec = sampleSpec('numbered');
   const assets = loadAssets(db, SHOP);
   const specCount = Object.values(spec.stock.numbers).reduce((n, [from, to]) => n + to - from + 1, 0) + spec.stock.vehicleSpares.reduce((n, s) => n + s.numbers.length, 0);
   assert.equal(assets.length, specCount);
   const byId = new Map(assets.map((a) => [a.id, a]));
   for (const a of day.assets) assert.deepEqual(byId.get(a.id), a, a.id);
   // 권은 ticket_units(발권처 · 시즌 유효 기간), 실물마다 기초 재고 이동 줄 하나, 마지막 이동 = 기초 재고
-  const tickets = assets.filter((a) => sampleRegistry().products[a.kind]?.unit !== undefined).length;
+  const tickets = assets.filter((a) => sampleRegistry('numbered').products[a.kind]?.unit !== undefined).length;
   assert.equal(num(one(db, 'SELECT count(*) AS n FROM ticket_units')?.n), tickets);
   // 번호 실물마다 한 줄 + 수량 품목(고글)의 규격마다 한 줄
   const countLines = Object.values(spec.stock.counts).reduce((n, byVariant) => n + Object.keys(byVariant).length, 0);
@@ -37,6 +63,9 @@ test('the numbered stock reads back as the spec stock and holds every sample day
   assert.equal(num(one(db, "SELECT count(*) AS n FROM assets WHERE last_movement_id LIKE 'opening:%'")?.n), assets.length);
   const van = all(db, "SELECT a.id FROM assets a WHERE a.location_id = 'vehicle:v1' ORDER BY a.rowid").map((r) => str(r.id));
   assert.deepEqual(van, day.assets.filter((a) => a.vehicleId === 'v1').map((a) => a.id));
+  // 견본 매장(시안 spec 2-3)의 돈 수단: 기사도 카드를 받고(driver_allowed 셋), `기타` 판에 간편결제 · 상품권.
+  assert.deepEqual(all(db, 'SELECT key FROM payment_methods WHERE driver_allowed = 1 ORDER BY sort').map((r) => str(r.key)), ['card', 'cash', 'transfer']);
+  assert.deepEqual(all(db, 'SELECT key FROM payment_methods WHERE quick = 0 AND is_system = 0 ORDER BY sort').map((r) => str(r.key)), ['easy_pay', 'voucher']);
 });
 
 test('the loaded ShopState head: provision epoch, rev 0, the business day, receipt 001 next, empty ledgers', () => {
@@ -89,12 +118,14 @@ test('specs the tables cannot hold are refused before anything is written', () =
     ['a counter with a van', (s) => { s.staff.push({ name: '김카운터', role: 'counter', vehicleKey: 'v1' }); }, 'BAD_SPEC'],
     ['a deposit rule both on and off', (s) => { s.settings.liftDepositOff = { ...s.settings.liftDeposit! }; }, 'BAD_SPEC'],
     ['a product of an unknown kind', (s) => { (s.registry.products as Record<string, unknown>).sled = { ...s.registry.products.ski, key: 'sled', kindKey: 'sled' }; }, 'BAD_SPEC'],
-    ['count stock of a numbered product', (s) => { s.stock.counts = { ski: { '어른': 1 } }; }, 'BAD_SPEC'],
+    ['count stock of a numbered product', (s) => { s.stock.counts = { ski: { '': 1 } }; }, 'BAD_SPEC'],
+    ['count stock of an unknown variant', (s) => { s.stock.counts = { goggles: { '대': 1 } }; }, 'BAD_SPEC'],
+    ['a van spare count of gear', (s) => { s.stock.vehicleCounts = [{ vehicleId: 'v1', productKey: 'goggles', quantity: 1 }]; }, 'BAD_SPEC'],
     ['cutoff differs between shop and rules', (s) => { s.shop.cutoff = '05:00'; }, 'BAD_SPEC'],
   ];
   for (const [name, change, code] of bad) {
     const db = migrated('shop');
-    const spec = sampleSpec();
+    const spec = sampleSpec('numbered');
     change(spec);
     assert.throws(() => provision(db, SHOP, spec, T0, { isTest: true }), (e: unknown) => isStoreError(e, code as never), name);
     assert.equal(num(one(db, 'SELECT count(*) AS n FROM shops')?.n), 0, name + ': rolled back');
@@ -103,7 +134,7 @@ test('specs the tables cannot hold are refused before anything is written', () =
 });
 
 test('a different shop round-trips too: renamed van, extra place, new price, deposit off with kept values, optional return, no default slot', () => {
-  const spec = sampleSpec();
+  const spec = sampleSpec('numbered');
   const reg = spec.registry as unknown as { vehicles: { id: string; label: string }[]; areas: { id: string; label: string; lodging: boolean; places: { id: string; label: string }[] }[] };
   reg.vehicles[0]!.label = '큰 차';
   reg.areas[1]!.places.push({ id: 'manseon_gate', label: '만선 정문' });

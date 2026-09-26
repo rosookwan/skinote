@@ -1,7 +1,7 @@
 # 서버 배포(상태 확인 · 마이그레이션 · 날마다 백업 · 장부 API · 매장 명령줄)
 
 작성 2026-09-25. 고침 2026-09-26: 서버 장부(API · 저장소)가 붙었다 — 릴리스에 저장소 · 도메인 · 계약 패키지와 서버 표시를 찍은 앱 뼈대, 비밀값 파일,
-앱 주소(`SKINOTE_PUBLIC_ORIGIN`), 앞단 표, 관리 소켓 자리(`/run/skinote`), 배포 전 끝까지 시험 기록, 매장 명령줄(`--shop-cli`, 9절). 스키노트 중앙 서버의 **첫 뼈대**를 여러 앱이 함께 쓰는 VPS 한 대에 올리는 방법이다. 설계는 [deployment.md](../docs/architecture/deployment.md)(ADR-19 클라우드 중심)이고, 이 문서는 그 가운데 지금 만든 부분만 다룬다. 서버 주소 · IP · 계정 정보는 저장소에 적지 않는다(공개 저장소). 주소는 배포할 때 환경 변수로 준다.
+앱 주소(`SKINOTE_PUBLIC_ORIGIN`), 앞단 표, 관리 소켓 자리(`/run/skinote`), 배포 전 끝까지 시험 기록, 매장 명령줄(`--shop-cli`, 9절), 시험 매장 새로 만들기(9-1). 스키노트 중앙 서버의 **첫 뼈대**를 여러 앱이 함께 쓰는 VPS 한 대에 올리는 방법이다. 설계는 [deployment.md](../docs/architecture/deployment.md)(ADR-19 클라우드 중심)이고, 이 문서는 그 가운데 지금 만든 부분만 다룬다. 서버 주소 · IP · 계정 정보는 저장소에 적지 않는다(공개 저장소). 주소는 배포할 때 환경 변수로 준다.
 
 > **이 서버에는 아직 실제 손님 자료를 넣지 않는다.** 백업이 같은 서버의 같은 디스크에만 있고 암호화 · 다른 구역 복제가 없다(7절). 시험 · 체험 자료만 둔다. 실제 매장이 쓰기 전에 deployment 6-1의 복제 · 암호화와 sync 10-2의 되살리기 순서를 먼저 만든다.
 
@@ -181,7 +181,7 @@ deploy/deploy.sh --status                        # 맥에서
 | 파일 | 무엇 |
 |---|---|
 | [deploy.sh](deploy.sh) | 배포 · 되돌리기 · 상태 · 사본 점검 · 매장 명령줄(`--shop-cli`) |
-| [shop-cli.sh](shop-cli.sh) | 서버 쪽 매장 명령줄 입구(릴리스와 함께 놓임, 표준 입력의 JSON → skinote 계정의 `bin/shop.js --stdin`, 혼자 쓰는 명령은 서버를 잠깐 멈춤) |
+| [shop-cli.sh](shop-cli.sh) | 서버 쪽 매장 명령줄 입구(릴리스와 함께 놓임, 표준 입력의 JSON → skinote 계정의 `bin/shop.js --stdin`, 혼자 쓰는 명령 `provision` · `load-sample` · `reset-test-shop`은 서버를 잠깐 멈춤) |
 | [shop-cli-request.mjs](shop-cli-request.mjs) | 맥 쪽: `bin/shop.js`와 같은 깃발을 요청 JSON 하나로(명세 파일은 객체로 넣음) |
 | [skinote-server.service](skinote-server.service) | 서버 유닛(막기 설정, 메모리 512 MB, 포트 3100만, 백업 폴더 읽기 전용, 늦춰 가며 다시 시작) |
 | [skinote-backup.service](skinote-backup.service) · [skinote-backup.timer](skinote-backup.timer) | 날마다 백업(네트워크 없음, 실패하면 알림) |
@@ -201,13 +201,34 @@ deploy/deploy.sh --shop-cli provision --shop <매장 id> --code <매장 코드> 
   --staff "<이름>:manager" --staff "<이름>:counter" --staff "<이름>:driver:<차량 id>"
 #   → 직원 · 역할 · 비밀번호 표(한 번). 매장 id는 /etc/skinote/skinote.env의 SKINOTE_SHOP_IDS(배포 기록에도 보임).
 deploy/deploy.sh --shop-cli load-sample --shop <매장 id> --date today       # 시험 매장에만: 견본 하루(날짜마다 한 번)
+deploy/deploy.sh --shop-cli reset-test-shop --shop <매장 id>                # 시험 매장에만: 사본을 받고 지금 견본으로 다시 만듦(아래 9-1)
 deploy/deploy.sh --shop-cli device-code --shop <매장 id> --kind pos --label "카운터 1"   # 등록 번호 1234-5678-9012(60분, 한 번)
-deploy/deploy.sh --shop-cli device-code --shop <매장 id> --kind driver_tablet --label "1호 차량 태블릿" --vehicle <차량 id>
+deploy/deploy.sh --shop-cli device-code --shop <매장 id> --kind driver_phone --label "1호 차량 기사 휴대폰" --vehicle <차량 id>   # 첫 매장 기사는 개인 휴대폰(태블릿이면 --kind driver_tablet)
 deploy/deploy.sh --shop-cli rotate-pin --shop <매장 id> --staff "<이름>"      # 새 비밀번호(한 번), 잠금 풀기
 deploy/deploy.sh --shop-cli revoke-device --shop <매장 id> --device "카운터 1" # 기기 끊기(세션 · 알림 연결이 끝남)
 deploy/deploy.sh --shop-cli status --shop <매장 id>                           # rev · 영업일 · 접수 수 · 기기 · 직원 수
 ```
 
-- 서버가 도는 동안 `device-code` · `rotate-pin` · `revoke-device` · `status`는 관리 소켓(`/run/skinote/admin.sock`, 서버 유닛의 `RuntimeDirectory`)으로 서버에 보낸다. `provision` · `load-sample`은 매장 파일을 혼자 써야 해서 입구가 서버를 멈췄다가 끝나면(실패해도) 다시 켠다.
-- 끝 코드: 0 성공, 64 쓰는 법, 65 자료(명세 · 인자), 69 지금 못 함(매장 파일 없음 · 쓰는 사람 잠금 …), 70 처리 오류, 75 배포 작업이 도는 중, 77 입구를 부를 수 없음(root 아님 · 명령줄 없음), 78 설정 오류.
-- 시험 매장(`--test`)에만 견본 하루를 부른다. 실제 매장 자료는 이 서버에 넣지 않는다(맨 위의 주의).
+- 서버가 도는 동안 `device-code` · `rotate-pin` · `revoke-device` · `status`는 관리 소켓(`/run/skinote/admin.sock`, 서버 유닛의 `RuntimeDirectory`)으로 서버에 보낸다. `provision` · `load-sample` · `reset-test-shop`은 매장 파일을 혼자 써야 해서 입구가 서버를 멈췄다가 끝나면(실패해도) 다시 켠다.
+- 끝 코드: 0 성공, 64 쓰는 법, 65 자료(명세 · 인자 · 시험 매장 아님), 69 지금 못 함(매장 파일 없음 · 쓰는 사람 잠금 · 디스크 여유 …), 70 처리 오류(파일 바꾸기 실패 포함: 옛 파일 그대로), 75 배포 작업이 도는 중, 77 입구를 부를 수 없음(root 아님 · 명령줄 없음), 78 설정 오류.
+- 시험 매장(`--test`)에만 견본 하루를 부른다. 실제 매장 자료는 이 서버에 넣지 않는다(맨 위의 주의). 견본 모양(첫 매장 · 번호 매장)은 그 매장의 목록에서 고르고, 목록과 맞지 않으면(옛 견본으로 만든 시험 매장 · 다른 명세) `견본 모양이 다릅니다 · reset-test-shop 먼저`로 거절한다(끝 코드 65).
+- **기사가 그만두면(개인 휴대폰, deployment 10-5):** 그날 `revoke-device --device "<그 휴대폰 이름>"`으로 끊는다. 서버의 그 기기 세션 · 알림 연결이 곧 끝나고 휴대폰은 기기 등록 화면으로 돌아가며 앱 저장소의 사본을 지운다. 새 기사는 `device-code`로 새로 등록한다.
+
+### 9-1. 시험 매장 새로 만들기(`reset-test-shop`)
+
+옛 견본(번호 실물 · 보증금 …)으로 만든 시험 매장을 **지금 견본**(또는 명세 파일)으로 다시 만든다. 장부는 지우지 않는다는 규칙의 예외이고 **시험 매장에만** 된다: control과 매장 파일이 모두 시험 매장(`provision --test`)이 아니면 아무것도 바꾸지 않고 끝 코드 65로 거절한다. 새 매장 id를 만들 필요가 없고, 직원 · 기기를 다시 등록하지 않아도 된다.
+
+```sh
+deploy/deploy.sh --shop-cli reset-test-shop --shop <매장 id>                     # 지금 견본으로(--sample과 같음)
+deploy/deploy.sh --shop-cli reset-test-shop --shop <매장 id> --spec <명세.json>  # 명세 파일로(파일은 맥에만, 요청 JSON에 실려 감)
+deploy/deploy.sh --shop-cli load-sample --shop <매장 id> --date today            # 그다음 견본 하루를 다시 넣는다
+```
+
+- **그대로 두는 것:** 매장 id · 코드 · 이름, 직원(같은 직원 id · 이름 · 역할 · 계정, 명세 파일의 `staff`는 쓰지 않는다)과 **비밀번호**(control에 그대로라 새로 찍지 않는다), 등록한 기기(같은 기기 id · 기기 번호 · 열쇠, 끊긴 기기는 끊긴 채)와 아직 쓰지 않은 등록 번호, **열린 로그인 세션**. 기기는 다시 등록하지 않고 로그인도 그대로 이어진다.
+- **새로 되는 것:** 품목 · 요금 · 결제 수단 · 운영 규칙 · 재고 · 돈통은 새 명세에서, 접수 · 돈 · 재고 이동 · 마감 같은 장부와 기기 로그인 기록은 비어서 시작한다(옛 것은 사본에만). epoch이 하나 오르고(`shop_instance` · control `tenant_epochs`), rev는 지금까지 쓴 가장 큰 rev + 1,000,000 위에서 이어진다(sync 10-2의 되살리기와 같은 규칙). 열려 있던 화면은 다음 머리 묻기 · 알림 연결에서 새 자료를 읽고, 옛 화면에서 누른 명령은 `자료 복구 · 재확인 필요`(EPOCH_CHANGED)로 적용되지 않는다.
+- **끊는 것:** 새 명세에 그 차량이 없는 기사 기기는 옮기지 않고 그 세션을 끝낸다(`device-code`로 다시 등록). 그 차량의 기사는 새 명세의 첫 차량으로 옮긴다. 둘 다 표준 오류에 한 줄씩 적힌다.
+- **순서:** 새 명세를 메모리에서 먼저 만들어 보고(틀린 명세는 파일을 건드리지 않음, 끝 코드 65) → 디스크 여유(옛 파일 × 2 + `SKINOTE_BACKUP_RESERVE_MB`, 모자라면 69) → **옛 파일의 사본** `/var/lib/skinote/backups/resets/<매장 id>.before_reset.v<판>.<UTC 시각>.sqlite`(VACUUM INTO · quick_check, 같은 폴더의 `SHA256SUMS`에 한 줄) → 새 파일을 `db/shops/.reset-<매장 id>-<시각>.sqlite`에 만들고(마이그레이션 0001 + 0002 …, 매장 만들기 + 이어 가기가 한 트랜잭션) → 옛 연결을 닫고 이름 한 번 바꾸기(rename)로 제자리에 놓는다(제자리에는 늘 온전한 파일 하나) → 새 파일의 적용 뒤 백업(`backups/migrations`) → control에 새 epoch, 끊은 기기의 세션 끝.
+- **표준 출력:** `시험 매장 새로 만듦` · `직원`(수) · `기기`(그대로 · 끊음) · `세션`(그대로 · 끝냄) · `epoch`(번호, 새 rev의 시작) · `백업`(사본 경로) · `sha256`. 이름 · 비밀번호는 찍지 않는다.
+- 두 번 해도 된다: 할 때마다 사본이 하나 더 생기고 epoch이 하나 오른다. 도중에 멈추면(죽임 · 디스크) 제자리의 파일은 옛 것이거나 새 것 하나다. 다시 하면 남은 임시 파일을 치우고 처음부터 한다. 새 파일로 바뀐 뒤 control 기록 전에 멈췄으면 다시 한 번 하면 맞는다.
+- **옛 자료로 되돌리기:** 5절의 '매장 파일 하나 되살리기'와 같은 순서에서 백업 대신 `backups/resets`의 사본을 쓴다(`cd /var/lib/skinote/backups/resets && sudo -u skinote sha256sum -c SHA256SUMS`로 먼저 확인). 직원 · 기기 id가 같아 로그인은 그대로 이어진다. control `tenant_epochs`에는 새로 만들 때의 epoch 줄이 남는다(시험 매장이라 그대로 둔다).
+- `backups/resets`의 사본은 날마다 백업이 지우지 않는다. 쓸모가 끝난 사본은 사람이 지운다(운영 자료라 저장소 · AI 도구 · 해외 서비스에 올리지 않는다).

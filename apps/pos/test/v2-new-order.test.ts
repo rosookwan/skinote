@@ -7,7 +7,7 @@ import {
   EMPTY_NEW_ORDER, clearNewOrder, draftParams, loadNewOrder, qtyOf, saveNewOrder, withDeliver, withName, withOpenKind, withOpenVariant, withParty,
   withPhone, withPickupNow, withQuantity, withReserve, withReturnDay, withReturnPlace, withReturnSlot, type NewOrderState,
 } from '../src/app/new-order-draft.ts';
-import { type FxState, kstAt, resolveSchedule } from '@skinote/domain';
+import { type FxState, kstAt, resolveSchedule, type SampleShop } from '@skinote/domain';
 import { MAX_QTY } from '@skinote/domain/sample';
 import { createSeed } from '../src/fixture/demo.ts';
 import { FixtureClient } from '../src/fixture/fixture-client.ts';
@@ -16,8 +16,8 @@ import { footerAlts, rowPages, tilesPerPage } from '../src/screens/NewOrderScree
 const ms = (h: number, m: number, day = 0) => kstAt('2026-12-26', day, h, m);
 
 /** 체험 시계를 15:40에서 minutes만큼(뒷이야기 끔: 새 접수는 다른 팀과 관계없다). 16:25 = 45분. */
-function at(minutes: number) {
-  const client = new FixtureClient({ realNow: () => 1_800_000_000_000 });
+function at(minutes: number, shop: SampleShop = 'first') {
+  const client = new FixtureClient({ realNow: () => 1_800_000_000_000, shop });
   client.advanceClock(minutes);
   const state = () => (client as unknown as { state: FxState }).state;
   return { client, state };
@@ -65,7 +65,7 @@ describe('V2 ① 품목의 읽기 모델(orderDraft)', () => {
     expect(view.currentBusinessDate).toBe('2026-12-26');
   });
 
-  it('시안 V2(16:25 이민호 팀): 타일 수 · 연 의류 · 규격 버튼 · 사이즈 100 수량 · 선택 품목 넷 · 합계(보증금 별도) · 바닥줄', async () => {
+  it('시안 V2(16:25 이민호 팀): 타일 수 · 연 의류 · 규격 버튼 · 사이즈 100 수량 · 선택 품목 넷 · 합계(첫 매장: 보증금 없음) · 바닥줄', async () => {
     const { client } = at1625();
     const view = await ask(client, draftParams(drawnState()));
     expect(view.tiles.map((t) => [t.label, t.secondLine, t.count ?? 0, t.open])).toEqual([
@@ -81,20 +81,29 @@ describe('V2 ① 품목의 읽기 모델(orderDraft)', () => {
       ['스키 4대', '부츠 · 폴 포함', 160_000],
       ['의류 3벌', '95 2벌 · 100 1벌', 60_000],
       ['헬멧 1개', '중 사이즈', 5_000],
-      ['야간권 성인 4매', '보증금 · 매장 기준 1매 5,000원', 140_000],
+      ['야간권 성인 4매', '1매 35,000원', 140_000],
     ]);
     expect(view.selected.map((r) => r.open)).toEqual([
       { kindKey: 'ski' }, { kindKey: 'clothes', variantKey: '95' }, { kindKey: 'helmet', variantKey: '중' }, { kindKey: 'lift', variantKey: 'night_adult' },
     ]);
+    // 첫 매장은 권 보증금이 없어 합계 아래 `보증금 · 별도` 줄이 없다(2026-09-26).
     expect(view.totals).toEqual([
       { label: '장비', amount: 225_000 }, { label: '리프트권', amount: 140_000 }, { label: '합계', amount: 365_000, strong: true },
-      { label: '보증금 · 별도', amount: 20_000, muted: true },
     ]);
     expect(view.leader.phone).toBe('010-0000-0042');
     expect(view.leader.party.value).toBe(4);
     expect(view.footer).toBe('새 접수 · 이민호 팀 · 4명');
     expect(view.ready).toEqual({ items: true, schedule: true });
-    expect(view.quoteHash).toBe('quote:skix4=160000,clothes/95x2=40000,clothes/100x1=20000,helmet/중x1=5000,night_adultx4=140000:n1:d20000');
+    expect(view.quoteHash).toBe('quote:skix4=160000,clothes/95x2=40000,clothes/100x1=20000,helmet/중x1=5000,night_adultx4=140000:n1:d0');
+  });
+
+  it('권 보증금을 켠 매장(numbered): 권 줄 둘째 줄 `보증금 · 매장 기준 1매 5,000원`, 합계 아래 `보증금 · 별도 20,000원`, 접수 내용 `보증금 20,000원 별도`', async () => {
+    const { client } = at(45, 'numbered');
+    const view = await ask(client, draftParams(drawnState()));
+    expect(view.selected.at(-1)).toMatchObject({ title: '야간권 성인 4매', note: '보증금 · 매장 기준 1매 5,000원', amount: 140_000 });
+    expect(view.totals.at(-1)).toEqual({ label: '보증금 · 별도', amount: 20_000, muted: true });
+    expect(view.quoteHash).toMatch(/:d20000$/);
+    expect(view.summary.at(-1)).toMatchObject({ title: '리프트권 140,000원', note: '야간권 4매 · 보증금 20,000원 별도' });
   });
 
   it('고르는 줄: 규격을 고르기 전은 한 줄 안내, 스키는 규격 없이 수량, 부츠는 17칸 + 규격 더 보기, 고글은 규격, 리프트권은 권종', async () => {
@@ -154,7 +163,7 @@ describe('V3 ② 일정의 읽기 모델', () => {
       ['수령 · 즉시 16:25', '매장 직접'],
       ['반납 · 오늘 22:00', '매장 직접 반납'],
       ['장비 225,000원', '스키 4 · 의류 3 · 헬멧 1'],
-      ['리프트권 140,000원', '야간권 4매 · 보증금 20,000원 별도'],
+      ['리프트권 140,000원', '야간권 4매'],
     ]);
     expect(view.summary[2]?.items).toEqual(['스키 4', '의류 3', '헬멧 1']);
     expect(view.summary.every((r) => r.open === undefined)).toBe(true);

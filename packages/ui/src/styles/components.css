@@ -342,12 +342,14 @@
 .sn-dialog-body { display: flex; flex-direction: column; gap: var(--sn-space-s); flex: 1 1 auto; padding: var(--sn-space-m) var(--sn-confirm-pad); font-size: var(--sn-font-body); font-weight: 700; }
 .sn-dialog-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--sn-space-m); flex: none; height: var(--sn-confirm-primary-h); padding: 0 var(--sn-confirm-pad); }
 .sn-qty { display: flex; align-items: center; gap: var(--sn-space-m); }
+/* −/+ 버튼: 글자(−/+)는 제목 글자 + 8(포스 32 · 기사 30)로 굵게(나이 많은 직원이 한눈에, 2026-09-26 검토). 누를 수 없으면 점선 테두리 ·
+   옅은 바탕 · 옅은 글자로 모양까지 다르다(색만 옅은 것이 아니게). */
 .sn-qty-button {
   display: inline-grid; place-items: center; width: var(--sn-target); height: var(--sn-target);
   border: var(--sn-line-strong) solid var(--sn-ink); border-radius: var(--sn-radius-m);
-  background: var(--sn-paper); color: var(--sn-ink); font-size: var(--sn-font-big); font-weight: 900;
+  background: var(--sn-paper); color: var(--sn-ink); font-size: var(--sn-font-qty); font-weight: 900; line-height: 1;
 }
-.sn-qty-button:disabled { border-color: var(--sn-rule); color: var(--sn-rule); }
+.sn-qty-button:disabled { border-style: dashed; border-color: var(--sn-rule); background: var(--sn-paper-shade); color: var(--sn-rule); }
 .sn-qty-value { min-width: calc(var(--sn-target) * 1.5); text-align: center; font-size: var(--sn-font-title); font-weight: 900; font-variant-numeric: tabular-nums; }
 
 /* 남은 일 목록 */

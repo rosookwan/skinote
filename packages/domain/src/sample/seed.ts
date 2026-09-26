@@ -3,16 +3,19 @@
 // 이름은 시안의 이름을 쓰고, 전화번호는 모두 가짜(010-0000-xxxx)다. 실제 손님 자료는 없다.
 // 들어 있는 경우: 전화 예약 · 리프트권 선입금(박준호), 차량 배달(최하은), 매장 수령(박준호 · 이정호), 조기 반납(오승민),
 // 다른 팀이 결제(이서연 → 이정호), 늦은 미수(김영희), 숙소 수거(솔마을 한솔동 · 꽃마을 들국화), 반납 끝(최은정).
-// 둘째 판(docs/design/screens-v2/spec.md 2-3 · 2-4): 이 매장의 운영 규칙(리프트권 반납 필수 · 보증금 1매 5,000원 현금 · 영업일 기준
-// 06:00 · 시재 100,000원), 번호 스티커 · 권 번호(박준호 팀의 준비 번호는 시안 V1의 번호), 돈통 · 차량 지갑, 1호 차량 예비권 야간권 6매.
+// 첫 매장의 운영 규칙(2026-09-26 사장님 답): 리프트권 반납 필수 · 권 보증금 없음(리조트가 권 값 안의 1,000원을 가게에 돌려주는 것이라
+// 손님에게 받거나 돌려주지 않고, 안 돌아온 권은 가게가 손실로 둠) · 영업일 기준 06:00 · 시재 100,000원 · 당일 취소 환불(거절은 직원이
+// 취소할 때 고름) · 야간 반납 22:00(야간 수거 준비 안내 21:00부터). 번호가 없어 모든 줄을 수량으로 세고, 1호 차량 예비권은 야간권 6매(수량).
+// 번호 매장 모양(shop 'numbered'): 번호 스티커 · 권 번호(박준호 팀의 준비 번호는 시안 V1의 번호), 1호 차량 예비권 51 ~ 56번, 권 보증금
+// 1매 5,000원(보증금 규칙의 시작 값). 번호 · 보증금 규칙이 켜면 계속 도는지 보는 시험이 쓴다.
 // 15:40 뒤의 이야기(새 팀 0042 ~ 0045 · 일괄 수납 · 부분 반납 · 마감)는 체험판의 story.ts 사건이 시계를 앞으로 돌릴 때 적는다.
 // id는 체험판 id('o21' …, ids 'demo')다. 날짜가 든 id(가져오기, ids 'import')는 B2b에서 더한다(plan §3-3 4).
-import type { FxAsset, FxDrawer, FxLine, FxOrder, FxPayment, FxPin, FxPromise, FxSection, FxShopRules, ShopState } from '../model.ts';
+import type { FxAsset, FxDrawer, FxLine, FxOrder, FxPayment, FxPin, FxPromise, FxSection, FxShopRules, FxVanSpare, ShopState } from '../model.ts';
 import { assetId } from '../assets.ts';
 import { liftReturnable, type FxProduct } from '../catalog.ts';
 import { START_LIFT_DEPOSIT } from '../shop-rules.ts';
 import { kstAt } from '../time.ts';
-import { PRODUCTS, sampleRegistry } from './registry.ts';
+import { sampleRegistry, type SampleShop } from './registry.ts';
 
 /** 견본 하루에 쓴 상품(품목 목록은 registry.ts). 리프트권 줄의 returnable은 목록 값이 아니라 운영 규칙에서 줄을 만들 때 복사한다(line()). */
 type Kind = 'ski' | 'board' | 'helmet' | 'clothes' | 'night_adult';
@@ -20,32 +23,56 @@ type Kind = 'ski' | 'board' | 'helmet' | 'clothes' | 'night_adult';
 /** 그 날의 한국 시각(날 차이 · 시 · 분). */
 type At = (hour: number, minute: number, dayOffset?: number) => number;
 
-/** 품목 줄. done: 지급(issued) · 반납(returned)까지 된 시각. 리프트권 줄의 반납 여부는 이 매장의 운영 규칙에서. */
-function line(orderId: string, n: number, kind: Kind, qty: number, done: { issuedAt?: number; returnedAt?: number } = {}): FxLine {
-  const product: FxProduct = PRODUCTS[kind]!;
-  const item: FxProduct = product.section === 'lift' ? { ...product, returnable: liftReturnable(SHOP_RULES) } : product;
-  return {
-    id: orderId + '-l' + n,
-    kind,
-    label: item.label,
-    shortLabel: item.shortLabel ?? item.label,
-    qty,
-    ...(item.unit ? { unit: item.unit } : {}),
-    countWord: item.countWord,
-    amount: item.price * qty,
-    section: item.section,
-    returnable: item.returnable,
-    capabilities: [...item.capabilities],
-    tracking: item.tracking,
-    loaded: 0,
-    issued: done.issuedAt !== undefined ? qty : 0,
-    ...(done.issuedAt !== undefined ? { issuedAt: done.issuedAt } : {}),
-    returned: done.returnedAt !== undefined && item.returnable ? qty : 0,
-    ...(done.returnedAt !== undefined && item.returnable ? { returnedAt: done.returnedAt } : {}),
-    collected: 0,
-    received: 0,
+/** 품목 줄을 만드는 셈(그 모양의 상품 목록 · 운영 규칙). */
+type LineMaker = (orderId: string, n: number, kind: Kind, qty: number, done?: { issuedAt?: number; returnedAt?: number }) => FxLine;
+
+/**
+ * 수량으로 세는 규격 품목(의류 · 헬멧)의 견본 줄 규격: 규격마다 수량 재고가 따로라(catalog 3) 줄마다 규격이 있어야 이동 · 재고가 맞는다.
+ * 한 규격에 몰리지 않게 이 차례로 돌려 준다(견본 하루를 여러 날짜로 넣어도 한 규격만 바닥나지 않게).
+ */
+const SAMPLE_SIZES: Readonly<Partial<Record<Kind, readonly string[]>>> = { helmet: ['중', '대', '소'], clothes: ['100', '95', '105'] };
+
+/**
+ * 품목 줄. done: 지급(issued) · 반납(returned)까지 된 시각. 재고 방식(수량 · 번호)은 그 모양의 상품에서, 리프트권 줄의 반납 여부는 운영
+ * 규칙에서 복사한다. 수량으로 세는 규격 품목은 규격(variantKey)을 SAMPLE_SIZES 차례로 붙인다(번호로 세는 줄은 번호가 실물이라 규격이 없다).
+ */
+const lineMaker = (products: Readonly<Record<string, FxProduct>>, rules: FxShopRules): LineMaker => {
+  const turn = new Map<Kind, number>();
+  const sizeOf = (kind: Kind, tracking: FxProduct['tracking']): string | undefined => {
+    const sizes = SAMPLE_SIZES[kind];
+    if (!sizes || tracking !== 'count') return undefined;
+    const i = turn.get(kind) ?? 0;
+    turn.set(kind, i + 1);
+    return sizes[i % sizes.length];
   };
-}
+  return (orderId, n, kind, qty, done = {}) => {
+    const product: FxProduct = products[kind]!;
+    const item: FxProduct = product.section === 'lift' ? { ...product, returnable: liftReturnable(rules) } : product;
+    const variantKey = sizeOf(kind, item.tracking);
+    return {
+      id: orderId + '-l' + n,
+      kind,
+      label: item.label,
+      shortLabel: item.shortLabel ?? item.label,
+      qty,
+      ...(item.unit ? { unit: item.unit } : {}),
+      countWord: item.countWord,
+      amount: item.price * qty,
+      section: item.section,
+      returnable: item.returnable,
+      capabilities: [...item.capabilities],
+      tracking: item.tracking,
+      loaded: 0,
+      issued: done.issuedAt !== undefined ? qty : 0,
+      ...(done.issuedAt !== undefined ? { issuedAt: done.issuedAt } : {}),
+      returned: done.returnedAt !== undefined && item.returnable ? qty : 0,
+      ...(done.returnedAt !== undefined && item.returnable ? { returnedAt: done.returnedAt } : {}),
+      collected: 0,
+      received: 0,
+      ...(variantKey !== undefined ? { variantKey } : {}),
+    };
+  };
+};
 
 const store = (atMs: number): FxPromise => ({ at: atMs, mode: 'store' });
 const van = (atMs: number, placeId: string, note?: string): FxPromise => ({ at: atMs, mode: 'vehicle', placeId, vehicleId: 'v1', ...(note ? { note } : {}) });
@@ -95,7 +122,7 @@ function makeOrder(input: OrderInput): FxOrder {
 /** 이미 지급까지 끝난 현장 대여(접수 = 수령). */
 type WalkInInput = Omit<OrderInput, 'channel' | 'pickup' | 'lines'> & { kinds: [Kind, number][]; issuedAt: number; returnedAt?: number };
 
-function makeWalkIn(input: WalkInInput): FxOrder {
+function makeWalkIn(input: WalkInInput, line: LineMaker): FxOrder {
   const { kinds, issuedAt, returnedAt, ...rest } = input;
   return makeOrder({
     ...rest,
@@ -105,9 +132,9 @@ function makeWalkIn(input: WalkInInput): FxOrder {
   });
 }
 
-function orders(at: At, prefix: string): FxOrder[] {
+function orders(at: At, prefix: string, line: LineMaker): FxOrder[] {
   const order = (input: Omit<OrderInput, 'prefix'>) => makeOrder({ ...input, prefix });
-  const walkIn = (input: Omit<WalkInInput, 'prefix'>) => makeWalkIn({ ...input, prefix });
+  const walkIn = (input: Omit<WalkInInput, 'prefix'>) => makeWalkIn({ ...input, prefix }, line);
   return [
     walkIn({
       id: 'o21', no: 3, teamName: '김민재', last4: '0021', party: 2, createdAt: at(9, 0), issuedAt: at(9, 5),
@@ -214,10 +241,19 @@ function pins(at: At): FxPin[] {
   return [{ id: 'pin1', orderId: 'o39', at: at(21, 50), note: '조기 반납', status: 'requested' }];
 }
 
-/** 이 매장의 운영 규칙(catalog 3 · spec 2-3). V8에서 바꾸면 다음 기록부터다. 보증금 규칙은 시작 값(shop-rules.ts) 그대로다. */
+/**
+ * 첫 매장의 운영 규칙(catalog 3 · spec 2-3, 2026-09-26 사장님 답). V8에서 바꾸면 다음 기록부터다.
+ *   - 리프트권은 꼭 돌려받는다(반납 필수). 권 카드의 1,000원은 리조트가 권 값 안에 넣었다가 권 카드가 돌아오면 가게에 돌려주는 돈이라
+ *     손님과 주고받지 않는다: 보증금 규칙 없음(liftDeposit null). 안 돌아온 권은 손님에게 청구하지 않는다(가게가 손실로 둠).
+ *   - 당일 취소 환불: 기본은 환불(너무 늦게 연락한 손님은 직원이 취소할 때 거절을 고름). 노쇼도 기본은 환불이고, 당일 연락이 없다가 다음
+ *     날 온 손님은 거절(같은 취소 창의 고르기). 접수 취소 · 노쇼 처리는 아직 없어 기본값만 둔다.
+ *   - 반납 타임: 리조트 22:00 종료라 야간 22:00(연락은 22:30 ~ 23:00이 많음), 차량은 21:00부터 올라가 있어 야간 수거 준비 안내가 21:00부터
+ *     (nightNoticeMinutes 60). 22:00 뒤의 차량 수거는 90분 뒤(23:30)부터 늦음(vehicleLate.nightMinutes): 그 전의 밤 수거는 늘 하는 일이라
+ *     빨강이 아니다. 낮의 차량 약속은 60분. 심야 24:00은 매장 직접 반납.
+ */
 export const SHOP_RULES: FxShopRules = {
   liftReturnPolicy: 'required',
-  liftDeposit: { ...START_LIFT_DEPOSIT, methods: [...START_LIFT_DEPOSIT.methods] },
+  liftDeposit: null,
   prepaymentMode: 'full_lift_ticket',
   prepaymentAmount: 50_000,
   sameDayCancelRefund: 'refund',
@@ -231,7 +267,22 @@ export const SHOP_RULES: FxShopRules = {
     { key: 'night', label: '야간', hour: 22, minute: 0 },
     { key: 'late_night', label: '심야', hour: 24, minute: 0 },
   ],
+  vehicleLate: { minutes: 60, nightMinutes: 90 },
+  nightNoticeMinutes: 60,
 };
+
+/**
+ * 번호 매장 모양의 운영 규칙: 첫 매장 규칙 + 리프트권 보증금(시작 값 1매 5,000원 현금 · 접수 시 · 미반납 시 몰수, shop-rules.ts). 차량 늦음 ·
+ * 야간 알림 설정은 두지 않는다(시안이 그린 시작 값: 차량 60분 · 알림 60분).
+ */
+const { vehicleLate: _late, nightNoticeMinutes: _notice, ...FIRST_WITHOUT_NIGHT } = SHOP_RULES;
+export const NUMBERED_SHOP_RULES: FxShopRules = {
+  ...FIRST_WITHOUT_NIGHT,
+  liftDeposit: { ...START_LIFT_DEPOSIT, methods: [...START_LIFT_DEPOSIT.methods] },
+  returnSlots: SHOP_RULES.returnSlots.map((x) => ({ ...x })),
+};
+
+const rulesOf = (shop: SampleShop): FxShopRules => (shop === 'first' ? SHOP_RULES : NUMBERED_SHOP_RULES);
 
 /** 돈통 · 차량 지갑 · 넘기는 중 · 과부족(data-model 4-12). 뒤의 둘은 화면에 이름이 나오지 않는다. */
 export const DRAWERS: readonly FxDrawer[] = [
@@ -243,19 +294,24 @@ export const DRAWERS: readonly FxDrawer[] = [
 ];
 
 /**
- * 매장 재고의 번호 범위(예시, 상품 key → 번호). 야간권은 31번부터(1호 차량 예비권은 51 ~ 56번). 부츠와 다른 권종(새 접수에서 고를 수
- * 있는 것)도 번호를 가진다: 권종마다 백 단위를 나눠 한 매장 안에서 번호가 겹쳐 보이지 않게 했다. 고글은 수량으로 세어 번호가 없다.
+ * 번호 매장 모양의 재고 번호 범위(예시, 상품 key → 번호). 야간권은 31번부터(1호 차량 예비권은 51 ~ 56번). 부츠와 다른 권종(새 접수에서 고를
+ * 수 있는 것)도 번호를 가진다: 권종마다 백 단위를 나눠 한 매장 안에서 번호가 겹쳐 보이지 않게 했다. 고글은 수량으로 세어 번호가 없다.
  */
 export const STOCK_NUMBERS: Readonly<Record<string, readonly [number, number]>> = {
   ski: [1, 40], board: [1, 20], boots: [1, 40], helmet: [1, 30], clothes: [1, 40], night_adult: [31, 50],
   morning_adult: [101, 120], afternoon_adult: [201, 220], day_adult: [301, 320], full_adult: [401, 420],
 };
-/** 박준호 팀(0022)의 준비 번호: 시안 V1의 번호(스키 17 · 18번, 보드 5번, 헬멧 12 · 14 · 15번, 야간권 31 · 32 · 33번). */
+/** 번호 매장 모양의 박준호 팀(0022) 준비 번호: 시안 V1의 번호(스키 17 · 18번, 보드 5번, 헬멧 12 · 14 · 15번, 야간권 31 · 32 · 33번). */
 const PLANNED: Readonly<Record<string, readonly string[]>> = {
   'o22-l1': ['17', '18'], 'o22-l2': ['5'], 'o22-l3': ['12', '14', '15'], 'o22-l4': ['31', '32', '33'],
 };
-/** 1호 차량 예비권(시안 V7 `야간권 재고 6매`). */
-export const VAN_SPARE: { vehicleId: string; kind: Kind; numbers: readonly string[] } = { vehicleId: 'v1', kind: 'night_adult', numbers: ['51', '52', '53', '54', '55', '56'] };
+/** 1호 차량 예비권(시안 V7 `야간권 재고 6매`): 첫 매장은 야간권 6매(수량), 번호 매장은 51 ~ 56번. */
+export const VAN_SPARE: { vehicleId: string; kind: Kind; quantity: number; numbers: readonly string[] } = {
+  vehicleId: 'v1', kind: 'night_adult', quantity: 6, numbers: ['51', '52', '53', '54', '55', '56'],
+};
+
+/** 첫 매장의 차량 예비권(수량). 차례는 차량 → 상품 차례(FxVanSpare). */
+const vanSpares = (): FxVanSpare[] => [{ vehicleId: VAN_SPARE.vehicleId, productKey: VAN_SPARE.kind, quantity: VAN_SPARE.quantity }];
 
 /**
  * 번호를 붙인다: 이미 지급한 줄은 매장 재고의 빈 번호를 차례로(돌아온 줄은 돌아온 번호까지), 박준호 팀은 준비 번호.
@@ -294,8 +350,8 @@ function numberPieces(list: FxOrder[]): FxAsset[] {
 
 const copy = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
-/** 견본 매장의 운영 규칙(새 사본). */
-export const sampleRules = (): FxShopRules => copy(SHOP_RULES);
+/** 견본 매장의 운영 규칙(새 사본). shop: 첫 매장(기본) · 번호 매장. */
+export const sampleRules = (shop: SampleShop = 'first'): FxShopRules => copy(rulesOf(shop));
 
 export interface SampleDayOptions {
   /** 영업일 'YYYY-MM-DD'. 시각 · 접수 번호가 이 날을 따른다. */
@@ -304,27 +360,33 @@ export interface SampleDayOptions {
   epoch: string;
   /** id 모양: 'demo' = 체험판 id('o21' …). 날짜가 든 가져오기 id('import')는 B2b. */
   ids: 'demo';
+  /** 매장 모양: first = 첫 매장(기본, 수량 · 보증금 없음), numbered = 번호 · 권 보증금을 켠 매장(시험). */
+  shop?: SampleShop;
 }
 
-/** 견본 하루(그 날짜의 18팀 · 운영 규칙 · 번호 · 돈통). */
+/** 견본 하루(그 날짜의 18팀 · 운영 규칙 · 재고 · 돈통). */
 export function sampleDay(options: SampleDayOptions): ShopState {
   const { date, epoch } = options;
+  const shop = options.shop ?? 'first';
+  const registry = sampleRegistry(shop);
+  const settings = sampleRules(shop);
   const at: At = (hour, minute, dayOffset = 0) => kstAt(date, dayOffset, hour, minute);
-  const list = orders(at, date.slice(2).replace(/-/g, ''));
-  const assets = numberPieces(list);
+  const list = orders(at, date.slice(2).replace(/-/g, ''), lineMaker(registry.products, settings));
+  const assets = shop === 'numbered' ? numberPieces(list) : [];
   return {
     version: 3,
     epoch,
     rev: 1,
     businessDate: date,
-    registry: sampleRegistry(),
+    registry,
     orders: list,
     pins: pins(at),
     routeRanks: {},
     outcomes: {},
     driverDevice: { offline: false, queue: [] },
-    settings: sampleRules(),
+    settings,
     assets,
+    vanSpares: shop === 'first' ? vanSpares() : [],
     deposits: [],
     paymentGroups: [],
     drawers: DRAWERS.map((d) => ({ ...d })),

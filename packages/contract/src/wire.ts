@@ -347,6 +347,7 @@ function queryRules(maxQuantity: number): Record<QueryName, Rule> {
     findLast4: obj({ last4: str({ max: 4, pattern: /^\d{4}$/ }), date: opt(date) }),
     confirmDraft: obj({
       orderId: opt(id), draftId: opt(id), actionKey: lit(...ACTION_KEYS), lineIds: opt(ids(WIRE_LIMITS.lines)), taskId: opt(id), vehicleId: opt(id),
+      picked: opt(s.lines),
     }),
     reviewList: obj({ scope: opt(lit('mine', 'all')) }),
     vehicleLoad: obj({ vehicleId: id }),

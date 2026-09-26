@@ -6,7 +6,11 @@
 // 화면 규칙(글자 크기 · 누르는 곳 · 넘침)은 check-ui-rules.mjs가 13개 크기에서 본다. 여기서는 글과 예시 자료만 본다.
 // 단계마다 자기 화면의 장면(SCENES)을 더한다. 장면이 없는 화면은 '아직'으로 적고 실패로 세지 않는다.
 // 설계 문서와 시안이 달라 문서를 따른 글은 DIFFERENCES에 까닭과 함께 적는다(검사가 그 글을 기대하지 않음).
-// 빌드하지 않는다: 먼저 npm run build. 환경 변수: SKINOTE_MATCH_PORT(기본 5184), SKINOTE_MATCH_ONLY(V1,V9 …).
+// 체험 자료는 첫 매장 모양이다(2026-09-26 사장님 답, README D7): 번호 스티커 · 권 번호가 없어 모든 품목을 수량으로 세고(V1 −/+),
+// 손님 권 보증금이 없다(V1 · V2 · V3 · V4 · V6 · V8의 보증금 글). 시안은 번호 · 보증금 매장으로 그린 것이라 그 글은 DIFFERENCES에 적었다.
+// SKINOTE_MATCH_SHOP=numbered면 번호 · 권 보증금을 켠 견본 매장(?shop=numbered, 시안이 그린 매장)으로 같은 장면을 돌리고 첫 매장의 까닭(번호 없음 ·
+// 보증금 없음)을 빼고 시안의 글 그대로를 기대한다(2026-09-26 검토: 보증금 변형의 시안 글이 까닭 목록에만 덮여 있지 않게).
+// 빌드하지 않는다: 먼저 npm run build. 환경 변수: SKINOTE_MATCH_PORT(기본 5184), SKINOTE_MATCH_ONLY(V1,V9 …), SKINOTE_MATCH_SHOP(numbered).
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -21,6 +25,9 @@ const OUT = join(REPO, 'work/impl-v2/match');
 const PORT = Number(process.env.SKINOTE_MATCH_PORT ?? 5184) || 5184;
 const BASE = 'http://127.0.0.1:' + PORT + '/';
 const ONLY = (process.env.SKINOTE_MATCH_ONLY ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+/** 체험 자료의 매장 모양: 첫 매장(기본) · 견본 매장(numbered: 번호 · 권 보증금, 시안이 그린 매장). */
+const SHOP = process.env.SKINOTE_MATCH_SHOP === 'numbered' ? 'numbered' : 'first';
+const SHOP_QUERY = SHOP === 'numbered' ? '?shop=numbered' : '';
 /** 시안의 틀(포스 1024×600, 기사도 1024×600에서 그림). checkFrames는 그 크기로 따로. */
 const FRAME = { width: 1024, height: 600 };
 
@@ -31,12 +38,20 @@ const FRAME = { width: 1024, height: 600 };
  */
 const SCENES = {
   // V1 반납 확인 창(3단계): 21:30 박준호 팀 접수증 → 처리 현황 `반납`(모든 줄) → 알림 `1호 차량 수거 예정 · 22:00` → `매장 반납 처리`.
-  // #all은 처음 연 상태(모두 골라짐), 그린 상태는 안 가져온 5 · 15 · 33번을 뺀 뒤.
+  // #all은 처음 연 상태(모두 골라짐), 그린 상태는 안 가져온 보드 1 · 헬멧 1 · 권 1매를 뺀 뒤(첫 매장은 번호가 없어 칸마다 −, 시안은 5 · 15 · 33번).
   V1: {
     default: async (page, h) => {
       await openReturn(page, h);
-      for (const no of ['5번', '15번', '33번']) {
-        await page.locator('.pos-return .sn-piece', { hasText: new RegExp('^' + no + '$') }).click();
+      if (SHOP === 'numbered') {
+        // 견본 매장: 안 가져온 번호(보드 5 · 헬멧 15 · 권 33번)를 눌러 뺀다(시안 그대로).
+        for (const no of ['5번', '15번', '33번']) {
+          await page.locator('.pos-return .sn-piece', { hasText: new RegExp('^' + no + '$') }).first().click();
+          await h.settle();
+        }
+        return;
+      }
+      for (const item of ['보드', '헬멧', '야간권 성인']) {
+        await page.locator('.pos-return [role="group"][aria-label="' + item + ' 수량"] button[aria-label="수량 감소"]').click();
         await h.settle();
       }
     },
@@ -86,14 +101,15 @@ const SCENES = {
     },
   },
   // V6 하루 마감(8단계): 27일 00:40(00:15 정하늘 반납 · 00:32 차량 현금 점검 뒤)의 마감 화면. #drawer는 돈통을 세기 전, 그린 상태는 주 버튼
-  // `돈통 점검` → 점검 판에 545,000원 → 판의 주 버튼(마감 차례). #before는 00:31(00:32 점검 전): 체험 시계를 00:30으로 돌리고 이 페이지의
-  // 시계만 1분 앞으로(page.clock).
+  // `돈통 점검` → 점검 판에 540,000원(첫 매장은 보증금이 없어 시안의 545,000원 − 5,000원) → 판의 주 버튼(마감 차례). #before는 00:31(00:32 점검
+  // 전): 체험 시계를 00:30으로 돌리고 이 페이지의 시계만 1분 앞으로(page.clock).
   V6: {
     default: async (page, h) => {
       await openClosing(page, h);
       await page.locator('.sn-footer [data-primary="true"]').click();
       await page.waitForSelector('.pos-cash-check');
-      for (const key of ['5', '4', '5', '000']) await page.locator('.pos-cash-check').getByRole('button', { name: key, exact: true }).click();
+      // 첫 매장 540,000원(보증금 없음), 견본 매장은 시안의 545,000원(보증금 5,000원 포함).
+      for (const key of SHOP === 'numbered' ? ['5', '4', '5', '000'] : ['5', '4', '0', '000']) await page.locator('.pos-cash-check').getByRole('button', { name: key, exact: true }).click();
       await h.settle();
       await page.locator('.pos-cash-check [data-primary="true"]').click();
       await page.waitForSelector('.pos-cash-check', { state: 'detached' });
@@ -115,8 +131,8 @@ const SCENES = {
     offline: async (page, h) => { await openTask(page, h, true); },
   },
   // V8 매장 설정 · 운영 규칙(9단계): 15:40 관리 → 매장 설정. 시안의 그린 상태는 저장하지 않은 세 곳(전: 반납 선택 · 반납 시 기록 · 보증금 미사용 ·
-  // 00:00)이다. 이 매장의 저장된 값은 반납 필수 · 1매 5,000원 · 06:00이라(plan.md §8 D1), 장면은 시안의 전 값을 먼저 저장해 두고 이 매장
-  // 값으로 되돌린다: 세 카드에 `변경됨`, `변경 3건 · 다음 기록부터 적용`, `저장 · 3건`(시안과 같은 글, DIFFERENCES 없음).
+  // 00:00)이다. 장면은 시안의 전 값을 먼저 저장해 두고 이 매장 값으로 되돌린다. 첫 매장(2026-09-26)의 저장된 값은 반납 필수 · 보증금 미사용 ·
+  // 06:00이라 되돌리는 곳은 두 곳이다(`변경 2건` · `저장 · 2건`, 보증금 카드는 `미사용` 한 줄): 보증금 줄의 글은 DIFFERENCES.
   V8: {
     default: async (page, h) => {
       await h.open('#/manage', '.pos-manage-card');
@@ -148,7 +164,8 @@ const SCENES = {
       await page.waitForSelector('[role="dialog"]', { state: 'detached' });
       await h.settle();
       await press('리프트권 반납', '반납 필수');
-      await press('리프트권 보증금', '사용');
+      // 견본 매장의 저장된 값은 보증금 사용: 되돌리는 곳이 시안처럼 셋(`변경 3건`).
+      if (SHOP === 'numbered') await press('리프트권 보증금', '사용');
       await press('영업일 기준 시각', '06:00');
       await first();
     },
@@ -284,11 +301,59 @@ async function openPromise(page, h) {
 }
 
 /** 시안의 글 중 설계 문서를 따라 앱이 다르게 쓰는 것(화면 · 글 → 까닭). 검사는 이 글을 기대하지 않는다. */
+/** 첫 매장(2026-09-26 사장님 답, README D7)의 까닭 두 가지. */
+const NO_NUMBERS = '첫 매장은 장비 관리 번호 · 권 번호가 없어 모든 칸이 −/+ 수량(README D7 1 · 2, ui 3-1 count)';
+const NO_DEPOSIT = '첫 매장은 손님 권 보증금이 없음(권 카드 1,000원은 스키장 권 값 안의 돈, README D7 3 · 4)';
+
 const DIFFERENCES = {
   V1: {
     // 2026-09-25 검토: 접수증 일정 줄은 누르는 곳이 아니라(21px 글 줄, 52px 누르는 곳을 둘 자리 없음) `›`를 뺐다. 일정 변경은 옆 동작
     // `일정 변경`(plan §8 D90). 앱의 글은 `수령 16:00 · 매장 · 반납 일정 2건`.
     '수령 16:00 · 매장 · 반납 일정 2건 ›': '일정 줄 `›` 뺌(누르는 곳 아님), plan §8 D90',
+    // 첫 매장: 번호 버튼 대신 −/+(앱 ① `전체 선택 · 미반납 수량 감소`, wording.md 3-18 확인 대기), ④ ⑤ 줄 없음(창이 96 짧음, spec 3-1).
+    '전체 선택 · 미반납 번호 해제': NO_NUMBERS + ' → 앱 `전체 선택 · 미반납 수량 감소`',
+    '17번': NO_NUMBERS, '18번': NO_NUMBERS, '5번': NO_NUMBERS, '12번': NO_NUMBERS, '14번': NO_NUMBERS, '15번': NO_NUMBERS,
+    '31번': NO_NUMBERS, '32번': NO_NUMBERS, '33번': NO_NUMBERS,
+    // 일정이 하나인 수량 칸의 둘째 줄은 차량 수거 장소만(−/+의 수와 같은 수를 두 번 쓰지 않음, 2026-09-26 검토): `설천` · `두솔동`.
+    '설천 2대': NO_NUMBERS + ' → 수량 칸 둘째 줄 `설천`', '두솔동 1대': NO_NUMBERS + ' → 수량 칸 둘째 줄 `두솔동`',
+    '권 2매 보증금 10,000원 반환 · 매장 기준 1매 5,000원 · 잔여 보증금 5,000원(권 1매)': NO_DEPOSIT,
+    '권 3매 보증금 15,000원 반환 · 매장 기준 1매 5,000원 · 잔여 보증금 없음': NO_DEPOSIT,
+    '반환 방법': NO_DEPOSIT, '현금': NO_DEPOSIT + '(반환 방법 버튼)',
+    '미수 차감 · 120,000원 → 110,000원': NO_DEPOSIT, '미수 차감 · 120,000원 → 105,000원': NO_DEPOSIT,
+    '반납 처리 · 스키 2 · 헬멧 2 · 권 2매 · 보증금 10,000원': NO_DEPOSIT + ' → 앱 `반납 처리 · 스키 2 · 헬멧 2 · 권 2매`',
+    '반납 처리 · 6개 · 3매 · 보증금 15,000원': NO_DEPOSIT + ' → 앱 `반납 처리 · 6개 · 3매`',
+  },
+  V2: {
+    '보증금 · 매장 기준 1매 5,000원': NO_DEPOSIT + ' → 앱 권 줄 둘째 줄 `1매 35,000원`',
+    '보증금 · 별도 20,000원': NO_DEPOSIT + '(합계 아래 줄 없음)',
+  },
+  V3: {
+    '야간권 4매 · 보증금 20,000원 별도': NO_DEPOSIT + ' → 앱 `야간권 4매`',
+  },
+  V4: {
+    '리프트권 보증금': NO_DEPOSIT + '(보증금 칸 없음, 칸 둘)',
+    '4매 · 매장 기준 1매 5,000원 · 반납 시 반환': NO_DEPOSIT,
+    '현금 20,000원': NO_DEPOSIT,
+    '받을 금액 현금 160,000원 = 리프트권 140,000원 + 보증금 20,000원': NO_DEPOSIT + ' → 앱 `받을 금액 현금 140,000원`',
+    '받을 금액 카드 225,000원 · 현금 160,000원 (현금 중 보증금 20,000원)': NO_DEPOSIT + ' → 앱 `받을 금액 카드 225,000원 · 현금 140,000원`',
+    '접수 확정 · 현금 160,000원': NO_DEPOSIT + ' → 앱 `접수 확정 · 현금 140,000원`',
+    '접수 확정 · 카드 225,000원 · 현금 160,000원': NO_DEPOSIT + ' → 앱 `접수 확정 · 카드 225,000원 · 현금 140,000원`',
+  },
+  V6: {
+    '예상 545,000원 · 보증금 5,000원 포함': NO_DEPOSIT + ' → 앱 `예상 540,000원`(시재 100,000 + 현금 수납 440,000)',
+    '실제 545,000원 · 차액 0원': NO_DEPOSIT + ' → 앱 `실제 540,000원 · 차액 0원`',
+    '이월 항목 · 5': NO_DEPOSIT + '(보증금 보관 중 줄 없음) → 앱 `이월 항목 · 4`',
+    '보증금 보관 중 · 리프트권 1매 · 5,000원': NO_DEPOSIT + '(안 돌아온 권은 청구 없이 `리프트권 미반납 · 1매 · 지연`만)',
+    '최하은 · 0026 · 돈통 보관': NO_DEPOSIT,
+  },
+  V8: {
+    // 첫 매장의 저장된 값은 보증금 미사용: 되돌리는 곳이 두 곳이고, 보증금 카드는 `미사용` + 회색 한 줄 `보증금 미사용`.
+    '1매 5,000원 ›': NO_DEPOSIT + '(보증금 미사용이면 값 버튼 없음)',
+    '입금 시점': NO_DEPOSIT + '(보증금 미사용이면 줄 없음)', '접수 시': NO_DEPOSIT, '미입금: 지급 시': NO_DEPOSIT, '지급 시': NO_DEPOSIT,
+    '미반납 시': NO_DEPOSIT, '보증금 몰수': NO_DEPOSIT, '분실금 청구': NO_DEPOSIT, '보증금 공제': NO_DEPOSIT,
+    '변경 3건 · 다음 기록부터 적용': '첫 매장 저장 값(보증금 미사용)으로 되돌리는 곳이 둘 → 앱 `변경 2건 · 다음 기록부터 적용`',
+    '저장 · 3건': '첫 매장 저장 값으로 되돌리는 곳이 둘 → 앱 `저장 · 2건`',
+    '1 / 2쪽': '보증금 미사용 카드가 짧아(한 줄 + 회색 한 줄) 1024×569 · 529에서도 카드가 한 쪽에 들 수 있음',
   },
 };
 
@@ -328,7 +393,7 @@ function helpers(page) {
     };
     document.fonts.ready.then(() => requestAnimationFrame(tick));
   }));
-  const open = async (hash, selector = 'body') => { await page.goto(BASE + hash); await page.waitForSelector(selector); await settle(); };
+  const open = async (hash, selector = 'body') => { await page.goto(BASE + SHOP_QUERY + hash); await page.waitForSelector(selector); await settle(); };
   /** 체험 시계를 12월 26일(dayOffset 0) 또는 27일(1)의 hh:mm까지 앞으로(분 단위는 10분으로 내림). */
   const clockTo = async (hh, mm, dayOffset = 0) => {
     await open('#/exit', '.pos-card');
@@ -355,8 +420,11 @@ async function readScreen(page) {
   });
 }
 
+/** 첫 매장만의 까닭(번호 없음 · 보증금 없음 · 첫 매장 저장 값): 견본 매장 걸음에서는 시안의 글 그대로를 기대한다. */
+const FIRST_ONLY = (reason) => reason.startsWith(NO_NUMBERS) || reason.startsWith(NO_DEPOSIT) || reason.startsWith('첫 매장') || reason.startsWith('보증금 미사용 카드');
+
 function compare(code, expected, got) {
-  const skip = new Set(Object.keys(DIFFERENCES[code] ?? {}));
+  const skip = new Set(Object.entries(DIFFERENCES[code] ?? {}).filter(([, reason]) => SHOP === 'first' || !FIRST_ONLY(reason)).map(([text]) => text));
   const text = norm(got.text);
   const missing = (expected.mustShow ?? []).filter((s) => !skip.has(s) && !text.includes(norm(s)));
   const primaryOk = !expected.primary || skip.has(expected.primary) || norm(got.primary) === norm(expected.primary);
@@ -369,6 +437,7 @@ async function main() {
     process.exit(1);
   }
   mkdirSync(OUT, { recursive: true });
+  if (SHOP === 'numbered') console.log('견본 매장(번호 · 권 보증금, ?shop=numbered): 첫 매장의 까닭 없이 시안의 글 그대로');
   const screens = SPEC.screens.filter((s) => !ONLY.length || ONLY.includes(s.code));
   const server = await startPreview();
   const browser = await chromium.launch();
@@ -399,7 +468,7 @@ async function main() {
           await h.settle();
           const result = compare(screen.code, state, await readScreen(page));
           const bad = result.missing.length > 0 || result.primary !== null;
-          await page.screenshot({ path: join(OUT, screen.code + '-' + state.key + (at ? '-' + state.size.width + 'x' + state.size.height : '') + '.png') });
+          await page.screenshot({ path: join(OUT, (SHOP === 'numbered' ? 'numbered-' : '') + screen.code + '-' + state.key + (at ? '-' + state.size.width + 'x' + state.size.height : '') + '.png') });
           if (bad) failed += 1;
           checked += 1;
           console.log((bad ? '✗ ' : '✓ ') + screen.code + ' #' + state.key + at);

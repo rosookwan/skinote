@@ -11,7 +11,7 @@ import {
   type LedgerViewResult, type PendingCommand, type QueryName, type QueryParams, type QueryResult, type SyncHead, type UiConfig, type ViewParams,
 } from '@skinote/contract';
 import {
-  MINUTE, OFFLINE_ALLOWED, SAMPLE_STAFF, findOrder, hm, iso, ledgerView, orderIdOfTask, runQuery, sampleRegistry, type FxState, type ReadContext,
+  MINUTE, OFFLINE_ALLOWED, SAMPLE_STAFF, findOrder, hm, iso, ledgerView, orderIdOfTask, runQuery, sampleRegistry, type FxState, type ReadContext, type SampleShop,
 } from '@skinote/domain';
 import { DEMO_LINES, DEMO_START_MS, applyCommand, createSeed } from './demo.ts';
 import { applyStory } from './story.ts';
@@ -36,6 +36,8 @@ export interface FixtureClientOptions {
    * (이야기를 보는 시험만 켠다).
    */
   story?: boolean;
+  /** 견본 매장 모양: 체험판은 첫 매장(기본), 번호 · 권 보증금을 켠 매장(numbered)은 시험이 쓴다. */
+  shop?: SampleShop;
 }
 
 export const FIXTURE_STORAGE_KEY = 'skinote.demo.v1';
@@ -45,7 +47,15 @@ interface Saved {
   state: FxState;
   /** 저장할 때의 체험 시계(ms). */
   clock: number;
+  /** 견본 판(SAMPLE_REV)과 매장 모양. 다르면(옛 번호 · 보증금 견본으로 저장한 자료) 버리고 처음 자료로 시작한다. */
+  sample?: string;
 }
+
+/**
+ * 견본 판: 견본 매장이 바뀌면 올린다(2026-09-26 첫 매장 답: 수량 · 보증금 없음 · 기사 현금 · 계좌이체; 같은 날 검토 반영: 규격 줄의 규격 ·
+ * 밤 수거 늦음 90분 · 견본 매장의 돈 수단).
+ */
+export const SAMPLE_REV = 'first-shop-2026-09-26b';
 
 /** 이 클라이언트가 맡은 기기: 카운터(포스) 또는 기사 기기. */
 export type FixtureDevice = 'counter' | 'driver';
@@ -64,6 +74,7 @@ export class FixtureClient implements DomainClient {
   private readonly realNow: () => number;
   private readonly listeners = new Set<(head: SyncHead) => void>();
   private readonly story: boolean;
+  private readonly shop: SampleShop;
   private device: FixtureDevice = 'counter';
 
   constructor(options: FixtureClientOptions = {}) {
@@ -71,9 +82,10 @@ export class FixtureClient implements DomainClient {
     this.key = options.storageKey ?? FIXTURE_STORAGE_KEY;
     this.realNow = options.realNow ?? (() => Date.now());
     this.story = options.story ?? false;
-    this.settings = defaultUiConfig({ shopName: sampleRegistry().shopName, timezone: 'Asia/Seoul' });
+    this.shop = options.shop ?? 'first';
+    this.settings = defaultUiConfig({ shopName: sampleRegistry(this.shop).shopName, timezone: 'Asia/Seoul' });
     const saved = this.read();
-    this.state = saved?.state ?? createSeed(newEpoch(this.realNow()));
+    this.state = saved?.state ?? createSeed(newEpoch(this.realNow()), this.shop);
     this.anchorDemo = saved?.clock ?? DEMO_START_MS;
     this.anchorReal = this.realNow();
     if (!saved) this.save();
@@ -108,7 +120,7 @@ export class FixtureClient implements DomainClient {
 
   /** 도장 · 수납을 모두 지우고 처음 자료 · 15:40으로. 열린 창의 명령은 epoch가 달라 거절된다. */
   reset(): void {
-    this.state = createSeed(newEpoch(this.realNow()));
+    this.state = createSeed(newEpoch(this.realNow()), this.shop);
     this.anchorDemo = DEMO_START_MS;
     this.anchorReal = this.realNow();
     this.save();
@@ -253,17 +265,24 @@ export class FixtureClient implements DomainClient {
       // 옛 판(2 이하)으로 저장된 체험 자료는 버리고 처음 자료로 시작한다(판 3: 운영 규칙 · 번호 · 보증금 · 돈통).
       if (saved.version !== 3 || saved.state?.version !== 3 || !Array.isArray(saved.state.orders) || !saved.state.driverDevice || !saved.state.settings
         || typeof saved.clock !== 'number') return null;
+      // 다른 견본(옛 번호 · 보증금 견본, 다른 매장 모양)으로 저장한 자료는 버린다: 줄의 재고 방식 · 운영 규칙이 지금 목록과 맞지 않는다.
+      if (saved.sample !== this.sampleKey()) return null;
       // 매장 목록(registry)은 체험판 코드의 견본 값이다: 저장된 것이 없거나 옛것이어도 늘 지금 값을 쓴다.
-      saved.state.registry = sampleRegistry();
+      saved.state.registry = sampleRegistry(this.shop);
       return saved;
     } catch {
       return null;
     }
   }
 
+  /** 저장 자료의 견본 표시(판 · 모양). */
+  private sampleKey(): string {
+    return SAMPLE_REV + ':' + this.shop;
+  }
+
   private save(): void {
     try {
-      const saved: Saved = { version: 3, state: this.state, clock: this.now() };
+      const saved: Saved = { version: 3, state: this.state, clock: this.now(), sample: this.sampleKey() };
       this.storage?.setItem(this.key, JSON.stringify(saved));
     } catch {
       // 저장이 막힌 브라우저에서도 체험은 돈다(새로 고치면 처음 자료).

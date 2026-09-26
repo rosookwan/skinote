@@ -56,7 +56,7 @@ const columns = (db, table) => /** @type {{ name: string }[]} */ (db.prepare(`PR
 const exists = (db, name) => /** @type {{ n: number }} */ (db.prepare('SELECT count(*) AS n FROM sqlite_schema WHERE name = ?').get(name)).n === 1;
 
 test('0002 is shipped as the second shop migration and passes the forward-only numbering', () => {
-  assert.deepEqual(loadMigrations('shop').map(m => m.name), ['0001_shop', '0002_shop_server_link']);
+  assert.deepEqual(loadMigrations('shop').map(m => m.name).slice(0, 2), ['0001_shop', '0002_shop_server_link']);
 });
 
 test('0002 applies on a shop file that already holds 0001 rows: backup first, rows kept, the new column empty on old rows', () => {
@@ -76,7 +76,11 @@ test('0002 applies on a shop file that already holds 0001 rows: backup first, ro
   } finally {
     first.db.close();
   }
-  const second = migrate(file, 'shop', { appVersion: 'test' });
+  // 0002까지만 든 폴더(뒤 마이그레이션 0003 …은 저마다의 시험이 본다).
+  const upTo2 = join(dir, 'v2');
+  mkdirSync(upTo2, { recursive: true });
+  for (const name of ['0001_shop.sql', '0002_shop_server_link.sql']) copyFileSync(join(MIGRATIONS, name), join(upTo2, name));
+  const second = migrate(file, 'shop', { migrationsDir: upTo2, appVersion: 'test' });
   try {
     assert.equal(second.status, 'migrated');
     assert.equal(second.version, 2);

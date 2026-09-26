@@ -6,10 +6,10 @@
 #   deploy/deploy.sh --status        서버의 릴리스 · 서비스 · 상태 · 마지막 배포 작업 · 알림만 본다
 #   deploy/deploy.sh --stage <폴더>  서버에 붙지 않고 릴리스 사본만 <폴더>/<릴리스 이름>에 만들고 점검한다(저장소 밖이나 무시 폴더)
 #   deploy/deploy.sh --shop-cli <명령> [깃발…]
-#                                    서버에서 매장 명령줄(server/bin/shop.js: provision · load-sample · device-code · rotate-pin ·
-#                                    revoke-device · status)을 돌린다. 요청은 ssh 표준 입력의 JSON으로 가고(서버의 고정 입구
+#                                    서버에서 매장 명령줄(server/bin/shop.js: provision · load-sample · reset-test-shop · device-code ·
+#                                    rotate-pin · revoke-device · status)을 돌린다. 요청은 ssh 표준 입력의 JSON으로 가고(서버의 고정 입구
 #                                    deploy/shop-cli.sh), 비밀번호 · 등록 번호는 이 터미널에만 찍힌다(파일 · 기록 없음).
-#                                    provision · load-sample은 서버를 잠깐 멈췄다가 다시 켠다.
+#                                    provision · load-sample · reset-test-shop은 서버를 잠깐 멈췄다가 다시 켠다.
 #
 # 선택: --allow-dirty(커밋하지 않은 변경을 시험 배포), --allow-stale-dist(낡은 빌드인 줄 알고), --force(되돌리기에서만),
 #       --allow-no-e2e(서버 끝까지 시험 기록 없이: 시험 배포만)
@@ -83,7 +83,7 @@ while [[ $# -gt 0 ]]; do
     --shop-cli)
       MODE=shop-cli
       shift
-      [[ $# -ge 1 ]] || die '--shop-cli 다음에 명령이 필요합니다(provision · load-sample · device-code · rotate-pin · revoke-device · status)'
+      [[ $# -ge 1 ]] || die '--shop-cli 다음에 명령이 필요합니다(provision · load-sample · reset-test-shop · device-code · rotate-pin · revoke-device · status)'
       SHOP_CLI_ARGS=("$@")
       break
       ;;

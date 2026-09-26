@@ -207,8 +207,9 @@ describe('promise.change — 일정이 품목 · 수량으로 나뉜다', () => 
     // 설천 주차장 업무는 받을 것이 없어져 수거 목록 · 완료 수에서 빠진다(data-model 4-18 · spec 3-1): `수거` 도장이 차량이 받은 것으로 읽히지 않게.
     expect(list.rows.find((r) => r.id === 'collect:o22')).toBeUndefined();
     expect(list.rows.find((r) => r.id === 'collect:o22:p1')?.cells['stamp:collect']).toMatchObject({ stamp: { state: 'todo' } });
-    // 헬멧 반납은 매장에서 12 · 14번(지급한 차례), 남은 15번은 두솔동.
-    expect(heldNumbers(o.lines[2]!)).toEqual(['helmet-15']);
+    // 헬멧 반납은 매장에서 2개(첫 매장은 번호 없이 수), 남은 1개는 두솔동.
+    expect(heldNumbers(o.lines[2]!)).toEqual([]);
+    expect(o.lines[2]!.issued - o.lines[2]!.returned).toBe(1);
     const slip = await client.query('orderSlip', { orderId: 'o22' });
     // 남은 일정은 하나(두솔동): 일정 줄은 그 일정 그대로.
     expect(slip.promises.lines[1]).toMatchObject({ kind: 'return', parts: [{ text: '솔마을 두솔동' }, { text: '1호 차량' }] });

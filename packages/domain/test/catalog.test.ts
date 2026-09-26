@@ -1,7 +1,7 @@
 // 품목 목록의 순수 셈(apps/pos/test/v2-new-order.test.ts에서 옮김): 초안 품목 정리 · 요금표 견적 · 연락처 글 · 규격 더 보기.
 import { describe, expect, it } from 'vitest';
 import { cleanItems, liftReturnable, moreLabelOf, phoneText, quoteOf } from '../src/index.ts';
-import { KINDS, MAX_QTY, PRODUCTS, SHOP_RULES, sampleRegistry } from '../src/sample/index.ts';
+import { KINDS, MAX_QTY, NUMBERED_SHOP_RULES, PRODUCTS, SHOP_RULES, sampleRegistry } from '../src/sample/index.ts';
 
 const REG = sampleRegistry();
 
@@ -21,8 +21,11 @@ describe('품목 목록(견본 매장)', () => {
       { productKey: 'ski', quantity: 4 }, { productKey: 'clothes', variantKey: '95', quantity: 2 }, { productKey: 'clothes', variantKey: '100', quantity: 1 },
       { productKey: 'helmet', variantKey: '중', quantity: 1 }, { productKey: 'night_adult', quantity: 4 },
     ];
+    // 첫 매장은 권 보증금이 없다(리조트와 가게 사이의 1,000원은 손님 돈이 아님, 2026-09-26). 보증금을 켠 매장이면 매수 × 1매 값.
     const quote = quoteOf(REG, items, SHOP_RULES);
-    expect([quote.gear, quote.lift, quote.total, quote.depositUnits, quote.deposit]).toEqual([225_000, 140_000, 365_000, 4, 20_000]);
+    expect([quote.gear, quote.lift, quote.total, quote.depositUnits, quote.deposit]).toEqual([225_000, 140_000, 365_000, 0, 0]);
+    const withDeposit = quoteOf(sampleRegistry('numbered'), items, NUMBERED_SHOP_RULES);
+    expect([withDeposit.gear, withDeposit.lift, withDeposit.total, withDeposit.depositUnits, withDeposit.deposit]).toEqual([225_000, 140_000, 365_000, 4, 20_000]);
     expect(phoneText('01000000042')).toBe('010-0000-0042');
     expect(phoneText('0101234567')).toBe('010-123-4567');
   });

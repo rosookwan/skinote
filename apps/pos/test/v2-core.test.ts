@@ -1,12 +1,13 @@
 // 둘째 판 1단계(work/impl-v2/plan.md 5절 Step 1): 체험 자료의 바탕 규칙 — 리프트권 반납 필수, 번호(지급 · 반납 · 수거 · 적재),
 // 보증금 입금(지급 창이 먼저 묻는 권 보증금), 이어진 명령(then · dependsOn), 영업일 기준 시각 · 반납 타임, 뒷이야기 16:05 ~ 21:50.
+// 첫 매장(체험판 기본)은 번호 · 권 보증금이 없다(2026-09-26 사장님 답). 번호 · 보증금 규칙은 그것을 켠 매장 모양(shop 'numbered')으로 본다.
 import {
   defaultUiConfig, draftToEnvelope, openCommandDraft, type AnyCommandEnvelope, type CommandOutcome, type ConfirmCommand, type ConfirmDraftView, type Expect,
 } from '@skinote/contract';
 import { openOrRestoreDraft } from '@skinote/ui';
 import { describe, expect, it } from 'vitest';
 import { chainDrafts, chainGoesOn, confirmEnvelope, draftOptions, sendChain } from '../src/components/ConfirmFlow.tsx';
-import { assetId, depositOf, type FxState, heldAmount, heldNumbers, heldUnits, kstAt, lastReturnSlotAt, liftReturnable, nightPrepSlotAt, orderSlip, routeTasks, when } from '@skinote/domain';
+import { assetId, depositOf, type FxState, heldAmount, heldNumbers, heldUnits, kstAt, lastReturnSlotAt, liftReturnable, nightPrepSlotAt, orderSlip, routeTasks, type SampleShop, when } from '@skinote/domain';
 import { SHOP_RULES } from '@skinote/domain/sample';
 import { applyCommand, createSeed } from '../src/fixture/demo.ts';
 import { FixtureClient } from '../src/fixture/fixture-client.ts';
@@ -15,7 +16,7 @@ import { STORY } from '../src/fixture/story.ts';
 const ms = (h: number, m: number, day = 0) => kstAt('2026-12-26', day, h, m);
 const iso = (h: number, m: number, day = 0) => new Date(ms(h, m, day)).toISOString();
 
-function setup(options: { story?: boolean } = {}) {
+function setup(options: { story?: boolean; shop?: SampleShop } = {}) {
   let real = 1_800_000_000_000;
   const client = new FixtureClient({ realNow: () => real, ...options });
   return { client, pass: (minutes: number) => { real += minutes * 60_000; } };
@@ -57,9 +58,9 @@ async function confirmAll(client: FixtureClient, view: ConfirmDraftView) {
 }
 
 describe('리프트권 반납 필수(운영 규칙 → 줄에 복사)', () => {
-  it('이 매장은 반납 필수: 권 줄도 반납 줄이고, 반납 선택 매장이면 반납 칸이 없다', () => {
+  it('이 매장은 반납 필수: 권 줄도 반납 줄이고(수량으로 셈), 반납 선택 매장이면 반납 칸이 없다', () => {
     const state = createSeed('e');
-    expect(line(state, 'o22-l4')).toMatchObject({ section: 'lift', returnable: true, tracking: 'unit', unit: '매' });
+    expect(line(state, 'o22-l4')).toMatchObject({ section: 'lift', returnable: true, tracking: 'count', unit: '매' });
     expect(liftReturnable(SHOP_RULES)).toBe(true);
     expect(liftReturnable({ liftReturnPolicy: 'optional' })).toBe(false);
   });
@@ -73,16 +74,47 @@ describe('리프트권 반납 필수(운영 규칙 → 줄에 복사)', () => {
     const list = await client.ledgerView('collection_list', { vehicleId: 'v1' });
     const park = list.rows.find((r) => r.id === 'collect:o22')!;
     expect(park.cells['items']).toMatchObject({ items: [{ label: '스키', qty: 2 }, { label: '보드', qty: 1 }, { label: '헬멧', qty: 3 }, { label: '야간권', qty: 3, unit: '매' }] });
-    // 수거 확인 창도 권을 함께 센다(개 + 매). 맡은 보증금이 있는 권은 수거 현장에서 돌려드린다(7단계: field.deposit_return, spec 3-8).
+    // 수거 확인 창도 권을 함께 센다(개 + 매). 첫 매장은 권 보증금이 없어 보증금 줄 · 돈이 없다.
+    const collect = await client.query('confirmDraft', { taskId: 'collect:o22', actionKey: 'stamp.collect' });
+    expect(collect.confirmLabel).toBe('수거 처리 · 6개 · 3매');
+    expect(collect.summary.join(' ')).not.toContain('보증금');
+    expect(collect.then).toBeUndefined();
+  });
+
+  it('번호 · 보증금 매장: 맡은 보증금이 있는 권은 수거 현장에서 돌려드린다(7단계: field.deposit_return, spec 3-8)', async () => {
+    const { client } = setup({ shop: 'numbered' });
+    await confirmAll(client, await client.query('confirmDraft', { orderId: 'o22', actionKey: 'stamp.issue' }));
     const collect = await client.query('confirmDraft', { taskId: 'collect:o22', actionKey: 'stamp.collect' });
     expect(collect.confirmLabel).toBe('수거 처리 · 6개 · 3매 · 보증금 15,000원');
     expect(collect.summary.at(-1)).toBe('권 3매 보증금 15,000원 반환 · 차량 현금');
   });
 });
 
-describe('번호(스티커 · 권 번호)', () => {
-  it('지급: 준비 번호부터(박준호 팀은 시안 V1의 번호), 없으면 매장 재고의 가장 낮은 빈 번호', () => {
+describe('첫 매장의 수량 줄(번호 없음): 지급 · 반납 · 수거 · 적재 · 배달은 수만', () => {
+  it('지급 · 반납 · 수거 · 적재 · 배달의 명령은 번호 없이 수를 옮기고 줄에 번호가 생기지 않는다', () => {
     const state = createSeed('e');
+    expect(apply(state, { type: 'stock.issue', payload: { orderId: 'o22', lines: state.orders.find((o) => o.id === 'o22')!.lines.map((l) => ({ lineId: l.id, quantity: l.qty })) } }).outcome).toBe('applied');
+    expect(line(state, 'o22-l4')).toMatchObject({ issued: 3 });
+    expect(apply(state, { type: 'stock.direct_return', payload: { orderId: 'o22', lines: [{ lineId: 'o22-l3', quantity: 2 }] } }).outcome).toBe('applied');
+    expect(line(state, 'o22-l3')).toMatchObject({ returned: 2 });
+    // 이미 돌아온 만큼보다 많이 보내도 가진 수까지(1개).
+    expect(apply(state, { type: 'stock.direct_return', payload: { orderId: 'o22', lines: [{ lineId: 'o22-l3', quantity: 5 }] } }).outcome).toBe('applied');
+    expect(line(state, 'o22-l3')).toMatchObject({ returned: 3 });
+    expect(apply(state, { type: 'stock.direct_return', payload: { orderId: 'o22', lines: [{ lineId: 'o22-l3', quantity: 1 }] } })).toMatchObject({ outcome: 'superseded', error: { message: '반납 완료' } });
+    expect(apply(state, { type: 'stock.collect', payload: { taskId: 'collect:o25', lines: [{ lineId: 'o25-l2', quantity: 1 }] } }).outcome).toBe('applied');
+    expect(line(state, 'o25-l2')).toMatchObject({ collected: 1 });
+    expect(apply(state, { type: 'stock.load', payload: { taskId: 'deliver:o26', lines: [{ lineId: 'o26-l1', quantity: 3 }, { lineId: 'o26-l2', quantity: 3 }] } }).outcome).toBe('applied');
+    expect(apply(state, { type: 'stock.deliver', payload: { taskId: 'deliver:o26', lines: [{ lineId: 'o26-l1', quantity: 3 }, { lineId: 'o26-l2', quantity: 3 }] } }).outcome).toBe('applied');
+    expect(line(state, 'o26-l1')).toMatchObject({ loaded: 3, issued: 3 });
+    const lines = state.orders.flatMap((o) => o.lines);
+    expect(lines.some((l) => l.assetIds?.length || l.backAssetIds?.length || l.plannedAssetIds?.length)).toBe(false);
+    expect(state.assets).toEqual([]);
+  });
+});
+
+describe('번호(스티커 · 권 번호) — 번호를 켠 매장(numbered)', () => {
+  it('지급: 준비 번호부터(박준호 팀은 시안 V1의 번호), 없으면 매장 재고의 가장 낮은 빈 번호', () => {
+    const state = createSeed('e', 'numbered');
     expect(apply(state, { type: 'stock.issue', payload: { orderId: 'o22', lines: state.orders.find((o) => o.id === 'o22')!.lines.map((l) => ({ lineId: l.id, quantity: l.qty })) } }).outcome).toBe('applied');
     expect(line(state, 'o22-l1').assetIds).toEqual(['ski-17', 'ski-18']);
     expect(line(state, 'o22-l3').assetIds).toEqual(['helmet-12', 'helmet-14', 'helmet-15']);
@@ -97,7 +129,7 @@ describe('번호(스티커 · 권 번호)', () => {
   });
 
   it('지급할 번호를 사람이 고르면 그 번호(수도 그만큼), 다른 팀에 나가 있는 번호는 거절', () => {
-    const state = createSeed('e');
+    const state = createSeed('e', 'numbered');
     const outside = line(state, 'o21-l1').assetIds![0]!;
     const refused = apply(state, { type: 'stock.issue', payload: { orderId: 'o32', lines: [{ lineId: 'o32-l1', quantity: 2, assetIds: [outside] }] } });
     expect(refused).toMatchObject({ outcome: 'rejected', error: { message: '장비 위치 불일치' } });
@@ -108,7 +140,7 @@ describe('번호(스티커 · 권 번호)', () => {
   });
 
   it('반납: 고른 번호만 돌아오고 수가 따라간다, 이미 돌아온 번호는 반납 완료(superseded), 준 적 없는 번호는 거절', () => {
-    const state = createSeed('e');
+    const state = createSeed('e', 'numbered');
     apply(state, { type: 'stock.issue', payload: { orderId: 'o22', lines: [{ lineId: 'o22-l3', quantity: 3 }, { lineId: 'o22-l4', quantity: 3 }] } });
     const back = apply(state, { type: 'stock.direct_return', payload: { orderId: 'o22', lines: [{ lineId: 'o22-l3', quantity: 3, assetIds: ['helmet-12', 'helmet-14'] }] } });
     expect(back.outcome).toBe('applied');
@@ -125,7 +157,7 @@ describe('번호(스티커 · 권 번호)', () => {
   });
 
   it('수거 · 적재도 번호: 적재한 번호가 준비 번호가 되고 차량 배달의 지급은 그 번호', () => {
-    const state = createSeed('e');
+    const state = createSeed('e', 'numbered');
     apply(state, { type: 'stock.collect', payload: { taskId: 'collect:o25', lines: [{ lineId: 'o25-l2', quantity: 1 }] } });
     expect(line(state, 'o25-l2').backAssetIds).toEqual([line(state, 'o25-l2').assetIds![0]]);
     expect(apply(state, { type: 'stock.load', payload: { taskId: 'deliver:o26', lines: [{ lineId: 'o26-l1', quantity: 3 }, { lineId: 'o26-l2', quantity: 3 }] } }).outcome).toBe('applied');
@@ -137,12 +169,12 @@ describe('번호(스티커 · 권 번호)', () => {
   });
 });
 
-describe('보증금 입금(deposit.take)', () => {
+describe('보증금 입금(deposit.take) — 권 보증금을 켠 매장(numbered)', () => {
   const take = (lines: { lineId: string; quantity: number }[], amount: number, methodKey = 'cash'): ConfirmCommand =>
     ({ type: 'deposit.take', payload: { orderId: 'o22', ruleKey: 'lift_ticket_card', lines, amount, methodKey } });
 
   it('바탕(expect.depositHeld)이 없으면 거절, 다르면 충돌, 수단 · 매수 · 금액이 맞지 않으면 거절', () => {
-    const state = createSeed('e');
+    const state = createSeed('e', 'numbered');
     expect(apply(state, take([{ lineId: 'o22-l4', quantity: 3 }], 15_000)).error?.code).toBe('EXPECT_REQUIRED');
     expect(apply(state, take([{ lineId: 'o22-l4', quantity: 3 }], 15_000), { expect: { depositHeld: 5_000 } })).toMatchObject({ outcome: 'conflict', error: { code: 'DEPOSIT_CHANGED', message: '보증금 변경됨 · 재시도 필요' } });
     expect(apply(state, take([{ lineId: 'o22-l4', quantity: 3 }], 15_000, 'card'), { expect: { depositHeld: 0 } }).error?.message).toBe('등록되지 않은 결제 수단');
@@ -153,7 +185,7 @@ describe('보증금 입금(deposit.take)', () => {
   });
 
   it('받으면 팀 · 규칙마다 보관 하나(규칙 값 복사), 돈은 보증금 장부(카운터 돈통)이고 수납 · 미수는 그대로', async () => {
-    const state = createSeed('e');
+    const state = createSeed('e', 'numbered');
     apply(state, { type: 'stock.issue', payload: { orderId: 'o22', lines: [{ lineId: 'o22-l4', quantity: 3 }] } });
     expect(apply(state, take([{ lineId: 'o22-l4', quantity: 3 }], 15_000), { expect: { depositHeld: 0 }, requestId: 'dep-1' }, ms(16, 5)).outcome).toBe('applied');
     const dep = depositOf(state, 'o22', 'lift_ticket_card')!;
@@ -169,11 +201,34 @@ describe('보증금 입금(deposit.take)', () => {
     // 더 받을 매수가 없다.
     expect(apply(state, take([{ lineId: 'o22-l4', quantity: 1 }], 5_000), { expect: { depositHeld: 15_000 } }).error?.message).toBe('보증금 입금 불가 · 권 매수 초과');
   });
+
+  it('첫 매장(보증금 규칙 없음)은 보증금 입금을 받지 않는다', () => {
+    const state = createSeed('e');
+    apply(state, { type: 'stock.issue', payload: { orderId: 'o22', lines: [{ lineId: 'o22-l4', quantity: 3 }] } });
+    expect(apply(state, take([{ lineId: 'o22-l4', quantity: 3 }], 15_000), { expect: { depositHeld: 0 } }).outcome).toBe('rejected');
+    expect(state.deposits).toEqual([]);
+  });
 });
 
 describe('지급 창이 먼저 묻는 보증금 · 이어진 명령', () => {
-  it('확정하면 지급 → 보증금 입금(dependsOn), 접수증 돈 줄에 보증금 15,000원, 다시 열면 보증금을 묻지 않는다', async () => {
-    const { client, pass } = setup();
+  it('첫 매장: 지급 창에 보증금 줄 · 이어진 명령이 없고 주 버튼은 수 셈만(`지급 처리 · 6개 · 3매`), 접수증 돈 줄에 보증금 없음', async () => {
+    const { client } = setup();
+    const view = await client.query('confirmDraft', { orderId: 'o22', actionKey: 'stamp.issue' });
+    expect(view.confirmLabel).toBe('지급 처리 · 6개 · 3매');
+    expect(view.summary.join(' ')).not.toContain('보증금');
+    expect(view.then).toBeUndefined();
+    const { first, chain } = await confirmAll(client, view);
+    expect(first.outcome).toBe('applied');
+    expect(chain).toEqual([]);
+    const slip = await client.query('orderSlip', { orderId: 'o22' });
+    expect(slip.money).toMatchObject({ charged: 225_000, paid: 105_000, due: 120_000 });
+    expect(slip.money.depositHeld ?? 0).toBe(0);
+    const ticket = await client.query('confirmDraft', { orderId: 'o22', actionKey: 'stamp.issue', lineIds: ['o22-l4'] });
+    expect(ticket.notice).toBe('지급 완료');
+  });
+
+  it('번호 · 보증금 매장: 확정하면 지급 → 보증금 입금(dependsOn), 접수증 돈 줄에 보증금 15,000원, 다시 열면 보증금을 묻지 않는다', async () => {
+    const { client, pass } = setup({ shop: 'numbered' });
     const view = await client.query('confirmDraft', { orderId: 'o22', actionKey: 'stamp.issue' });
     pass(25);
     const { draft, chain, first, stopped } = await confirmAll(client, view);
@@ -191,8 +246,8 @@ describe('지급 창이 먼저 묻는 보증금 · 이어진 명령', () => {
     expect(again.notice).toBe('지급 완료');
   });
 
-  it('보증금을 받지 않는 권 · 장비 줄만 여는 지급 창은 예전 그대로(수량 −/+)', async () => {
-    const { client } = setup();
+  it('번호 · 보증금 매장: 보증금을 받지 않는 권 · 장비 줄만 여는 지급 창은 예전 그대로(수량 −/+)', async () => {
+    const { client } = setup({ shop: 'numbered' });
     const ski = await client.query('confirmDraft', { orderId: 'o22', actionKey: 'stamp.issue', lineIds: ['o22-l1'] });
     expect(ski).toMatchObject({ quantity: { value: 2, min: 1, max: 2, unit: '개' }, confirmLabel: '지급 처리' });
     expect(ski.then).toBeUndefined();
@@ -202,8 +257,8 @@ describe('지급 창이 먼저 묻는 보증금 · 이어진 명령', () => {
     expect(ticket.quantity).toBeUndefined();
   });
 
-  it('이어진 명령이 안 되면 거기서 멈추고 그 결과(뒤 명령은 보내지 않음)', async () => {
-    const { client } = setup();
+  it('번호 · 보증금 매장: 이어진 명령이 안 되면 거기서 멈추고 그 결과(뒤 명령은 보내지 않음)', async () => {
+    const { client } = setup({ shop: 'numbered' });
     const view = await client.query('confirmDraft', { orderId: 'o22', actionKey: 'stamp.issue' });
     // 창을 연 뒤 다른 카운터가 보증금을 먼저 받았다: 창이 본 보관 금액(0원)이 이제 맞지 않다.
     const other = await client.query('confirmDraft', { orderId: 'o22', actionKey: 'stamp.issue' });
@@ -217,7 +272,7 @@ describe('지급 창이 먼저 묻는 보증금 · 이어진 명령', () => {
   });
 
   it('서버(체험): 먼저 적용될 명령이 안 된 돈 아닌 명령은 멈춤(blocked), 돈 명령은 멈추지 않는다(sync 2절 · 8-3)', () => {
-    const state = createSeed('e');
+    const state = createSeed('e', 'numbered');
     const issue: ConfirmCommand = { type: 'stock.issue', payload: { orderId: 'o32', lines: [{ lineId: 'o32-l1', quantity: 2 }] } };
     expect(apply(state, issue, { dependsOn: ['never-sent'] })).toMatchObject({ outcome: 'blocked', error: { message: '처리 불가 · 이전 단계 대기' } });
     expect(line(state, 'o32-l1').issued).toBe(0);
@@ -256,7 +311,7 @@ describe('영업일 기준 시각 · 반납 타임(운영 규칙)', () => {
 });
 
 describe('뒷이야기 16:05 ~ 21:50(plan.md 4-2)', () => {
-  it('사건 목록: 1단계의 다섯 시각, 2단계의 19:41 일정 변경, 3단계의 21:31 부분 반납 · 21:32 수납 · 27일 00:15 반납, 5단계의 새 접수 네 팀 · 21:55 반납, 6단계의 16:41 일괄 수납, 7단계의 16:40 적재 · 16:57 배달 · 16:58 권 추가 · 22:00 · 22:10 수거, 8단계의 23:48 매장 입고 · 현금 인계 · 27일 00:32 차량 현금 점검', () => {
+  it('사건 목록: 1단계의 다섯 시각, 2단계의 19:41 일정 변경, 3단계의 21:31 부분 반납 · 21:32 수납 · 27일 00:15 반납, 5단계의 새 접수 네 팀 · 21:55 반납, 6단계의 16:41 일괄 수납, 7단계의 16:40 적재 · 16:57 배달 · 16:58 권 추가 · 22:40 · 23:05 수거(22:00 · 22:10 일정), 8단계의 23:48 매장 입고 · 현금 인계 · 27일 00:32 차량 현금 점검', () => {
     expect(STORY.map((e) => [e.id, new Date(e.at).toISOString()])).toEqual([
       ['park-issue', iso(16, 5)], ['younghee-return', iso(16, 10)], ['jungho-pickup', iso(16, 20)],
       ['minho-order', iso(16, 26)], ['minho-issue', iso(16, 27)], ['jieun-order', iso(16, 28)], ['jieun-issue', iso(16, 29)],
@@ -264,19 +319,20 @@ describe('뒷이야기 16:05 ~ 21:50(plan.md 4-2)', () => {
       ['junseo-order', iso(16, 31)], ['junseo-issue', iso(16, 32)], ['hayun-order', iso(16, 34)], ['hayun-issue', iso(16, 35)],
       ['haeun-load', iso(16, 40)], ['jungho-grouppay', iso(16, 41)], ['haeun-deliver', iso(16, 57)], ['haeun-ticket', iso(16, 58)],
       ['park-promise', iso(19, 41)], ['park-return', iso(21, 31)], ['park-pay', iso(21, 32)],
-      ['oseungmin-collect', iso(21, 50)], ['minho-return', iso(21, 55)], ['van-2200', iso(22, 0)], ['tirol-2210', iso(22, 10)], ['van-2348', iso(23, 48)],
+      ['oseungmin-collect', iso(21, 50)], ['minho-return', iso(21, 55)], ['van-2200', iso(22, 40)], ['tirol-2210', iso(23, 5)], ['van-2348', iso(23, 48)],
       ['haneul-return', iso(0, 15, 1)], ['van-cash-0032', iso(0, 32, 1)],
     ]);
   });
 
-  it('16:30의 하루: 박준호 지급(준비 번호) · 보증금 15,000원, 김영희 반납 · 미수 65,000원 현금, 이정호 수령, 이서연 반납, 1호 차량 16:30 수거', async () => {
+  it('16:30의 하루: 박준호 지급, 김영희 반납 · 미수 65,000원 현금, 이정호 수령, 이서연 반납, 1호 차량 16:30 수거(첫 매장: 보증금 없음)', async () => {
     const { client } = setup({ story: true });
     client.advanceClock(50);
     const ledger = await client.ledgerView('day_ledger', {});
     expect(ledger.serverTime).toBe(iso(16, 30));
     const park = await client.query('orderSlip', { orderId: 'o22' });
     expect(park.lines.map((l) => l.cells['stamp:issue'])).toEqual(Array(4).fill({ renderer: 'stamp', stamp: { stepKey: 'issue', state: 'done', at: iso(16, 5) } }));
-    expect(park.money).toMatchObject({ charged: 225_000, paid: 105_000, due: 120_000, depositHeld: 15_000 });
+    expect(park.money).toMatchObject({ charged: 225_000, paid: 105_000, due: 120_000 });
+    expect(park.money.depositHeld ?? 0).toBe(0);
     expect(park.nextStep).toEqual({ stepKey: 'pay', actionKey: 'stamp.pay', figure: { amount: 120_000 } });
     const younghee = await client.query('orderSlip', { orderId: 'o27' });
     expect(younghee.money).toMatchObject({ due: 0, paid: 125_000 });
@@ -292,8 +348,19 @@ describe('뒷이야기 16:05 ~ 21:50(plan.md 4-2)', () => {
     expect(ledger.metrics.find((m) => m.metricKey === 'due_total')).toMatchObject({ value: 455_000 - 65_000 + 225_000 + 45_000 });
   });
 
-  it('16:30의 돈: 카운터 현금 수납 405,000원(200,000 + 김영희 65,000 + 이민호 권 140,000) · 보증금 15,000 · 20,000원은 수납이 아니라 보증금 장부', () => {
+  it('16:30의 돈(첫 매장): 카운터 현금 수납 405,000원(200,000 + 김영희 65,000 + 이민호 권 140,000), 보증금 장부는 비어 있다', () => {
     const { client } = setup({ story: true });
+    client.advanceClock(50);
+    const state = (client as unknown as { state: FxState }).state;
+    const cash = state.orders.flatMap((o) => o.payments).filter((p) => p.methodKey === 'cash');
+    expect(cash.reduce((sum, p) => sum + p.amount, 0)).toBe(405_000);
+    expect(state.deposits).toEqual([]);
+    expect(state.storyApplied).toEqual(['park-issue', 'younghee-return', 'jungho-pickup', 'minho-order', 'minho-issue', 'jieun-order', 'jieun-issue', 'seoyeon-return', 'van-1630']);
+    expect(state.orders.flatMap((o) => o.lines).some((l) => l.assetIds?.length)).toBe(false);
+  });
+
+  it('16:30의 돈(번호 · 보증금 매장): 카운터 현금 수납 405,000원 · 보증금 15,000 · 20,000원은 수납이 아니라 보증금 장부', () => {
+    const { client } = setup({ story: true, shop: 'numbered' });
     client.advanceClock(50);
     const state = (client as unknown as { state: FxState }).state;
     const cash = state.orders.flatMap((o) => o.payments).filter((p) => p.methodKey === 'cash');
@@ -318,8 +385,8 @@ describe('뒷이야기 16:05 ~ 21:50(plan.md 4-2)', () => {
     expect(list.groups.find((g) => g.key === 's2150')).toMatchObject({ done: 1, total: 1 });
   });
 
-  it('사람이 먼저 지급 · 보증금을 했으면 사건은 건너뛴다(보증금이 두 번 들어가지 않는다)', async () => {
-    const { client, pass } = setup({ story: true });
+  it('번호 · 보증금 매장: 사람이 먼저 지급 · 보증금을 했으면 사건은 건너뛴다(보증금이 두 번 들어가지 않는다)', async () => {
+    const { client, pass } = setup({ story: true, shop: 'numbered' });
     pass(5);
     await confirmAll(client, await client.query('confirmDraft', { orderId: 'o22', actionKey: 'stamp.issue' }));
     client.advanceClock(45);

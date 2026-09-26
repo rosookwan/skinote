@@ -237,6 +237,8 @@ export function profileCssVars(profile: DeviceProfile): Record<string, string> {
     '--sn-font-big': px(profile.bigFontPx),
     /** 확인 창 칸의 굵은 품목 이름(반납 창 품목 칸, spec 3-1: 주 버튼 글자 + 2 = 포스 22px). */
     '--sn-font-name': px(profile.bigFontPx + profile.space.xs / 2),
+    /** 수량 −/+ 버튼의 글자(제목 글자 + 8 = 포스 32 · 기사 30): 얇은 −가 한눈에 보이게(2026-09-26 검토). */
+    '--sn-font-qty': px(profile.titleFontPx + profile.space.s),
     '--sn-target': px(profile.minTargetPx),
     '--sn-target-repeat': px(profile.repeatTargetPx),
     '--sn-primary-h': px(profile.primaryButtonPx),

@@ -61,7 +61,7 @@ describe('V5 읽기 모델(groupPaySheet) — 16:40 이정호 팀', () => {
     expect(view.rows[2]?.partAria).toBe('이민호 · 0042 · 부분 결제 · 품목 선택');
     expect(view.total).toEqual({ amount: 485_000, note: '6팀 · 이정호 팀 결제' });
     expect(view.methods.map((m) => m.label + (m.selected ? '*' : ''))).toEqual(['카드*', '현금', '계좌이체', '기타']);
-    expect(view.others.map((m) => m.label)).toEqual(['간편결제', '상품권']);
+    expect(view.others.map((m) => m.label)).toEqual(['간편결제']);
     expect(view.primary).toEqual({ label: '수납 처리 · 6팀 · 485,000원', alts: ['수납 처리 · 6팀 · 485,000원', '수납 처리 · 485,000원', '수납 처리'], enabled: true });
     expect(view.selectedIds).toEqual(['o32', 'o36', 'n19', 'n20', 'n21', 'n22']);
     // 명령: 돈 한 건(일괄 수납) + 팀마다의 몫(줄 · 수량 · 금액), expect에 합과 팀마다의 받을 금액.

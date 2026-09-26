@@ -8,11 +8,12 @@
 //     번호는 끝난 claim으로). 지급하면 그 번호의 claim이 끝난다(fulfilled).
 //   - 번호 실물의 위치(assets.location_id)는 마지막 이동의 도착지다. 차량 예비권(FxAsset.vehicleId)은 접수 없이 차량에 있는 번호다.
 // 되읽기는 줄의 이동을 적은 차례(rev · 이동 · 줄 번호)로 접는다(foldLine): 적재는 도메인과 같이 max(loaded, issued) + 수.
-import type { FxAsset, FxLine, FxOrder, ShopState } from '@skinote/domain';
+import type { FxAsset, FxLine, FxOrder, FxVanSpare, ShopRegistry, ShopState } from '@skinote/domain';
 import { findDeliverTask, orderIdOfTask, plannedLeft, resolveTask } from '@skinote/domain';
 import { isoOf, msOf } from '../ids.ts';
 import { all, insert, num, one, run, str, text, type Db, type Row } from '../db.ts';
-import { OK_CONDITION, SHOP_LOCATION, customerLocation, variantId, vehicleLocation } from '../registry-keys.ts';
+import { OK_CONDITION, SHOP_LOCATION, customerLocation, defaultVariantId, variantId, vehicleLocation } from '../registry-keys.ts';
+import { recordFinding } from '../journal.ts';
 import { factMeta, idMaker, unmapped, type WriteContext } from './common.ts';
 
 type Ids = ReturnType<typeof idMaker>;
@@ -177,7 +178,9 @@ export function writeStock(ctx: WriteContext, ids: Ids, prevLine: (o: FxOrder, l
             break;
           }
           case 'deliver': {
-            const van = ctx.envelope?.type === 'stock.deliver' ? taskVehicle(ctx, o, 'deliver') : undefined;
+            // 차량 배달은 그 차량에서, 기사의 리프트권 추가(field.add_ticket)는 그 차량의 예비권에서(수량 권은 차량 위치의 수량, 번호 권은 번호의 위치).
+            const fromVan = ctx.envelope?.type === 'stock.deliver' || ctx.envelope?.type === 'field.add_ticket';
+            const van = fromVan ? taskVehicle(ctx, o, 'deliver') : undefined;
             pushUnits((a) => {
               const at = a ? assetLocation(ctx, a) : undefined;
               if (at && (at === SHOP_LOCATION || at.startsWith('vehicle:'))) return at;
@@ -232,7 +235,8 @@ function insertMovement(ctx: WriteContext, ids: Ids, m: Movement): void {
     order_id: m.orderId, ...factMeta(ctx, m.at),
   });
   m.lines.forEach((x, i) => {
-    const variant = x.line.variantKey !== undefined ? variantId(x.line.kind, x.line.variantKey) : undefined;
+    // 수량 줄은 늘 규격을 가진다: 규격 없는 수량 상품(첫 매장의 스키 · 권)은 기본 규격(registry-keys defaultVariantId).
+    const variant = x.line.variantKey !== undefined ? variantId(x.line.kind, x.line.variantKey) : !x.assetId ? defaultVariantId(x.line.kind) : undefined;
     if (!x.assetId && !variant) unmapped('번호도 규격도 없는 이동 줄: ' + x.line.id);
     insert(ctx.db, 'stock_movement_lines', {
       shop_id: ctx.shopId, movement_id: id, line_no: i + 1, catalog_item_id: x.line.kind, asset_id: x.assetId, variant_id: variant, quantity: x.quantity,
@@ -249,11 +253,21 @@ function insertMovement(ctx: WriteContext, ids: Ids, m: Movement): void {
   });
 }
 
-/** 수량 재고(stock_balances, 투영): 음수가 되면 0에 멈춘다(도메인은 고글 재고를 아직 막지 않는다). */
+/**
+ * 수량 재고(stock_balances, 투영). 수량 종류의 재고는 이 투영이 하나뿐이라(첫 매장은 모든 종류가 수량, 2026-09-26) 이동 줄의 합과 같아야
+ * 한다. 음수가 되면(기록된 재고보다 많이 나감: 처음 재고가 틀렸거나 끊긴 기기의 사실이 먼저 옴) 이동은 사실이라 막지 않고 0에 멈추되,
+ * 투영이 이동과 어긋난 것을 확인 결과(integrity_findings `projection_drift`)로 남긴다(관리자 · 공급자가 재고를 다시 셈, sync 8-2).
+ */
 function moveBalance(ctx: WriteContext, location: string, variant: string, delta: number): void {
   const row = one(ctx.db, "SELECT quantity FROM stock_balances WHERE shop_id = ? AND location_id = ? AND variant_id = ? AND condition_id = ? AND owner_key = '' AND lot_key = ''",
     ctx.shopId, location, variant, OK_CONDITION);
-  const value = Math.max(0, num(row?.quantity) + delta);
+  const want = num(row?.quantity) + delta;
+  if (want < 0) {
+    recordFinding(ctx.db, ctx.shopId, {
+      checkKey: 'projection_drift', entityType: 'stock_balances', entityId: location + '|' + variant, expected: { quantity: want }, actual: { quantity: 0 }, now: ctx.now,
+    });
+  }
+  const value = Math.max(0, want);
   if (row) {
     run(ctx.db, "UPDATE stock_balances SET quantity = ?, updated_rev = ? WHERE shop_id = ? AND location_id = ? AND variant_id = ? AND condition_id = ? AND owner_key = '' AND lot_key = ''",
       value, ctx.rev, ctx.shopId, location, variant, OK_CONDITION);
@@ -441,6 +455,49 @@ export function loadAssets(db: Db, shopId: string): FxAsset[] {
     id: str(r.id), kind: str(r.catalog_item_id), no: str(r.serial_no),
     ...(text(r.vehicle_id) !== undefined && text(r.moved_for) === undefined ? { vehicleId: str(r.vehicle_id) } : {}),
   }));
+}
+
+/**
+ * 수량 차량 예비권(ShopState.vanSpares, 번호 없는 매장): 차량 위치의 기초 재고(stock_opening) 수량 줄에서 그 차량이 리프트권 추가로 건넨 수
+ * (차량 위치에서 나간 배달 이동 중 `배달 중 추가` 묶음(order_batches.source_key driver_field)의 줄)를 뺀 수. 이동 사실에서 센다: 차량
+ * 위치의 수량 재고(stock_balances)에는 수거해 온 것도 섞이기 때문이다. 차례는 매장 목록의 차량 → 상품 차례, 다 쓴 행도 0으로 남는다.
+ */
+export function loadVanSpares(db: Db, shopId: string, reg: Pick<ShopRegistry, 'vehicles' | 'products'>): FxVanSpare[] {
+  const rows = all(db, `SELECT loc.vehicle_id, ml.catalog_item_id, sum(CASE WHEN m.kind_key = 'stock_opening' THEN ml.quantity ELSE -ml.quantity END) AS n,
+    max(m.kind_key = 'stock_opening') AS opened
+    FROM stock_movement_lines ml
+    JOIN stock_movements m ON m.shop_id = ml.shop_id AND m.id = ml.movement_id
+    JOIN stock_locations loc ON loc.shop_id = m.shop_id AND loc.id = (CASE WHEN m.kind_key = 'stock_opening' THEN m.to_location_id ELSE m.from_location_id END)
+    LEFT JOIN order_lines ol ON ol.shop_id = ml.shop_id AND ol.id = ml.order_line_id
+    LEFT JOIN order_batches b ON b.shop_id = ol.shop_id AND b.id = ol.batch_id
+    WHERE ml.shop_id = ? AND loc.kind_key = 'vehicle' AND ml.asset_id IS NULL AND ml.variant_id IS NOT NULL
+      AND (m.kind_key = 'stock_opening' OR (m.kind_key = 'deliver' AND b.source_key = 'driver_field'))
+    GROUP BY loc.vehicle_id, ml.catalog_item_id`, shopId);
+  const vehicleOrder = reg.vehicles.map((v) => v.id);
+  const productOrder = Object.keys(reg.products);
+  return rows
+    .filter((r) => num(r.opened) === 1)
+    .map((r): FxVanSpare => ({ vehicleId: str(r.vehicle_id), productKey: str(r.catalog_item_id), quantity: num(r.n) }))
+    .sort((a, b) => vehicleOrder.indexOf(a.vehicleId) - vehicleOrder.indexOf(b.vehicleId) || productOrder.indexOf(a.productKey) - productOrder.indexOf(b.productKey));
+}
+
+/**
+ * 명령 앞뒤의 수량 차량 예비권이 이동과 맞는지: 행은 늘거나 줄지 않고, 줄어드는 수는 그 차량에서 리프트권 추가로 건넨 수량 줄(새로 더한 줄의
+ * 배달 이동)만큼이다.
+ */
+export function checkVanSpares(before: ShopState, after: ShopState, movements: readonly Movement[]): void {
+  const a = before.vanSpares ?? [];
+  const b = after.vanSpares ?? [];
+  if (a.length !== b.length || a.some((x, i) => x.vehicleId !== b[i]!.vehicleId || x.productKey !== b[i]!.productKey)) unmapped('차량 예비권 행이 늘거나 줄었다');
+  const prevLines = new Set(before.orders.flatMap((o) => o.lines.map((l) => l.id)));
+  a.forEach((x, i) => {
+    const given = movements
+      .filter((m) => m.kind === 'deliver' && m.from === vehicleLocation(x.vehicleId))
+      .flatMap((m) => m.lines)
+      .filter((l) => !l.assetId && l.line.kind === x.productKey && !prevLines.has(l.line.id))
+      .reduce((n, l) => n + l.quantity, 0);
+    if (b[i]!.quantity !== x.quantity - given) unmapped('차량 예비권 수가 이동과 다르다: ' + x.vehicleId + ' ' + x.productKey);
+  });
 }
 
 /** 명령 앞뒤의 번호 실물 목록이 이동과 맞는지: 차량 예비권이 사라지는 것은 차량에서 지급한 번호만. 목록 자체는 늘거나 줄지 않는다. */

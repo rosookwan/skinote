@@ -10,7 +10,7 @@ import {
   type TaskSheetParams, type TaskSheetView, type TextRun,
 } from '@skinote/contract';
 import { heldNumbers } from './assets.ts';
-import { liftReturnable, payMethodOf, productOf } from './catalog.ts';
+import { driverMethods, liftReturnable, payMethodOf, productOf } from './catalog.ts';
 import { depositOf, heldAmount, heldRule, heldUnits, orderDepositHeld, planRefunds } from './deposits.ts';
 import type { DomainLines, FxDeposit, FxLine, FxMethodKey, FxOrder, FxPromise, ShopRegistry, ShopState } from './model.ts';
 import { bucketOut, currentReturn, findTask, taskBucket, taskOrder, type FxTask } from './promises.ts';
@@ -77,20 +77,37 @@ const vanDrawer = (vehicleId: string) => 'van:' + vehicleId;
 
 const noOf = (id: string) => Number(id.slice(id.lastIndexOf('-') + 1)) || 0;
 
-/** 차량 예비권(차량에 실린 권, 아직 손님에게 가지 않은 번호): 상품마다 번호 차례. 리프트권 상품만. */
-export function spareTickets(state: ShopState, vehicleId: string): { productKey: string; ids: string[] }[] {
+/**
+ * 차량 예비권 한 권종: 지금 차에 있는 수(quantity)와, 번호로 세는 권이면 그 번호(ids, 번호 차례 · quantity = ids 수). 수량으로 세는 권(첫 매장)은
+ * 번호가 없다(ids 빈 목록).
+ */
+export interface FxSpareTickets {
+  productKey: string;
+  quantity: number;
+  ids: string[];
+}
+
+/**
+ * 차량 예비권(차량에 실린 권, 아직 손님에게 가지 않은 것): 번호로 세는 권은 차량에 있는 번호(assets.vehicleId), 수량으로 세는 권은
+ * 차량 예비 재고(vanSpares). 리프트권 상품만, 남은 것이 있는 권종만.
+ */
+export function spareTickets(state: ShopState, vehicleId: string): FxSpareTickets[] {
   const held = new Set(state.orders.flatMap((o) => o.lines.flatMap((l) => heldNumbers(l))));
   const byProduct = new Map<string, string[]>();
   for (const a of state.assets) {
     if (a.vehicleId !== vehicleId || held.has(a.id) || productOf(state.registry, a.kind)?.section !== 'lift') continue;
     byProduct.set(a.kind, [...(byProduct.get(a.kind) ?? []), a.id]);
   }
-  return [...byProduct.entries()].map(([productKey, ids]) => ({ productKey, ids: ids.sort((x, y) => noOf(x) - noOf(y)) }));
+  const numbered = [...byProduct.entries()].map(([productKey, ids]) => ({ productKey, quantity: ids.length, ids: ids.sort((x, y) => noOf(x) - noOf(y)) }));
+  const counted = (state.vanSpares ?? [])
+    .filter((x) => x.vehicleId === vehicleId && x.quantity > 0 && productOf(state.registry, x.productKey)?.section === 'lift' && !byProduct.has(x.productKey))
+    .map((x) => ({ productKey: x.productKey, quantity: x.quantity, ids: [] as string[] }));
+  return [...numbered, ...counted];
 }
 
 /** 리프트권 추가 버튼의 둘째 줄: 권종 하나면 `야간권 재고 6매`, 둘 이상이면 `예비권 재고 9매`(spec 3-8). 없으면 없음. */
-function spareLine(reg: Pick<ShopRegistry, 'products'>, spare: { productKey: string; ids: string[] }[]): string | undefined {
-  const total = spare.reduce((n, s) => n + s.ids.length, 0);
+function spareLine(reg: Pick<ShopRegistry, 'products'>, spare: readonly FxSpareTickets[]): string | undefined {
+  const total = spare.reduce((n, s) => n + s.quantity, 0);
   if (total === 0) return undefined;
   const only = spare.length === 1 ? productOf(reg, spare[0]!.productKey) : undefined;
   return (only ? only.shortLabel ?? only.label : '예비권') + ' 재고 ' + total + (only?.unit ?? '매');
@@ -103,9 +120,9 @@ export function fieldDue(_state: ShopState, o: FxOrder): number {
   return selfDue(o);
 }
 
-/** 기사가 받을 수 있는 수단(payment_methods.driver_allowed, 빠른 수단 ≤ 3): 카드 · 현금 · 계좌이체. 처음은 현금. */
-export const DRIVER_METHODS: readonly FxMethodKey[] = ['card', 'cash', 'transfer'];
+/** 기사가 받는 수단의 처음 값: 현금(매장 목록에 기사 수단으로 있으면, 없으면 첫 기사 수단). 기사 수단은 매장 목록의 driver(driverMethods). */
 const DRIVER_DEFAULT_METHOD: FxMethodKey = 'cash';
+const driverDefault = (methods: readonly FxMethodKey[]): FxMethodKey | undefined => (methods.includes(DRIVER_DEFAULT_METHOD) ? DRIVER_DEFAULT_METHOD : methods[0]);
 
 
 /** '6개 · 3매'(주 버튼의 수). */
@@ -156,6 +173,8 @@ function moneyLines(ctx: ViewContext, t: FxAnyTask): RichText[] | undefined {
     const late = moneyLateAt(state, o);
     first.push({ text: '미수 ' + won(due), strong: true, ...(late !== undefined && late <= ctx.now ? { tone: 'red' as const } : {}) });
   } else first.push({ text: '미수 없음', strong: true, tone: 'green' });
+  // 배달 자리에서 `후불 처리`를 누른 팀(매장에서 받음, 결제 약속 later): 돈 줄에 `후불`(누른 것이 적혔다는 사실).
+  if (t.kind === 'deliver' && due > 0 && o.payWhen === 'return' && !payer) first.push({ text: ' · 후불' });
   const paid = lastPayment(state, o);
   if (paid) first.push({ text: ' · ' + paid });
   const rule = heldRule(state);
@@ -237,8 +256,12 @@ export function taskSheet(ctx: ViewContext, params: TaskSheetParams): TaskSheetV
   const spareText = spareLine(state.registry, spare);
   const failKey = deliver ? 'not_delivered' : 'not_collected';
   const doneWord = kindWord + ' 완료';
+  // 현장 수납은 이 팀이 스스로 낼 미수가 있을 때만(없으면 숫자판이 할 일이 없다, 2026-09-26 검토). 리프트권 추가 뒤의 수납은 판이 이어서 연다.
+  const due = fieldDue(state, o);
   const actions: TaskSheetAction[] = [
-    { actionKey: 'field_collect', label: ACTION_LABELS.field_collect, enabled: true },
+    due > 0
+      ? { actionKey: 'field_collect', label: ACTION_LABELS.field_collect, enabled: true }
+      : { actionKey: 'field_collect', label: ACTION_LABELS.field_collect, enabled: false, reason: '미수 없음' },
     spareText
       ? { actionKey: 'add_ticket', label: ACTION_LABELS.add_ticket, secondLine: spareText, enabled: true }
       : { actionKey: 'add_ticket', label: ACTION_LABELS.add_ticket, secondLine: '차량 권 재고 없음', enabled: false, reason: '차량 권 재고 없음' },
@@ -313,9 +336,11 @@ export function fieldPaySheet(ctx: ViewContext, params: FieldPaySheetParams): Fi
   const ticket = params.afterTicket ? ticketTaken(state, o, params.afterTicket) : null;
   const due = fieldDue(state, o);
   const payer = promisedPayer(state, o);
-  const methodKey = DRIVER_METHODS.includes(params.methodKey as FxMethodKey) ? (params.methodKey as FxMethodKey) : DRIVER_DEFAULT_METHOD;
+  // 기사 수단은 매장 목록의 driver(첫 매장: 현금 · 계좌이체, 그 밖은 매장에서 후불). 처음은 현금.
+  const allowed = driverMethods(state.registry);
+  const methodKey = allowed.includes(params.methodKey as FxMethodKey) ? (params.methodKey as FxMethodKey) : driverDefault(allowed);
   const amount = Math.max(0, Math.floor(params.amount ?? due));
-  const methods: ChoiceOption[] = DRIVER_METHODS.map((key) => ({ key, label: payMethodOf(state.registry, key)?.label ?? key, selected: key === methodKey, enabled: true }));
+  const methods: ChoiceOption[] = allowed.map((key) => ({ key, label: payMethodOf(state.registry, key)?.label ?? key, selected: key === methodKey, enabled: true }));
   const late = moneyLateAt(state, o);
   const tone = late !== undefined && late <= ctx.now ? { tone: 'red' as const } : {};
   const dueLine: RichText = ticket && ticket.deposit > 0 && due > 0 && methodKey === 'cash'
@@ -331,7 +356,7 @@ export function fieldPaySheet(ctx: ViewContext, params: FieldPaySheetParams): Fi
         : [{ text: '미수 없음', strong: true, tone: 'green' }];
   const name = ACTION_LABELS.field_collect;
   // 받을 돈보다 많이는 받지 않는다(줄에 넣을 수 없는 돈은 수납이 아니다, data-model 5). 받을 돈이 없으면 누를 수 없다.
-  const ok = amount > 0 && due > 0 && amount <= due;
+  const ok = methodKey !== undefined && amount > 0 && due > 0 && amount <= due;
   const methodWord = payMethodOf(state.registry, methodKey)?.label ?? '';
   return {
     basis: { epoch: state.epoch, rev: state.rev },
@@ -342,7 +367,7 @@ export function fieldPaySheet(ctx: ViewContext, params: FieldPaySheetParams): Fi
     primary: ok
       ? { label: name + ' · ' + methodWord + ' ' + won(amount), alts: [name + ' · ' + methodWord + ' ' + won(amount), name + ' · ' + won(amount), name], enabled: true }
       : { label: name, alts: [name], enabled: false },
-    ...(ok ? { command: { type: 'field.collect' as const, payload: { taskId: t.id, orderId: o.id, amount, methodKey } }, expect: { dueAmount: due } } : {}),
+    ...(ok && methodKey ? { command: { type: 'field.collect' as const, payload: { taskId: t.id, orderId: o.id, amount, methodKey } }, expect: { dueAmount: due } } : {}),
     // 후불 처리: 이 팀 미수를 반납 때 받기로(결제 약속 later). 이미 반납 때 받기로 했으면 없음.
     ...(due > 0 && o.payWhen !== 'return'
       ? { leaveUnpaid: { label: ACTION_LABELS.leave_unpaid, command: { type: 'payment_promise.set' as const, payload: { orderId: o.id, payerOrderId: null } } } }
@@ -378,7 +403,7 @@ export function addTicketSheet(ctx: ViewContext, params: AddTicketSheetParams): 
   }
   const product = productOf(state.registry, chosen.productKey)!;
   const unit = product.unit ?? '매';
-  const quantity = Math.min(chosen.ids.length, Math.max(1, Math.floor(params.quantity ?? 1)));
+  const quantity = Math.min(chosen.quantity, Math.max(1, Math.floor(params.quantity ?? 1)));
   const quote = ticketQuote(state, o, product.key, quantity);
   const rule = state.settings.liftDeposit;
   const short = product.shortLabel ?? product.label;
@@ -401,9 +426,9 @@ export function addTicketSheet(ctx: ViewContext, params: AddTicketSheetParams): 
     title,
     products: spare.map((s) => {
       const p = productOf(state.registry, s.productKey);
-      return { key: s.productKey, label: p?.shortLabel ?? p?.label ?? s.productKey, secondLine: '재고 ' + s.ids.length + (p?.unit ?? '매'), selected: s === chosen, enabled: s.ids.length > 0 };
+      return { key: s.productKey, label: p?.shortLabel ?? p?.label ?? s.productKey, secondLine: '재고 ' + s.quantity + (p?.unit ?? '매'), selected: s === chosen, enabled: s.quantity > 0 };
     }),
-    quantity: { value: quantity, min: 1, max: chosen.ids.length, unit },
+    quantity: { value: quantity, min: 1, max: chosen.quantity, unit },
     lines,
     primary: { label, alts: [label, ...moneyAlt, name + ' · ' + quantity + unit, name], enabled: true },
     command: {
@@ -467,7 +492,7 @@ export function fieldCollect(state: ShopState, envelope: CommandEnvelope<'field.
   const t = taskOf(state, p.taskId, p.orderId);
   if (!t) return rejected('업무 없음');
   const methodKey = p.methodKey as FxMethodKey;
-  if (!DRIVER_METHODS.includes(methodKey)) return rejected('등록되지 않은 결제 수단');
+  if (!driverMethods(state.registry).includes(methodKey)) return rejected('등록되지 않은 결제 수단');
   const amount = Math.floor(p.amount);
   if (!(amount > 0)) return rejected('받을 금액 없음');
   const due = fieldDue(state, t.order);
@@ -493,9 +518,10 @@ export function ticketTaken(state: ShopState, o: FxOrder, requestId: string): { 
 
 
 /**
- * 리프트권 추가(field.add_ticket, catalog 11-1): 차량 예비권 번호로 권 줄을 더하고(값 = 그때 요금표, 반납 여부는 운영 규칙에서 복사,
- * 지급까지 한 번에) 규칙이 있으면 보증금 입금(차량 지갑 현금, 보증금 장부 take). 번호는 차량 예비권이어야 하고, 창이 본 가격(quoteHash)과
- * 같아야 한다. 값은 이 팀 미수가 되고 곧바로 현장 수납 판이 받는다(dependsOn).
+ * 리프트권 추가(field.add_ticket, catalog 11-1): 차량 예비권으로 권 줄을 더하고(값 = 그때 요금표, 반납 여부는 운영 규칙에서 복사,
+ * 지급까지 한 번에) 규칙이 있으면 보증금 입금(차량 지갑 현금, 보증금 장부 take). 번호로 세는 권은 차량 예비권 번호(assetIds)여야 하고,
+ * 수량으로 세는 권(첫 매장)은 번호 없이(assetIds 빈 목록) 차량 예비 재고 수 안에서다. 창이 본 가격(quoteHash)과 같아야 한다. 값은 이 팀
+ * 미수가 되고 곧바로 현장 수납 판이 받는다(dependsOn).
  */
 export function addTicket(state: ShopState, envelope: CommandEnvelope<'field.add_ticket'>, now: number, lines: DomainLines): Result {
   const p = envelope.payload;
@@ -505,11 +531,17 @@ export function addTicket(state: ShopState, envelope: CommandEnvelope<'field.add
   const product = productOf(state.registry, p.productKey);
   if (!product || product.section !== 'lift') return unsupported(lines);
   const vehicleId = vehicleOf(t);
-  const spare = spareTickets(state, vehicleId).find((s) => s.productKey === product.key)?.ids ?? [];
+  const spare = spareTickets(state, vehicleId).find((s) => s.productKey === product.key);
+  const numbers = spare?.ids ?? [];
+  const byNumber = numbers.length > 0;
   const quantity = Math.floor(p.quantity);
-  if (!(quantity > 0) || p.assetIds.length !== quantity || p.assetIds.some((id) => !spare.includes(id)) || new Set(p.assetIds).size !== quantity) {
-    return rejected('차량 권 재고 없음');
-  }
+  // 수량 예비권: 연결된 기기는 기록된 차량 재고 안에서만. 보냄 대기로 온 명령은 이미 손님에게 건넨 사실이라(sync 8-12) 그 차량에 그 권종의
+  // 예비권 행이 있으면 기록보다 많아도 적는다: 행이 0 아래로 가고(추가 판이 닫힘) 확인 필요 `차량 재고 확인`이 뜬다(views.ts reviewList).
+  const countRow = (state.vanSpares ?? []).find((x) => x.vehicleId === vehicleId && x.productKey === product.key);
+  const ok = byNumber
+    ? quantity > 0 && p.assetIds.length === quantity && p.assetIds.every((id) => numbers.includes(id)) && new Set(p.assetIds).size === quantity
+    : quantity > 0 && p.assetIds.length === 0 && (quantity <= (spare?.quantity ?? 0) || (queued(envelope) && countRow !== undefined));
+  if (!ok) return rejected('차량 권 재고 없음');
   const quote = ticketQuote(state, o, product.key, quantity);
   if (!queued(envelope) && envelope.expect?.quoteHash !== quote.hash) return conflict('QUOTE_CHANGED', '받을 금액 변경됨 · 재시도 필요');
   if (p.amount !== quote.amount || (p.deposit?.amount ?? 0) !== (quote.deposit?.amount ?? 0)) return conflict('QUOTE_CHANGED', '받을 금액 변경됨 · 재시도 필요');
@@ -519,13 +551,17 @@ export function addTicket(state: ShopState, envelope: CommandEnvelope<'field.add
     id: o.id + '-l' + n, kind: product.key, productKey: product.key, label: product.label, shortLabel: product.shortLabel ?? product.label, qty: quantity,
     ...(product.unit ? { unit: product.unit } : {}), countWord: product.countWord, amount: quote.amount, section: product.section,
     returnable: liftReturnable(state.settings), capabilities: [...product.capabilities], tracking: product.tracking,
-    loaded: 0, issued: quantity, issuedAt: now, returned: 0, collected: 0, received: 0, assetIds: [...p.assetIds],
+    loaded: 0, issued: quantity, issuedAt: now, returned: 0, collected: 0, received: 0, ...(byNumber ? { assetIds: [...p.assetIds] } : {}),
   };
   o.lines.push(line);
-  // 손님에게 간 권은 차량 예비권이 아니다(돌아오면 매장 재고).
-  for (const id of p.assetIds) {
-    const asset = state.assets.find((a) => a.id === id);
-    if (asset) delete asset.vehicleId;
+  if (byNumber) {
+    // 손님에게 간 권은 차량 예비권이 아니다(돌아오면 매장 재고).
+    for (const id of p.assetIds) {
+      const asset = state.assets.find((a) => a.id === id);
+      if (asset) delete asset.vehicleId;
+    }
+  } else if (countRow) {
+    countRow.quantity -= quantity;
   }
   const rule = state.settings.liftDeposit;
   if (quote.deposit && rule && line.returnable) {
@@ -536,7 +572,7 @@ export function addTicket(state: ShopState, envelope: CommandEnvelope<'field.add
     }
     const methodKey = rule.methods[0] ?? 'cash';
     dep.entries.push({
-      id: envelope.requestId + ':d', kind: 'take', lineId: line.id, quantity, assetIds: [...p.assetIds], amount: quote.deposit.amount, methodKey, at: now,
+      id: envelope.requestId + ':d', kind: 'take', lineId: line.id, quantity, ...(byNumber ? { assetIds: [...p.assetIds] } : {}), amount: quote.deposit.amount, methodKey, at: now,
       ...(methodKey === 'cash' ? { drawerId: vanDrawer(vehicleId) } : {}),
     });
   }

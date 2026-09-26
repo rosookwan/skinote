@@ -144,14 +144,18 @@ export function quoteOf(
 
 // ── 결제 칸 · 결제 수단 · 할인(V4 접수 확정 창, catalog 9 · 15 · spec 2-3) ─────────────────────────────
 
-/** 돈 수단(payment_methods). quick = 확정 창의 버튼, 나머지는 `기타` 판. */
+/** 돈 수단(payment_methods). quick = 확정 창의 버튼, 나머지는 `기타` 판. driver = 기사가 현장에서 받는 수단(driver_allowed). */
 export interface FxPayMethod {
   key: FxMethodKey;
   label: string;
   quick: boolean;
+  driver: boolean;
 }
 
 export const payMethodOf = (reg: Pick<ShopRegistry, 'payMethods'>, key: string | undefined): FxPayMethod | undefined => reg.payMethods.find((m) => m.key === key);
+
+/** 기사가 현장에서 받는 수단(payment_methods.driver_allowed, 목록 차례). 첫 매장은 현금 · 계좌이체(카드 단말기는 카운터 1대, 2026-09-26). */
+export const driverMethods = (reg: Pick<ShopRegistry, 'payMethods'>): FxMethodKey[] => reg.payMethods.filter((m) => m.driver).map((m) => m.key);
 
 /** 결제 칸(payment_sections): 칸 이름과 기본 수단(장비 카드 · 리프트권 현금, spec 2-3). 보증금 칸은 보증금 규칙에서 온다. */
 export interface FxPaySection {

@@ -36,6 +36,26 @@ function lineRow(line: SlipLine): LedgerRowModel {
   return { id: line.id, rank: '', finished: false, cells: line.cells };
 }
 
+/**
+ * 돈 줄의 수단 조각(2026-09-26 검토: 여러 수단으로 낸 팀이 한 수단으로 읽히지 않게). 수단마다 묶어 오늘 받은 수단을 먼저(큰 금액부터), 다른 날
+ * 받은 것(선입금)은 날짜를 붙인다('계좌이체 12/24'). 수단이 하나면 수단 이름만(`카드`), 둘 이상이면 수단마다 금액(`카드 225,000원 · 현금
+ * 140,000원`). 좁으면 이 조각이 통째로 빠진다(청구 · 수납은 남음).
+ */
+export function paymentParts(payments: readonly { amount: number; methodLabel: string; date: string }[], businessDate: string): TextPart[] {
+  const groups = new Map<string, { method: string; amount: number; today: boolean; date: string }>();
+  for (const p of payments) {
+    const g = groups.get(p.methodLabel) ?? { method: p.methodLabel, amount: 0, today: false, date: p.date };
+    g.amount += p.amount;
+    g.today ||= p.date === businessDate;
+    groups.set(p.methodLabel, g);
+  }
+  const list = [...groups.values()].sort((a, b) => Number(b.today) - Number(a.today) || b.amount - a.amount);
+  const name = (g: (typeof list)[number]) => (g.today ? g.method : g.method + ' ' + g.date.slice(5).replace('-', '/'));
+  if (list.length === 0) return [];
+  if (list.length === 1) return [{ text: name(list[0]!), drop: 5 }];
+  return [{ text: list.map((g) => t('methodAmount', { method: name(g), amount: formatWon(g.amount) })).join(' · '), drop: 5 }];
+}
+
 export function Slip({ slip, view, steps, nowMs, itemsPage, onItemsPaging, onStampPress, tableSize, onZoomReset }: SlipProps) {
   const profile = useDeviceProfile();
   const { timezone } = useUi();
@@ -123,7 +143,7 @@ export function Slip({ slip, view, steps, nowMs, itemsPage, onItemsPaging, onSta
         { text: t('forOthers', { amount: formatWon(others.amount) }), drop: 3 },
         { text: t('methodAmount', { method: others.methodLabel, amount: formatWon(others.total) }), drop: 5 },
       ]
-      : money.payments.slice(0, 1).map((p) => ({ text: p.date === slip.businessDate ? p.methodLabel : p.methodLabel + ' ' + p.date.slice(5).replace('-', '/'), drop: 5 }))),
+      : paymentParts(money.payments, slip.businessDate)),
     ...(money.depositHeld ? [{ text: t('depositHeld', { amount: formatWon(money.depositHeld) }), drop: 3 }] : []),
     ...(money.promisedBy ? [{ text: t('promisedBy', { team: money.promisedBy.teamName, amount: formatWon(money.promisedBy.amount) }), drop: 1 }] : []),
     ...(money.collectTotal !== undefined && money.due > 0 ? [{ text: t('due', { amount: formatWon(money.due) }), drop: 1 }] : []),

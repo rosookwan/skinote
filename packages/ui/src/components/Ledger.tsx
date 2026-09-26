@@ -5,7 +5,7 @@ import type { LedgerColumnRow, LedgerViewResult, ResolvedLedgerView, StampStepRo
 import {
   columnSpecs, fitColumns, initialPage, nowLineIndex, paginate, type ColumnLayout, type FittedColumn, type Page, type PageEntry,
 } from '@skinote/layout';
-import { useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { isLate, useDeviceProfile } from '../context.tsx';
 import type { Size } from '../device-profile.ts';
 import { useElementSize, useFontsVersion } from '../measure.ts';
@@ -121,19 +121,30 @@ export function Ledger({ view, result, steps, nowMs, page, onPaging, selectedRow
       case 'groups': {
         // 한 쪽에 합친 묶음 제목: 넘치면 개수를 빼고, 그다음 짧은 이름만('16:30 · 21:50 · 22:00'), 끝으로 '16:30 반납 외 2'.
         // 낱말을 잘라 묶음 하나가 사라지거나 '·'가 매달리지 않게 통째로 바꾼다.
+        // 늦음 색은 늦은 묶음의 조각에만(끝난 16:30 · 21:50 묶음까지 빨개지지 않게, 2026-09-26 검토): 글은 조각으로 만들고 고른 글을 조각마다 그린다.
         const list = entry.keys.map((key) => groups.get(key));
         const label = (key: string, g: (typeof list)[number]) => g?.label ?? key;
-        const more = entry.continued ? ' · ' + t('continued') : '';
-        const alts = [
-          entry.keys.map(groupText).join(' · ') + more,
-          entry.keys.map((key, n) => label(key, list[n])).join(' · ') + more,
-          entry.keys.map((key, n) => list[n]?.shortLabel ?? label(key, list[n])).join(' · '),
-          ...(entry.keys.length > 1 ? [t('groupsMore', { first: list[0]?.shortLabel ?? label(entry.keys[0]!, list[0]), n: entry.keys.length - 1 })] : []),
+        const late = (key: string) => lateGroups.has(key);
+        const more = entry.continued ? [{ text: t('continued'), late: false }] : [];
+        const segmentAlts: { text: string; late: boolean }[][] = [
+          [...entry.keys.map((key) => ({ text: groupText(key), late: late(key) })), ...more],
+          [...entry.keys.map((key, n) => ({ text: label(key, list[n]), late: late(key) })), ...more],
+          entry.keys.map((key, n) => ({ text: list[n]?.shortLabel ?? label(key, list[n]), late: late(key) })),
+          ...(entry.keys.length > 1
+            ? [[{ text: t('groupsMore', { first: list[0]?.shortLabel ?? label(entry.keys[0]!, list[0]), n: entry.keys.length - 1 }), late: entry.keys.some(late) }]]
+            : []),
         ];
-        const tone = groupTone(entry.keys);
+        const alts = segmentAlts.map((segments) => segments.map((x) => x.text).join(' · '));
+        const paint = (text: string): ReactNode => {
+          const segments = segmentAlts[alts.indexOf(text)];
+          if (!segments) return text;
+          return segments.map((x, n) => (
+            <Fragment key={n}>{n ? ' · ' : ''}{x.late ? <span className="tone-late">{x.text}</span> : x.text}</Fragment>
+          ));
+        };
         return (
           <tr key={'g' + i} className="sn-group-row">
-            <th colSpan={colSpan} scope="colgroup"><TextFit input={{ mode: 'alts', alts }} {...(tone ? { className: tone } : {})} /></th>
+            <th colSpan={colSpan} scope="colgroup"><TextFit input={{ mode: 'alts', alts }} render={paint} /></th>
           </tr>
         );
       }

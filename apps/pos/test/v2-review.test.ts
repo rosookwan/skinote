@@ -11,7 +11,7 @@ import { autoSendStep } from '../src/screens/GroupPayScreen.tsx';
 import { chainRetry, confirmEnvelope, draftOptions } from '../src/components/ConfirmFlow.tsx';
 import { chainStep, returnPages } from '../src/components/ReturnDialog.tsx';
 import { EMPTY_NEW_ORDER, hasDraft, withName, withQuantity } from '../src/app/new-order-draft.ts';
-import { canOffset, depositOf, dueFor, type FxOrder, type FxState, heldAmount, heldNumbers, kstAt, moneyLateAt, othersDue, ownDue, selfDue } from '@skinote/domain';
+import { canOffset, depositOf, dueFor, type FxOrder, type FxState, heldAmount, heldNumbers, kstAt, moneyLateAt, othersDue, ownDue, type SampleShop, selfDue } from '@skinote/domain';
 import { applyCommand } from '../src/fixture/demo.ts';
 import { FixtureClient } from '../src/fixture/fixture-client.ts';
 
@@ -19,8 +19,8 @@ const ms = (h: number, m: number, day = 0) => kstAt('2026-12-26', day, h, m);
 const text = (runs: RichText) => runs.map((r) => r.text).join('');
 
 /** 체험 시계를 15:40에서 minutes만큼(뒷이야기 켬이 기본: 16:40 = 60분). */
-function at(minutes: number, story = true) {
-  const client = new FixtureClient({ realNow: () => 1_800_000_000_000, story });
+function at(minutes: number, story = true, shop: SampleShop = 'first') {
+  const client = new FixtureClient({ realNow: () => 1_800_000_000_000, story, shop });
   client.advanceClock(minutes);
   const state = () => (client as unknown as { state: FxState }).state;
   return { client, state };
@@ -96,8 +96,8 @@ describe('이 팀이 스스로 낼 미수(selfDue): 줄 단위 결제 약속이 
 });
 
 describe('돌려받지 않는 리프트권(반납 선택)에는 보증금이 없다', () => {
-  it('반납 선택이면 접수 확정 창에 보증금 칸이 없고, 접수해도 보증금을 받지 않는다', async () => {
-    const { client, state } = at(60);
+  it('보증금을 켠 매장이라도 반납 선택이면 접수 확정 창에 보증금 칸이 없고, 접수해도 보증금을 받지 않는다', async () => {
+    const { client, state } = at(60, true, 'numbered');
     state().settings.liftReturnPolicy = 'optional';
     const draft = walkIn('반납선택', '01000000092', [{ productKey: 'ski', quantity: 2 }, { productKey: 'night_adult', quantity: 2 }]);
     const sheet = await client.query('checkoutSheet', { draft });
@@ -138,8 +138,8 @@ describe('수납 · 번호 명령의 틀린 값', () => {
     expect(state().paymentGroups.every((g) => g.amount > 0)).toBe(true);
   });
 
-  it('같은 번호를 두 번 보내도 실물 하나: 반납 · 지급의 수는 서로 다른 번호의 수', () => {
-    const { state } = at(0, false);
+  it('번호 매장: 같은 번호를 두 번 보내도 실물 하나: 반납 · 지급의 수는 서로 다른 번호의 수', () => {
+    const { state } = at(0, false, 'numbered');
     const s = state();
     const ski = orderOf(s, 'o27').lines[0]!;
     const [first, second] = heldNumbers(ski);
@@ -231,7 +231,7 @@ describe('마감', () => {
     expect(ready.confirm?.title).toBe('마감 · 12월 26일');
     expect(ready.confirm?.line).toMatch(/^26일 반납 예정 \d+개 · 1호 차량 미입고$/);
     const late = at(540);
-    const lateCount = (await late.client.query('closingSheet', { check: { key: 'counter', countedAmount: 545_000 } })).check?.count;
+    const lateCount = (await late.client.query('closingSheet', { check: { key: 'counter', countedAmount: 540_000 } })).check?.count;
     const lateReady = await late.client.query('closingSheet', { counts: [lateCount!] });
     expect(lateReady.next?.kind).toBe('close');
     expect(lateReady.confirm).toBeUndefined();
@@ -269,8 +269,8 @@ describe('새 접수 초안', () => {
 });
 
 describe('막힌 이어진 명령을 창 안에서 다시(data-model 4-18)', () => {
-  it('반납은 되었는데 보증금 반환이 막히면: 반납 창이 돌아온 권의 보증금만 다시 묻는다(새 요청번호), 처리 현황에 `보증금 반환 · 10,000원`', async () => {
-    const { client, state } = at(340);
+  it('보증금 매장: 반납은 되었는데 보증금 반환이 막히면: 반납 창이 돌아온 권의 보증금만 다시 묻는다(새 요청번호), 처리 현황에 `보증금 반환 · 10,000원`', async () => {
+    const { client, state } = at(340, true, 'numbered');
     const s = state();
     // 21:20 박준호: 권 두 매가 돌아왔는데(반납은 적용) 보증금 반환은 보내지 못했다.
     expect(apply(s, { type: 'stock.direct_return', payload: { orderId: 'o22', lines: [{ lineId: 'o22-l4', quantity: 2, assetIds: ['night_adult-31', 'night_adult-32'] }] } }, {}, ms(21, 20)).outcome).toBe('applied');
@@ -288,8 +288,8 @@ describe('막힌 이어진 명령을 창 안에서 다시(data-model 4-18)', () 
     expect(only.expect).toEqual({ depositHeld: 15_000, dueAmount: 120_000 });
   });
 
-  it('지급은 되었는데 보증금 입금이 막히면: 지급 창이 보증금 입금만 다시 묻는다', async () => {
-    const { client, state } = at(0, false);
+  it('보증금 매장: 지급은 되었는데 보증금 입금이 막히면: 지급 창이 보증금 입금만 다시 묻는다', async () => {
+    const { client, state } = at(0, false, 'numbered');
     const s = state();
     expect(apply(s, { type: 'stock.issue', payload: { orderId: 'o22', lines: [{ lineId: 'o22-l4', quantity: 3 }] } }, {}, ms(15, 45)).outcome).toBe('applied');
     const view = await client.query('confirmDraft', { orderId: 'o22', actionKey: 'stamp.issue', lineIds: ['o22-l4'] });

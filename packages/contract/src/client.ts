@@ -8,7 +8,7 @@ import type {
 import type {
   AddTicketSheetParams, AddTicketSheetView, CheckoutChoice, CheckoutSheetParams, CheckoutSheetView, ClosingSheetParams, ClosingSheetView,
   FieldPaySheetParams, FieldPaySheetView, GroupPaySheetParams, GroupPaySheetView, LineUnits, OrderDraftInput, OrderDraftParams, OrderDraftView,
-  PartialPaySheetParams, PartialPaySheetView, PromiseInput, PromiseSheetParams, PromiseSheetView, ReturnSheetParams, ReturnSheetView, RuleChange,
+  PartialPaySheetParams, PartialPaySheetView, PromiseInput, PromiseSheetParams, PromiseSheetView, ReturnPieceLine, ReturnSheetParams, ReturnSheetView, RuleChange,
   ShopRulesParams, ShopRulesView, TaskSheetParams, TaskSheetView,
 } from './sheets.ts';
 import { newRequestId } from './request-id.ts';
@@ -35,6 +35,11 @@ export interface ConfirmDraftParams {
   taskId?: string;
   /** 차량 단위 일(매장 입고 · 시간순 되돌리기 · 인쇄)의 차량. */
   vehicleId?: string;
+  /**
+   * 수량 칸(ConfirmDraftView.counts)이 있는 창에서 사람이 고른 줄마다의 수(없으면 모두: 창을 연 때의 잔여 수). 고를 때마다 이 인자로 다시
+   * 물으면 요약 · 주 버튼 · 명령을 새로 써 준다(반납 창 returnSheet의 picked와 같은 모양).
+   */
+  picked?: LineUnits[];
 }
 
 /** 확인 창이 확정하면 보낼 명령(종류와 본문). 창은 수량 −/+ · 고른 수단만 본문에 넣고, 나머지는 서버가 정한 그대로 보낸다. */
@@ -82,6 +87,11 @@ export interface ConfirmDraftView {
   template?: ConfirmTemplateKey;
   /** command 뒤에 이어서 보낼 명령들(앞 명령에 dependsOn). */
   then?: ConfirmStep[];
+  /**
+   * 줄마다의 수량 −/+ 칸(수량으로 세는 줄 여럿: 지급 · 적재 · 배달 · 수거, 2026-09-26 첫 매장). 처음 값은 잔여 수 그대로(모두 골라 둠)이고
+   * 안 가져온 · 안 준 것만 낮춘다. 낮춘 수는 요약의 `잔여 · …` 줄에 있다. 반납 창(V1)의 수량 칸과 같은 모양(mode 'count').
+   */
+  counts?: ReturnPieceLine[];
 }
 
 /** 틀이 따로인 조회(ui 7절: orderSlip · confirmDraft · reviewList · vehicleLoad, 끝 4자리 찾기). */

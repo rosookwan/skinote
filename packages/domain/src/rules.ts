@@ -1,15 +1,41 @@
 // 접수 · 줄의 기본 규칙(돈 · 물건 · 다음 약속 · 늦음 · 능력 · 차량 수거 경로). 읽기 모델(views.ts · stamps.ts)과 명령 처리기가 쓴다.
 // 화면(부품 · 화면 틀)은 이 규칙을 부르지 않는다 — 읽기 모델만 받는다(ADR-05).
 import type { ConditionKey } from '@skinote/contract';
-import type { FxLine, FxOrder, FxPin, FxReturnSlot, FxVisitOutcome, ShopRegistry, ShopState } from './model.ts';
+import type { FxLine, FxOrder, FxPin, FxPromise, FxReturnSlot, FxShopRules, FxVisitOutcome, ShopRegistry, ShopState } from './model.ts';
 import { collectTaskIdOf, currentReturn, findTask, orderTasks, taskOrder, type FxTask } from './promises.ts';
-import { HOUR, MINUTE, hm, kstAt, onBizDay, type BizDay, shopCutoff } from './time.ts';
+import { HOUR, MINUTE, bizHm, hm, kstAt, minutesOf, onBizDay, type BizDay, shopCutoff } from './time.ts';
 
-/** 매장 반납은 약속 30분 뒤, 차량 수거는 60분 뒤부터 늦음(빨강). */
+/** 매장 반납은 약속 30분 뒤, 차량 수거는 60분 뒤부터 늦음(빨강). 차량의 여유는 매장 설정(vehicleLate)이 있으면 그 값이다. */
 export const LATE_AFTER_STORE = 30 * MINUTE;
 export const LATE_AFTER_VEHICLE = 60 * MINUTE;
-/** 야간 수거 준비 안내는 그 반납 타임 60분 전부터(ui 6-1). */
+/** 야간 수거 준비 안내는 그 반납 타임 60분 전부터(ui 6-1). 매장 설정(nightNoticeMinutes)이 있으면 그 값이다. */
 export const NIGHT_PREP_BEFORE = HOUR;
+
+/** 야간 반납 타임(표의 return_slots.is_night와 같은 기준: 20시 이후 반납 타임) 중 가장 이른 것의 영업일 안 분. 없으면 undefined. */
+function nightStartMinutes(settings: Pick<FxShopRules, 'returnSlots'>): number | undefined {
+  const night = settings.returnSlots.filter((s) => s.hour >= 20).map((s) => s.hour * 60 + s.minute);
+  return night.length ? Math.min(...night) : undefined;
+}
+
+/**
+ * 약속이 늦음(빨강)이 되기까지의 여유: 매장 30분, 차량은 매장 설정 vehicle_late_after_minutes(없으면 60분). 야간 반납 타임(첫 매장 22:00)
+ * 이후의 차량 약속은 nightMinutes: 스키장이 22:00에 끝나 손님 연락이 22:30 ~ 23:00에 오는 매장은 그 시각의 수거가 늦음이 아니다(D7 답 15).
+ */
+export function lateAfter(settings: Pick<FxShopRules, 'returnSlots' | 'vehicleLate' | 'businessDayCutoff' | 'cutoffBefore'>, promise: Pick<FxPromise, 'at' | 'mode'>): number {
+  if (promise.mode !== 'vehicle') return LATE_AFTER_STORE;
+  const late = settings.vehicleLate;
+  if (!late) return LATE_AFTER_VEHICLE;
+  const night = nightStartMinutes(settings);
+  const atNight = night !== undefined && minutesOf(bizHm(promise.at, shopCutoff(settings))) >= night;
+  return (atNight ? late.nightMinutes : late.minutes) * MINUTE;
+}
+
+/** 약속의 늦음 기준 시각(약속 시각 + lateAfter). */
+export const lateAtOf = (settings: Parameters<typeof lateAfter>[0], promise: Pick<FxPromise, 'at' | 'mode'>): number => promise.at + lateAfter(settings, promise);
+
+/** 야간 수거 준비 안내를 반납 타임 몇 ms 전부터(매장 설정 night_collection_notice_minutes, 없으면 60분). */
+export const nightNoticeBefore = (settings: Pick<FxShopRules, 'nightNoticeMinutes'>): number =>
+  settings.nightNoticeMinutes !== undefined ? settings.nightNoticeMinutes * MINUTE : NIGHT_PREP_BEFORE;
 
 // ── 영업일 · 반납 타임(운영 규칙 settings) ─────────────────────────────────
 
@@ -229,15 +255,15 @@ export function nextDue(state: ShopState, o: FxOrder): NextDue | null {
   if (pendingIssue(o)) {
     if (isVehiclePickup(o)) {
       const loaded = o.lines.every((l) => Math.max(l.loaded, l.issued) >= l.qty);
-      // 차량 배달은 약속 시각까지 싣고 떠나야 한다. 실은 뒤에는 기사가 전하는 시각 + 60분.
-      return { kind: 'deliver', at: o.pickup.at, lateAt: loaded ? o.pickup.at + LATE_AFTER_VEHICLE : o.pickup.at };
+      // 차량 배달은 약속 시각까지 싣고 떠나야 한다. 실은 뒤에는 기사가 전하는 시각 + 차량 여유(60분).
+      return { kind: 'deliver', at: o.pickup.at, lateAt: loaded ? lateAtOf(state.settings, o.pickup) : o.pickup.at };
     }
     return { kind: 'pickup', at: o.pickup.at };
   }
   if (pendingReturn(o)) {
     // 일정이 나뉜 접수는 아직 남은 것 중 가장 이른 일정(일정 변경 N2).
     const back = currentReturn(o);
-    return { kind: 'return', at: back.at, lateAt: back.at + (back.mode === 'vehicle' ? LATE_AFTER_VEHICLE : LATE_AFTER_STORE) };
+    return { kind: 'return', at: back.at, lateAt: lateAtOf(state.settings, back) };
   }
   if (ownDue(o) > 0 || othersDue(state, o) > 0) return { kind: 'pay', at: o.giveBack.at, lateAt: o.giveBack.at + LATE_AFTER_STORE };
   return null;
@@ -247,7 +273,12 @@ export function nextDue(state: ShopState, o: FxOrder): NextDue | null {
 export function moneyLateAt(state: ShopState, o: FxOrder): number | undefined {
   // 이 팀이 스스로 낼 돈과 대신 낼 돈만 이 팀의 늦음이다(다른 팀이 내기로 한 줄은 그 팀의 늦음).
   if (selfDue(o) + othersDue(state, o) === 0) return undefined;
-  if (o.payWhen === 'return') return currentReturn(o).at + LATE_AFTER_STORE;
+  // 반납 때 받기로 한 돈은 반납 일정 30분 뒤. 차량 늦음 설정(vehicleLate)이 있는 매장의 차량 수거는 그 수거가 늦을 때 늦는다(밤 수거를
+  // 기다리는 동안 기사 화면의 미수가 빨개지지 않게, 2026-09-26 답 15). 설정이 없는 매장은 전과 같다.
+  if (o.payWhen === 'return') {
+    const back = currentReturn(o);
+    return back.mode === 'vehicle' && state.settings.vehicleLate ? Math.max(back.at + LATE_AFTER_STORE, lateAtOf(state.settings, back)) : back.at + LATE_AFTER_STORE;
+  }
   return pendingIssue(o) ? undefined : o.pickup.at + LATE_AFTER_STORE;
 }
 

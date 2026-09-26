@@ -1,13 +1,15 @@
 // 둘째 판 9단계(work/impl-v2/plan.md 5절 Step 9): V8 관리 · 매장 설정 · 운영 규칙(spec 3-9, ui 6-9, catalog 2 · 3 · 11-1, data-model 3-3 · 4-4).
 // 읽기 모델(shopRules: 카드 · 바뀐 곳 · 바닥줄 · 주 버튼 · 저장 명령 · 거절 까닭), 저장(setting.set: 다음 기록부터, 기준 시각은 옛 기준과 새 기준
 // 사이에 거절, 보증금 미사용이어도 맡은 보증금은 반환), 화면의 초안 도우미(settings-draft.ts)와 카드 쪽 나누기(rulesLayout · saveRowsPerPage).
+// 첫 매장(체험판 기본, 2026-09-26)의 값: 리프트권 반납 필수 · 리프트권 보증금 미사용(권 카드의 1,000원은 리조트와 가게 사이의 돈) · 선입금 전액 ·
+// 당일 취소 환불 · 06:00. 보증금 줄(입금 시점 · 미반납 시 · 분실금)의 셈은 보증금을 켠 매장(shop 'numbered')으로 본다.
 import { readFileSync } from 'node:fs';
 import { envelopeFor, parseRuleKey, type ConfirmCommand, type RuleChange, type ShopRulesView } from '@skinote/contract';
 import { fitList } from '@skinote/layout';
 import { DEVICE_PROFILES, openOrRestoreDraft } from '@skinote/ui';
 import { describe, expect, it } from 'vitest';
 import { inputAccepts, optionPress, padValue, withChange } from '../src/app/settings-draft.ts';
-import { businessDateOf, type FxState, heldRule, kstAt, liftReturnable, ruleKeys, shopCutoff } from '@skinote/domain';
+import { businessDateOf, type FxState, heldRule, kstAt, liftReturnable, ruleKeys, type SampleShop, shopCutoff } from '@skinote/domain';
 import { SHOP_RULES, sampleRegistry } from '@skinote/domain/sample';
 import { FixtureClient } from '../src/fixture/fixture-client.ts';
 import { rulesLayout, saveRowsPerPage, settingsTabs } from '../src/screens/ShopSettingsScreen.tsx';
@@ -15,8 +17,8 @@ import { rulesLayout, saveRowsPerPage, settingsTabs } from '../src/screens/ShopS
 const ms = (h: number, m: number, day = 0) => kstAt('2026-12-26', day, h, m);
 
 /** 15:40에서 minutes만큼(27일 00:40 = 540분). 카운터 기기. */
-function at(minutes = 0, story = true) {
-  const client = new FixtureClient({ realNow: () => 1_800_000_000_000, story });
+function at(minutes = 0, story = true, shop: SampleShop = 'first') {
+  const client = new FixtureClient({ realNow: () => 1_800_000_000_000, story, shop });
   if (minutes) client.advanceClock(minutes);
   const state = () => (client as unknown as { state: FxState }).state;
   return { client, state };
@@ -54,9 +56,45 @@ const THREE: RuleChange[] = [
   { key: K.cutoff, value: '03:00' },
 ];
 
-describe('V8 읽기 모델(shopRules) — 이 매장의 저장된 값(catalog 3 · spec 2-3)', () => {
-  it('카드 다섯 장(행에서): 리프트권 반납 · 리프트권 보증금 · 리프트권 결제 · 전화 예약 · 당일 취소 환불(한 줄) · 영업일 기준 시각, 변경 없음', async () => {
+describe('V8 읽기 모델(shopRules) — 첫 매장의 저장된 값(2026-09-26 사장님 답)', () => {
+  it('카드 다섯 장: 리프트권 반납 필수 · 리프트권 보증금 미사용(회색 한 줄) · 선입금 전액 · 당일 취소 환불 · 06:00, 변경 없음', async () => {
     const { client } = at();
+    const view = await client.query('shopRules', {});
+    expect(view.cards.map((c) => [c.title, c.inline, c.changed])).toEqual([
+      ['리프트권 반납', false, false], ['리프트권 보증금', false, false], ['리프트권 결제 · 전화 예약', false, false], ['당일 취소 환불', true, false], ['영업일 기준 시각', false, false],
+    ]);
+    expect(picked(view, '리프트권 반납')).toEqual([['', '반납 필수', '']]);
+    expect(picked(view, '리프트권 보증금')).toEqual([['보증금', '미사용', '']]);
+    expect(card(view, '리프트권 보증금').notes.map(text)).toEqual(['보증금 미사용']);
+    expect(picked(view, '리프트권 결제 · 전화 예약')).toEqual([['', '선입금 전액', '']]);
+    expect(picked(view, '당일 취소 환불')).toEqual([['', '환불', '']]);
+    expect(card(view, '영업일 기준 시각').rows[0]!.options.map((o) => [o.label, o.selected])).toEqual([['00:00', false], ['03:00', false], ['06:00', true], ['직접 입력', false]]);
+    expect(view.footer).toBe('변경 없음');
+    expect(view.primary).toEqual({ label: '저장', alts: ['저장'], enabled: false });
+  });
+
+  it('보증금 `사용`을 누르면 시작 값(1매 5,000원 · 접수 시 · 몰수)의 줄이 열리고 한 곳 변경(`미사용` → `사용`), 저장하면 그 값으로', async () => {
+    const { client, state } = at();
+    const view = await client.query('shopRules', { changes: [{ key: K.depositOn, value: 1 }] });
+    expect(picked(view, '리프트권 보증금')).toEqual([['보증금', '사용', '1매 5,000원'], ['입금 시점', '접수 시', ''], ['미반납 시', '보증금 몰수', '']]);
+    expect(view.changes.map((c) => [c.label, c.before, c.after])).toEqual([['리프트권 보증금', '미사용', '사용']]);
+    expect(view.footer).toBe('변경 1건 · 다음 기록부터 적용');
+    expect(await save(client, view)).toMatchObject({ outcome: 'applied' });
+    expect(state().settings.liftDeposit).toMatchObject({ key: 'lift_ticket_card', unitAmount: 5_000, timing: 'at_intake', unreturned: 'keep' });
+  });
+
+  it('당일 취소 환불을 `환불 없음`으로 바꾸면 한 곳 변경(취소 창이 없어 값만 저장, 거절은 직원이 취소할 때 고름)', async () => {
+    const { client, state } = at();
+    const view = await client.query('shopRules', { changes: [{ key: K.refund, value: 'no_refund' }] });
+    expect(view.changes.map((c) => [c.label, c.before, c.after])).toEqual([['당일 취소 환불', '환불', '환불 없음']]);
+    expect(await save(client, view)).toMatchObject({ outcome: 'applied' });
+    expect(state().settings.sameDayCancelRefund).toBe('no_refund');
+  });
+});
+
+describe('V8 읽기 모델(shopRules) — 권 보증금을 켠 매장(numbered, catalog 3 · spec 2-3)', () => {
+  it('카드 다섯 장(행에서): 리프트권 반납 · 리프트권 보증금 · 리프트권 결제 · 전화 예약 · 당일 취소 환불(한 줄) · 영업일 기준 시각, 변경 없음', async () => {
+    const { client } = at(0, true, 'numbered');
     const view = await client.query('shopRules', {});
     expect(view.cards.map((c) => [c.title, c.inline, c.changed])).toEqual([
       ['리프트권 반납', false, false],
@@ -85,7 +123,7 @@ describe('V8 읽기 모델(shopRules) — 이 매장의 저장된 값(catalog 3 
   });
 
   it('세 곳을 바꾸면(반납 선택 · 지급 시 · 03:00) `변경 3건 · 다음 기록부터 적용` · `저장 · 3건`, 바뀐 카드에 `변경됨`, 전 → 후 목록 · 명령', async () => {
-    const { client } = at();
+    const { client } = at(0, true, 'numbered');
     const view = await client.query('shopRules', { changes: THREE });
     expect(view.cards.map((c) => [c.title, c.changed])).toEqual([
       ['리프트권 반납', true], ['리프트권 보증금', true], ['리프트권 결제 · 전화 예약', false], ['당일 취소 환불', false], ['영업일 기준 시각', true],
@@ -116,7 +154,7 @@ describe('V8 읽기 모델(shopRules) — 이 매장의 저장된 값(catalog 3 
   });
 
   it('보증금 미사용: 입금 시점 · 미반납 시 줄과 값 버튼이 사라지고 회색 한 줄 `보증금 미사용`, 숨은 줄의 바꿈은 세지 않는다', async () => {
-    const { client } = at();
+    const { client } = at(0, true, 'numbered');
     const view = await client.query('shopRules', { changes: [{ key: K.timing, value: 'at_issue' }, { key: K.depositOn, value: 0 }] });
     const deposit = card(view, '리프트권 보증금');
     expect(picked(view, '리프트권 보증금')).toEqual([['보증금', '미사용', '']]);
@@ -126,7 +164,7 @@ describe('V8 읽기 모델(shopRules) — 이 매장의 저장된 값(catalog 3 
   });
 
   it('분실금 청구면 이름표 줄 `분실금 청구` · 값 버튼 `1매 35,000원 ›`, 예약금이면 이름표 줄 `예약금` · `팀당 50,000원 ›`, 금액은 숫자판(범위는 읽기 모델)', async () => {
-    const { client } = at();
+    const { client } = at(0, true, 'numbered');
     const view = await client.query('shopRules', { changes: [{ key: K.unreturned, value: 'charge_loss' }, { key: K.prepay, value: 'fixed_amount' }, { key: K.lossAmount, value: 40_000 }] });
     expect(picked(view, '리프트권 보증금')).toEqual([['보증금', '사용', '1매 5,000원'], ['입금 시점', '접수 시', ''], ['미반납 시', '분실금 청구', ''], ['분실금 청구', '', '1매 40,000원']]);
     const row = card(view, '리프트권 보증금').rows[3]!;
@@ -205,8 +243,8 @@ describe('바꿈 key(RuleChange.key)는 schema.sql의 표 · 열(contract ruleKe
 });
 
 describe('저장(setting.set) — 다음 기록부터(data-model 3-3 · catalog 2 · 11-1)', () => {
-  it('세 곳 저장: 운영 규칙이 바뀌고(새 권 줄은 반납 선택 복사) 지난 줄은 그대로, 다시 열면 변경 없음', async () => {
-    const { client, state } = at();
+  it('세 곳 저장(보증금 매장): 운영 규칙이 바뀌고(새 권 줄은 반납 선택 복사) 지난 줄은 그대로, 다시 열면 변경 없음', async () => {
+    const { client, state } = at(0, true, 'numbered');
     const view = await client.query('shopRules', { changes: THREE });
     const before = state().orders.flatMap((o) => o.lines).filter((l) => l.section === 'lift').map((l) => l.returnable);
     expect(await save(client, view)).toMatchObject({ outcome: 'applied' });
@@ -245,8 +283,8 @@ describe('저장(setting.set) — 다음 기록부터(data-model 3-3 · catalog 
     expect(ok.rejection).toBeUndefined();
   });
 
-  it('보증금 미사용 저장: 새 보증금은 받지 않고, 맡은 보증금(박준호 15,000원)은 그대로 반환 창에 있다. `사용`으로 되돌리면 그 값(1매 5,000원)으로', async () => {
-    const { client, state } = at(30);
+  it('보증금 미사용 저장(보증금 매장): 새 보증금은 받지 않고, 맡은 보증금(박준호 15,000원)은 그대로 반환 창에 있다. `사용`으로 되돌리면 그 값(1매 5,000원)으로', async () => {
+    const { client, state } = at(30, true, 'numbered');
     const off = await client.query('shopRules', { changes: [{ key: K.depositOn, value: 0 }] });
     expect(await save(client, off)).toMatchObject({ outcome: 'applied' });
     expect(state().settings.liftDeposit).toBeNull();
@@ -267,8 +305,20 @@ describe('V8 화면 도우미 — 카드 쪽 · 저장 창 줄 수 · 탭', () =
   /** 본문 상자: 폭 = 화면 − 2 × (책상 12 + 종이 18), 높이 = 화면 − 머리 60 − 바닥 72 − 제목 · 탭 60. */
   const bodyOf = (width: number, height: number) => ({ width: width - 60, height: height - 60 - 72 - 60 });
 
-  it('1024×600 한 쪽 두 칸, 1024×569 · 529 두 쪽, 875×600(한 칸) 두 쪽, 1024×768 한 쪽', async () => {
+  it('첫 매장(보증금 미사용 카드는 한 줄 + 회색 한 줄): 1024×600 · 1024×768 한 쪽, 875×600(한 칸) 두 쪽', async () => {
     const { client } = at();
+    const view = await client.query('shopRules', {});
+    expect(rulesLayout(pos, bodyOf(1024, 600), view.cards).pages).toHaveLength(1);
+    expect(rulesLayout(pos, bodyOf(1024, 768), view.cards).pages).toHaveLength(1);
+    expect(rulesLayout(DEVICE_PROFILES.pos_narrow, bodyOf(875, 600), view.cards).columns).toBe(1);
+    // 카드는 모두 어느 쪽엔가 한 번씩 있다(529 · 569에서도).
+    for (const height of [529, 569, 600]) {
+      expect(rulesLayout(pos, bodyOf(1024, height), view.cards).pages.flat(2).sort()).toEqual([0, 1, 2, 3, 4]);
+    }
+  });
+
+  it('보증금 매장: 1024×600 한 쪽 두 칸, 1024×569 · 529 두 쪽, 875×600(한 칸) 두 쪽, 1024×768 한 쪽', async () => {
+    const { client } = at(0, true, 'numbered');
     const view = await client.query('shopRules', {});
     expect(rulesLayout(pos, bodyOf(1024, 600), view.cards)).toEqual({ columns: 2, pages: [[[0, 1], [2, 3, 4]]] });
     expect(rulesLayout(pos, bodyOf(1024, 529), view.cards)).toEqual({ columns: 2, pages: [[[0], [1]], [[2, 3], [4]]] });
@@ -278,8 +328,8 @@ describe('V8 화면 도우미 — 카드 쪽 · 저장 창 줄 수 · 탭', () =
     expect(rulesLayout(pos, null, view.cards)).toEqual({ columns: 1, pages: [[[]]] });
   });
 
-  it('예약금 줄이 붙으면 1024×600에서도 영업일 기준 시각이 다음 쪽으로', async () => {
-    const { client } = at();
+  it('보증금 매장: 예약금 줄이 붙으면 1024×600에서도 영업일 기준 시각이 다음 쪽으로', async () => {
+    const { client } = at(0, true, 'numbered');
     const view = await client.query('shopRules', { changes: [{ key: K.prepay, value: 'fixed_amount' }] });
     expect(rulesLayout(pos, bodyOf(1024, 600), view.cards).pages).toEqual([[[0, 1], [2, 3]], [[4]]]);
   });

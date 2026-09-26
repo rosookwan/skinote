@@ -2,6 +2,9 @@
 // (closingSheet: 기준 띠 · 결제 수단 · 현금 점검 · 이월 항목 · 바닥줄 · 지금 할 일 · 점검 판), 차량 현금 인계(cash.transfer) · 점검
 // (cash.transfer_confirm) · 마감(closing.close), 부분 매장 입고(stock.receive lines)와 확인 필요 `헬멧 1개 미입고`. 시안의 순간은 27일 00:40
 // (#before 00:31, #drawer 00:40 셈 전), 뒷이야기 23:48 매장 입고 · 현금 인계, 27일 00:32 차량 현금 점검(spec 2-4).
+// 첫 매장(체험판 기본, 2026-09-26)은 권 보증금이 없어 돈통 예상에 보증금이 없고(시안 545,000원 → 540,000원) 이월 항목에 `보증금 보관 중`이
+// 없다(시안 5 → 4). 안 돌아온 권은 손님에게 청구하지 않지만 `리프트권 미반납 · 지연`은 그대로 이월된다(반납 필수). 보증금을 켠 매장의
+// 숫자(시안 그대로)는 맨 아래 describe(shop 'numbered')가 본다.
 import {
   envelopeFor,
   type ClosingSheetParams, type ClosingSheetView, type CommandOutcome, type ConfirmCommand, type Expect,
@@ -11,7 +14,7 @@ import { describe, expect, it } from 'vitest';
 import {
   amountOf, checkParams, draftParams, withCount, withDefer, withoutDefer,
 } from '../src/app/closing-draft.ts';
-import { depositOf, type FxState, heldAmount, kstAt, ownDue, postingDate, walletLeft } from '@skinote/domain';
+import { depositOf, type FxState, heldAmount, kstAt, ownDue, postingDate, type SampleShop, walletLeft } from '@skinote/domain';
 import { applyCommand } from '../src/fixture/demo.ts';
 import { FixtureClient } from '../src/fixture/fixture-client.ts';
 import { applyStory, STORY } from '../src/fixture/story.ts';
@@ -23,8 +26,8 @@ const iso = (h: number, m: number, day = 0) => new Date(ms(h, m, day)).toISOStri
 const DATE = '2026-12-26';
 
 /** 15:40에서 minutes만큼(뒷이야기 켬: 27일 00:30 = 530분, 00:40 = 540분). 카운터 기기. */
-function at(minutes: number, story = true) {
-  const client = new FixtureClient({ realNow: () => 1_800_000_000_000, story });
+function at(minutes: number, story = true, shop: SampleShop = 'first') {
+  const client = new FixtureClient({ realNow: () => 1_800_000_000_000, story, shop });
   client.advanceClock(minutes);
   const state = () => (client as unknown as { state: FxState }).state;
   return { client, state };
@@ -67,12 +70,12 @@ describe('V6 읽기 모델(closingSheet) — 27일 00:40 시안의 순간(spec 2
       ['현금', '1호 차량 35,000원 포함', 6, 440_000],
     ]);
     expect(parts(view.footer)).toBe('수납 합계 1,965,000원 · 돈통 점검 필요');
-    expect(view.next).toMatchObject({ kind: 'drawer_count', label: '돈통 점검', enabled: true, targetKey: 'counter', expectedAmount: 545_000 });
+    expect(view.next).toMatchObject({ kind: 'drawer_count', label: '돈통 점검', enabled: true, targetKey: 'counter', expectedAmount: 540_000 });
     expect(view.blocked).toBeUndefined();
     expect(view.closed).toBeUndefined();
   });
 
-  it('#drawer: 차량 현금은 00:32에 점검(도장 `점검` / 00:32, 차액 0원), 카운터 돈통 예상 545,000원 · 보증금 5,000원 포함 · 실제 — · 차액 —', async () => {
+  it('#drawer: 차량 현금은 00:32에 점검(도장 `점검` / 00:32, 차액 0원), 카운터 돈통 예상 540,000원(보증금 없음) · 실제 — · 차액 —', async () => {
     const { client } = at(540);
     const view = await client.query('closingSheet', {});
     const van = cashOf(view, 'van');
@@ -85,37 +88,33 @@ describe('V6 읽기 모델(closingSheet) — 27일 00:40 시안의 순간(spec 2
     const drawer = cashOf(view, 'drawer');
     expect(drawer).toMatchObject({ label: '카운터 돈통', now: true });
     expect(parts(drawer.note)).toBe('시재 100,000원 포함');
-    expect(text(drawer.expected)).toBe('예상 545,000원 · 보증금 5,000원 포함');
+    expect(text(drawer.expected)).toBe('예상 540,000원');
     expect(text(drawer.actual)).toBe('실제 — · 차액 —');
     expect(drawer.action).toBeUndefined();
   });
 
-  it('이월 항목 · 5: 미수 윤서준 120,000원, 27일 반납 예정 8개 · 2팀, 리프트권 미반납 1매 지연(이 줄만 빨강), 보증금 보관 중, 확인 필요 1건', async () => {
+  it('이월 항목 · 4: 미수 윤서준 120,000원, 27일 반납 예정 8개 · 2팀, 리프트권 미반납 1매 지연(이 줄만 빨강, 손님에게 청구 없음), 확인 필요 1건', async () => {
     const { client } = at(540);
     const view = await client.query('closingSheet', {});
     expect(carryOf(view)).toEqual([
       ['미수 · 1팀 · 120,000원', '윤서준 · 0028 · 27일 09:00 반납 시', false],
       ['27일 반납 예정 · 8개 · 2팀', '윤서준 · 0028 / 이정호 · 0032', false],
       ['리프트권 미반납 · 1매 · 지연', '최하은 · 0026 · 반납 22:10', true],
-      ['보증금 보관 중 · 리프트권 1매 · 5,000원', '최하은 · 0026 · 돈통 보관', false],
       ['확인 필요 · 1건', '김민수 · 0025 · 헬멧 1개 미입고', false],
     ]);
-    // 빨강은 늦은 것의 `지연` 조각에만.
     const reds = view.carry.flatMap((c) => c.title.filter((r) => r.tone === 'red').map((r) => r.text));
     expect(reds).toEqual(['지연']);
-    // 누르면: 한 팀이면 그 접수증.
-    expect(view.carry.map((c) => c.orderId ?? c.tabKey)).toEqual(['o28', 'return', 'o26', 'o26', 'o25']);
+    expect(view.carry.map((c) => c.orderId ?? c.tabKey)).toEqual(['o28', 'return', 'o26', 'o25']);
+    expect(JSON.stringify(view)).not.toContain('보증금');
   });
 
-  it('돈의 검산: 1호 차량 지갑 00:32 뒤 0원(23:48 인계 35,000원), 보증금 보관은 최하은 1매 5,000원뿐, 미수는 윤서준 120,000원뿐', () => {
+  it('돈의 검산: 1호 차량 지갑 00:32 뒤 0원(23:48 인계 35,000원 = 권 추가 현장 수납), 보증금 장부 없음, 미수는 윤서준 120,000원뿐', () => {
     const { state } = at(540);
     const s = state();
     expect(walletLeft(s, DATE, 'v1')).toBe(0);
     expect(s.cashTransfers).toEqual([{ id: 'story:van-2348:1', vehicleId: 'v1', amount: 35_000, at: ms(23, 48), confirmed: { at: ms(0, 32, 1), countedAmount: 35_000 } }]);
-    const held = s.deposits.filter((d) => heldAmount(d) > 0).map((d) => [d.orderId, heldAmount(d)]);
-    expect(held).toEqual([['o26', 5_000]]);
+    expect(s.deposits).toEqual([]);
     expect(s.orders.filter((o) => ownDue(o) > 0 && !o.payerOrderId).map((o) => [o.teamName, ownDue(o)])).toEqual([['윤서준', 120_000]]);
-    expect(heldAmount(depositOf(s, 'o22', 'lift_ticket_card'))).toBe(0);
   });
 });
 
@@ -134,14 +133,14 @@ describe('V6 #before — 27일 00:30(23:48 입고 · 인계 뒤, 00:32 점검 �
     expect(view.command).toBeUndefined();
   });
 
-  it('점검 이월: 이월 항목 6(`미확인 현금 인계 · 35,000원` / `1호 차량 · 23:48 입고`), 돈통 예상 510,000원(보증금 5,000원 포함), 다음은 돈통 점검', async () => {
+  it('점검 이월: 이월 항목 5(`미확인 현금 인계 · 35,000원` / `1호 차량 · 23:48 입고`), 돈통 예상 505,000원, 다음은 돈통 점검', async () => {
     const { client } = at(530);
     const view = await client.query('closingSheet', withDefer({}, 'story:van-2348:1'));
     const van = cashOf(view, 'van');
     expect(van).toMatchObject({ now: false, action: { key: 'check', label: '점검' } });
     expect(text(van.actual)).toBe('점검 이월');
-    expect(text(cashOf(view, 'drawer').expected)).toBe('예상 510,000원 · 보증금 5,000원 포함');
-    expect(view.carry).toHaveLength(6);
+    expect(text(cashOf(view, 'drawer').expected)).toBe('예상 505,000원');
+    expect(view.carry).toHaveLength(5);
     expect(carryOf(view).at(-1)).toEqual(['미확인 현금 인계 · 35,000원', '1호 차량 · 23:48 입고', false]);
     expect(view.carry.at(-1)!.orderId ?? view.carry.at(-1)!.tabKey).toBeUndefined();
     expect(view.next).toMatchObject({ kind: 'drawer_count', label: '돈통 점검' });
@@ -175,7 +174,7 @@ describe('V6 #before — 27일 00:30(23:48 입고 · 인계 뒤, 00:32 점검 �
     expect(exact.reasonsShown).toBe(false);
   });
 
-  it('차량 현금 점검(cash.transfer_confirm): 적으면 도장, 돈통 예상에 센 금액(30,000원 → 540,000원), 두 번째는 `점검 완료`, 차액이 있는데 사유가 없으면 거절', async () => {
+  it('차량 현금 점검(cash.transfer_confirm): 적으면 도장, 돈통 예상에 센 금액(30,000원 → 535,000원), 두 번째는 `점검 완료`, 차액이 있는데 사유가 없으면 거절', async () => {
     const { client, state } = at(530);
     const key = 'story:van-2348:1';
     const noReason = await client.query('closingSheet', checkParams({}, key, '30000'));
@@ -190,7 +189,7 @@ describe('V6 #before — 27일 00:30(23:48 입고 · 인계 뒤, 00:32 점검 �
     const view = await client.query('closingSheet', {});
     expect(cashOf(view, 'van')).toMatchObject({ stamp: { label: '점검', at: iso(0, 30, 1) }, stampAria: '현금 점검 완료 00:30' });
     expect(text(cashOf(view, 'van').actual)).toBe('실제 30,000원 · 차액 −5,000원');
-    expect(text(cashOf(view, 'drawer').expected)).toBe('예상 540,000원 · 보증금 5,000원 포함');
+    expect(text(cashOf(view, 'drawer').expected)).toBe('예상 535,000원');
     const again = await check(client, {}, key, '35000');
     expect(again.pad).toBeUndefined();
     const replay = await send(client, noReason, { type: 'cash.transfer_confirm', payload: { transferId: key, countedAmount: 35_000 } }, { expectedCash: { [key]: 35_000 } });
@@ -203,38 +202,38 @@ describe('V6 #before — 27일 00:30(23:48 입고 · 인계 뒤, 00:32 점검 �
 });
 
 describe('V6 돈통 점검 · 마감(closing.close)', () => {
-  it('돈통 545,000원(차액 0원) → 마감 차례 `마감 · 12월 26일`, 바닥줄 `돈통 차액 0원`, 명령은 센 돈통 · 바탕(돈통 예상)', async () => {
+  it('돈통 540,000원(차액 0원) → 마감 차례 `마감 · 12월 26일`, 바닥줄 `돈통 차액 0원`, 명령은 센 돈통 · 바탕(돈통 예상)', async () => {
     const { client } = at(540);
-    const counted = await check(client, { date: DATE }, 'counter', '545000');
-    expect(counted.pad).toMatchObject({ kind: 'drawer', title: '카운터 돈통', primary: { label: '돈통 점검 · 545,000원', enabled: true } });
-    expect(counted.pad?.count).toEqual({ drawerId: 'counter', countedAmount: 545_000, expectedAmount: 545_000 });
+    const counted = await check(client, { date: DATE }, 'counter', '540000');
+    expect(counted.pad).toMatchObject({ kind: 'drawer', title: '카운터 돈통', primary: { label: '돈통 점검 · 540,000원', enabled: true } });
+    expect(counted.pad?.count).toEqual({ drawerId: 'counter', countedAmount: 540_000, expectedAmount: 540_000 });
     const view = await client.query('closingSheet', counted.params);
     const drawer = cashOf(view, 'drawer');
-    expect(text(drawer.actual)).toBe('실제 545,000원 · 차액 0원');
+    expect(text(drawer.actual)).toBe('실제 540,000원 · 차액 0원');
     expect(drawer.action).toEqual({ key: 'recount', label: '재점검' });
     expect(view.next).toMatchObject({ kind: 'close', label: '마감 · 12월 26일', alts: ['마감 · 12월 26일', '마감'], enabled: true });
     expect(parts(view.footer)).toBe('수납 합계 1,965,000원 · 돈통 차액 0원');
     expect(view.command).toEqual({
-      type: 'closing.close', payload: { date: DATE, drawerCounts: [{ drawerId: 'counter', countedAmount: 545_000, expectedAmount: 545_000 }], deferredTransferIds: [] },
+      type: 'closing.close', payload: { date: DATE, drawerCounts: [{ drawerId: 'counter', countedAmount: 540_000, expectedAmount: 540_000 }], deferredTransferIds: [] },
     });
-    expect(view.expect).toEqual({ expectedCash: { counter: 545_000 } });
+    expect(view.expect).toEqual({ expectedCash: { counter: 540_000 } });
   });
 
   it('마감: 얼린 줄 · `12월 26일 마감 완료` · 주 버튼 없음, 다시 보내면 `12월 26일 마감 완료`(이미 됨), 마감 뒤의 돈 · 인계는 다음 열린 날', async () => {
     const { client, state } = at(540);
-    const counted = await check(client, { date: DATE }, 'counter', '545000');
+    const counted = await check(client, { date: DATE }, 'counter', '540000');
     const ready = await client.query('closingSheet', counted.params);
     expect(await send(client, ready, ready.command, ready.expect)).toMatchObject({ outcome: 'applied' });
     expect(state().closings).toHaveLength(1);
-    expect(state().closings[0]).toMatchObject({ date: DATE, closedAt: ms(0, 40, 1), counts: [{ drawerId: 'counter', expected: 545_000, counted: 545_000 }], deferredTransferIds: [] });
+    expect(state().closings[0]).toMatchObject({ date: DATE, closedAt: ms(0, 40, 1), counts: [{ drawerId: 'counter', expected: 540_000, counted: 540_000 }], deferredTransferIds: [] });
     const closed = await client.query('closingSheet', {});
     expect(closed.closed).toBe('12월 26일 마감 완료');
     expect(closed.next).toBeNull();
     expect(closed.command).toBeUndefined();
     expect(parts(closed.footer)).toBe('수납 합계 1,965,000원 · 돈통 차액 0원');
     expect(closed.cash.every((r) => !r.now && !r.action)).toBe(true);
-    expect(text(cashOf(closed, 'drawer').actual)).toBe('실제 545,000원 · 차액 0원');
-    expect(carryOf(closed)).toHaveLength(5);
+    expect(text(cashOf(closed, 'drawer').actual)).toBe('실제 540,000원 · 차액 0원');
+    expect(carryOf(closed)).toHaveLength(4);
     // 마감 뒤에 들어온 현금은 얼린 판에 들지 않는다(다음 열린 날의 몫).
     const s = state();
     applyCommand(s, { ...(await openEnvelope(s, { type: 'payment.take', payload: { orderIds: ['o28'], amount: 120_000, methodKey: 'cash' } }, { dueAmount: 120_000 })) }, ms(0, 50, 1));
@@ -256,14 +255,14 @@ describe('V6 돈통 점검 · 마감(closing.close)', () => {
     const close = (counts: ClosingSheetParams['counts'], deferred: string[] = []): ConfirmCommand => (
       { type: 'closing.close', payload: { date: DATE, drawerCounts: counts ?? [], deferredTransferIds: deferred } });
     const view = await client.query('closingSheet', base);
-    expect(await send(client, view, close([]), { expectedCash: { counter: 510_000 } })).toMatchObject({ outcome: 'rejected', error: { message: '차량 현금 점검 필요' } });
+    expect(await send(client, view, close([]), { expectedCash: { counter: 505_000 } })).toMatchObject({ outcome: 'rejected', error: { message: '차량 현금 점검 필요' } });
     const key = 'story:van-2348:1';
-    expect(await send(client, view, close([], [key]), { expectedCash: { counter: 510_000 } })).toMatchObject({ outcome: 'rejected', error: { message: '돈통 점검 필요' } });
-    const diff = [{ drawerId: 'counter', countedAmount: 505_000, expectedAmount: 510_000 }];
-    expect(await send(client, view, close(diff, [key]), { expectedCash: { counter: 510_000 } })).toMatchObject({ outcome: 'rejected', error: { message: '차액 −5,000원 · 사유 선택' } });
+    expect(await send(client, view, close([], [key]), { expectedCash: { counter: 505_000 } })).toMatchObject({ outcome: 'rejected', error: { message: '돈통 점검 필요' } });
+    const diff = [{ drawerId: 'counter', countedAmount: 500_000, expectedAmount: 505_000 }];
+    expect(await send(client, view, close(diff, [key]), { expectedCash: { counter: 505_000 } })).toMatchObject({ outcome: 'rejected', error: { message: '차액 −5,000원 · 사유 선택' } });
     const reasoned = [{ ...diff[0]!, reasonKey: 'change_error' }];
-    expect(await send(client, view, close(reasoned, [key]), { expectedCash: { counter: 500_000 } })).toMatchObject({ outcome: 'conflict', error: { code: 'CASH_CHANGED' } });
-    // 이월한 봉투를 오늘 세면 돈통 예상이 바뀐다(510,000 → 545,000): 앞의 셈은 다시 셀 차례.
+    expect(await send(client, view, close(reasoned, [key]), { expectedCash: { counter: 495_000 } })).toMatchObject({ outcome: 'conflict', error: { code: 'CASH_CHANGED' } });
+    // 이월한 봉투를 오늘 세면 돈통 예상이 바뀐다(505,000 → 540,000): 앞의 셈은 다시 셀 차례.
     const deferredCount = withCount(withDefer(base, key), reasoned[0]!);
     const beforeVan = await client.query('closingSheet', deferredCount);
     expect(beforeVan.next).toMatchObject({ kind: 'close' });
@@ -274,11 +273,11 @@ describe('V6 돈통 점검 · 마감(closing.close)', () => {
     expect(stale.next).toMatchObject({ kind: 'drawer_count', label: '돈통 점검' });
     const drawer = cashOf(stale, 'drawer');
     expect(drawer).toMatchObject({ now: true, action: { key: 'recount', label: '재점검' } });
-    expect(text(drawer.actual)).toBe('실제 505,000원 · 차액 −40,000원');
+    expect(text(drawer.actual)).toBe('실제 500,000원 · 차액 −40,000원');
     expect(parts(stale.footer)).toBe('수납 합계 1,965,000원 · 돈통 점검 필요');
-    expect(await send(client, stale, close(reasoned), { expectedCash: { counter: 545_000 } })).toMatchObject({ outcome: 'rejected', error: { message: '돈통 점검 필요' } });
-    // 재점검 540,000원 · 원인 불명 → 마감 차례, 바닥줄 돈통 차액 −5,000원.
-    const recount = await check(client, van.params, 'counter', '540000', { reasonKey: 'unknown' });
+    expect(await send(client, stale, close(reasoned), { expectedCash: { counter: 540_000 } })).toMatchObject({ outcome: 'rejected', error: { message: '돈통 점검 필요' } });
+    // 재점검 535,000원 · 원인 불명 → 마감 차례, 바닥줄 돈통 차액 −5,000원.
+    const recount = await check(client, van.params, 'counter', '535000', { reasonKey: 'unknown' });
     const ready = await client.query('closingSheet', recount.params);
     expect(ready.next).toMatchObject({ kind: 'close', enabled: true });
     expect(parts(ready.footer)).toBe('수납 합계 1,965,000원 · 돈통 차액 −5,000원');
@@ -289,7 +288,7 @@ describe('V6 돈통 점검 · 마감(closing.close)', () => {
     const { client, state } = at(530);
     const key = 'story:van-2348:1';
     const deferred = withDefer({ date: DATE }, key);
-    const counted = await check(client, deferred, 'counter', '510000');
+    const counted = await check(client, deferred, 'counter', '505000');
     const ready = await client.query('closingSheet', counted.params);
     expect(ready.command).toMatchObject({ payload: { deferredTransferIds: [key] } });
     expect(await send(client, ready, ready.command, ready.expect)).toMatchObject({ outcome: 'applied' });
@@ -308,7 +307,7 @@ describe('V6 돈통 점검 · 마감(closing.close)', () => {
     const queued = await client.command((await openEnvelope(state(), { type: 'route.move', payload: { taskId, anchorTaskId: null, position: 'top' } })));
     expect(queued.outcome).toBe('queued');
     client.setDevice('counter');
-    const counted = await check(client, { date: DATE }, 'counter', '545000');
+    const counted = await check(client, { date: DATE }, 'counter', '540000');
     const view = await client.query('closingSheet', counted.params);
     expect(parts(cashOf(view, 'van').note)).toBe('23:48 입고 · 전송 대기 1');
     expect(view.blocked).toBe('1호 차량 · 전송 대기 있음');
@@ -326,27 +325,27 @@ describe('V6 돈통 점검 · 마감(closing.close)', () => {
 describe('차량 현금 인계 · 부분 매장 입고(8단계 명령)', () => {
   it('인계하지 않은 지갑(17:00, 16:58 현장 수납 뒤): 줄 key `van:v1` · `입고 대기`, 점검 판이 인계 + 확인을 함께 적는다', async () => {
     const { client, state } = at(80);
-    expect(walletLeft(state(), DATE, 'v1')).toBe(40_000);
+    expect(walletLeft(state(), DATE, 'v1')).toBe(35_000);
     const view = await client.query('closingSheet', {});
     const van = cashOf(view, 'van');
     expect(van.key).toBe('van:v1');
     expect(parts(van.note)).toBe('입고 대기 · 전송 대기 0');
-    expect(text(van.expected)).toBe('예상 40,000원');
-    expect(view.next).toMatchObject({ kind: 'van_check', label: '차량 현금 점검 · 40,000원' });
-    const done = await check(client, {}, 'van:v1', '40000');
+    expect(text(van.expected)).toBe('예상 35,000원');
+    expect(view.next).toMatchObject({ kind: 'van_check', label: '차량 현금 점검 · 35,000원' });
+    const done = await check(client, {}, 'van:v1', '35000');
     expect(done.outcome).toMatchObject({ outcome: 'applied' });
-    expect(state().cashTransfers).toMatchObject([{ vehicleId: 'v1', amount: 40_000, at: ms(17, 0), confirmed: { countedAmount: 40_000 } }]);
+    expect(state().cashTransfers).toMatchObject([{ vehicleId: 'v1', amount: 35_000, at: ms(17, 0), confirmed: { countedAmount: 35_000 } }]);
     expect(walletLeft(state(), DATE, 'v1')).toBe(0);
     const after = await client.query('closingSheet', {});
-    // 시재 100,000 + 카운터 현금 405,000 + 카운터 보증금 35,000(박준호 15,000 · 이민호 20,000) + 확인한 인계 40,000(차량 보증금 5,000 포함).
-    expect(text(cashOf(after, 'drawer').expected)).toBe('예상 580,000원 · 보증금 40,000원 포함');
+    // 시재 100,000 + 카운터 현금 405,000 + 확인한 인계 35,000(권 추가 현장 수납). 첫 매장은 보증금이 없다.
+    expect(text(cashOf(after, 'drawer').expected)).toBe('예상 540,000원');
   });
 
   it('cash.transfer: 차량 지갑 → 넘기는 중(돈통 예상에는 확인한 뒤에야 든다), 금액이 없으면 거절', async () => {
     const { client, state } = at(80);
     const view = await client.query('closingSheet', {});
     expect(await send(client, view, { type: 'cash.transfer', payload: { vehicleId: 'v1', amount: 0 } }, undefined)).toMatchObject({ outcome: 'rejected' });
-    expect(await send(client, view, { type: 'cash.transfer', payload: { vehicleId: 'v1', amount: 40_000 } }, undefined)).toMatchObject({ outcome: 'applied' });
+    expect(await send(client, view, { type: 'cash.transfer', payload: { vehicleId: 'v1', amount: 35_000 } }, undefined)).toMatchObject({ outcome: 'applied' });
     expect(walletLeft(state(), DATE, 'v1')).toBe(0);
     const after = await client.query('closingSheet', {});
     expect(after.cash.filter((r) => r.kind === 'van').map((r) => [r.key.startsWith('van:'), parts(r.note), text(r.actual)])).toEqual([[false, '17:00 입고 · 전송 대기 0', '미점검']]);
@@ -379,6 +378,72 @@ describe('차량 현금 인계 · 부분 매장 입고(8단계 명령)', () => {
     expect(state.cashTransfers).toEqual([]);
     expect(state.vanReceipts).toEqual([]);
   });
+});
+
+describe('V6 권 보증금을 켠 매장(numbered): 돈통 예상의 보증금 · 이월 항목의 보증금 보관 중(spec 2-4 검산)', () => {
+  it('#drawer: 차량 현금은 00:32에 점검(도장 `점검` / 00:32, 차액 0원), 카운터 돈통 예상 545,000원 · 보증금 5,000원 포함 · 실제 — · 차액 —', async () => {
+    const { client } = at(540, true, 'numbered');
+    const view = await client.query('closingSheet', {});
+    const van = cashOf(view, 'van');
+    expect(van).toMatchObject({ label: '1호 차량 현금', now: false, stamp: { state: 'done', label: '점검', at: iso(0, 32, 1) }, stampAria: '현금 점검 완료 00:32' });
+    expect(parts(van.note)).toBe('23:48 입고 · 전송 대기 0');
+    expect(text(van.expected)).toBe('예상 35,000원');
+    expect(text(van.actual)).toBe('실제 35,000원 · 차액 0원');
+    expect(van.actual!.at(-1)).toMatchObject({ strong: true, tone: 'green' });
+    expect(van.action).toBeUndefined();
+    const drawer = cashOf(view, 'drawer');
+    expect(drawer).toMatchObject({ label: '카운터 돈통', now: true });
+    expect(parts(drawer.note)).toBe('시재 100,000원 포함');
+    expect(text(drawer.expected)).toBe('예상 545,000원 · 보증금 5,000원 포함');
+    expect(text(drawer.actual)).toBe('실제 — · 차액 —');
+    expect(drawer.action).toBeUndefined();
+  });
+
+  it('이월 항목 · 5: 미수 윤서준 120,000원, 27일 반납 예정 8개 · 2팀, 리프트권 미반납 1매 지연(이 줄만 빨강), 보증금 보관 중, 확인 필요 1건', async () => {
+    const { client } = at(540, true, 'numbered');
+    const view = await client.query('closingSheet', {});
+    expect(carryOf(view)).toEqual([
+      ['미수 · 1팀 · 120,000원', '윤서준 · 0028 · 27일 09:00 반납 시', false],
+      ['27일 반납 예정 · 8개 · 2팀', '윤서준 · 0028 / 이정호 · 0032', false],
+      ['리프트권 미반납 · 1매 · 지연', '최하은 · 0026 · 반납 22:10', true],
+      ['보증금 보관 중 · 리프트권 1매 · 5,000원', '최하은 · 0026 · 돈통 보관', false],
+      ['확인 필요 · 1건', '김민수 · 0025 · 헬멧 1개 미입고', false],
+    ]);
+    // 빨강은 늦은 것의 `지연` 조각에만.
+    const reds = view.carry.flatMap((c) => c.title.filter((r) => r.tone === 'red').map((r) => r.text));
+    expect(reds).toEqual(['지연']);
+    // 누르면: 한 팀이면 그 접수증.
+    expect(view.carry.map((c) => c.orderId ?? c.tabKey)).toEqual(['o28', 'return', 'o26', 'o26', 'o25']);
+  });
+
+  it('돈의 검산: 1호 차량 지갑 00:32 뒤 0원(23:48 인계 35,000원), 보증금 보관은 최하은 1매 5,000원뿐, 미수는 윤서준 120,000원뿐', () => {
+    const { state } = at(540, true, 'numbered');
+    const s = state();
+    expect(walletLeft(s, DATE, 'v1')).toBe(0);
+    expect(s.cashTransfers).toEqual([{ id: 'story:van-2348:1', vehicleId: 'v1', amount: 35_000, at: ms(23, 48), confirmed: { at: ms(0, 32, 1), countedAmount: 35_000 } }]);
+    const held = s.deposits.filter((d) => heldAmount(d) > 0).map((d) => [d.orderId, heldAmount(d)]);
+    expect(held).toEqual([['o26', 5_000]]);
+    expect(s.orders.filter((o) => ownDue(o) > 0 && !o.payerOrderId).map((o) => [o.teamName, ownDue(o)])).toEqual([['윤서준', 120_000]]);
+    expect(heldAmount(depositOf(s, 'o22', 'lift_ticket_card'))).toBe(0);
+  });
+  it('인계하지 않은 지갑(17:00, 16:58 현장 수납 뒤): 줄 key `van:v1` · `입고 대기`, 점검 판이 인계 + 확인을 함께 적는다', async () => {
+    const { client, state } = at(80, true, 'numbered');
+    expect(walletLeft(state(), DATE, 'v1')).toBe(40_000);
+    const view = await client.query('closingSheet', {});
+    const van = cashOf(view, 'van');
+    expect(van.key).toBe('van:v1');
+    expect(parts(van.note)).toBe('입고 대기 · 전송 대기 0');
+    expect(text(van.expected)).toBe('예상 40,000원');
+    expect(view.next).toMatchObject({ kind: 'van_check', label: '차량 현금 점검 · 40,000원' });
+    const done = await check(client, {}, 'van:v1', '40000');
+    expect(done.outcome).toMatchObject({ outcome: 'applied' });
+    expect(state().cashTransfers).toMatchObject([{ vehicleId: 'v1', amount: 40_000, at: ms(17, 0), confirmed: { countedAmount: 40_000 } }]);
+    expect(walletLeft(state(), DATE, 'v1')).toBe(0);
+    const after = await client.query('closingSheet', {});
+    // 시재 100,000 + 카운터 현금 405,000 + 카운터 보증금 35,000(박준호 15,000 · 이민호 20,000) + 확인한 인계 40,000(차량 보증금 5,000 포함).
+    expect(text(cashOf(after, 'drawer').expected)).toBe('예상 580,000원 · 보증금 40,000원 포함');
+  });
+
 });
 
 describe('V6 화면 도우미(칸 · 줄 높이 · 초안)', () => {

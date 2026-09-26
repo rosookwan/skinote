@@ -8,7 +8,7 @@ import type { FxLine, FxOrder, ShopRegistry, ShopState } from './model.ts';
 import { backHeldRefund, depositDueForIssued } from './deposits.ts';
 import { bucketLeft, currentReturn, lineBuckets, openReturns } from './promises.ts';
 import {
-  backCount, bizDay, coveredOrders, findOrder, isVehiclePickup, isVehicleReturn, LATE_AFTER_STORE, LATE_AFTER_VEHICLE, moneyLateAt, othersDue, ownDue,
+  backCount, bizDay, coveredOrders, findOrder, isVehiclePickup, isVehicleReturn, lateAtOf, moneyLateAt, othersDue, ownDue,
   paidTotal, pendingIssue, pendingReturn, placeLabel, unitCount, vehicleLabel, charged,
 } from './rules.ts';
 import { bizHm, businessDateOf, dayWord, hm, iso, onBizDay, when, type BizDay } from './time.ts';
@@ -276,18 +276,17 @@ export function figureOf(lines: readonly FxLine[], qtyOf: (l: FxLine) => number)
   return { count: unitCount(lines, qtyOf), ...(byUnit.size ? { units: [...byUnit.entries()].map(([unit, qty]) => ({ unit, qty })) } : {}) };
 }
 
-/** 반납의 늦음 기준: 아직 남은 가장 이른 일정 뒤 매장 30분 · 차량 60분(아직 돌아올 것이 있을 때만). */
-export function returnLateAt(o: FxOrder): number | undefined {
+/** 반납의 늦음 기준: 아직 남은 가장 이른 일정 뒤 매장 30분 · 차량은 매장 설정의 여유(lateAtOf, 아직 돌아올 것이 있을 때만). */
+export function returnLateAt(state: ShopState, o: FxOrder): number | undefined {
   if (!pendingReturn(o) || !o.lines.some((l) => l.issued > 0)) return undefined;
-  const back = currentReturn(o);
-  return back.at + (back.mode === 'vehicle' ? LATE_AFTER_VEHICLE : LATE_AFTER_STORE);
+  return lateAtOf(state.settings, currentReturn(o));
 }
 
-/** 차량 배달의 늦음 기준(싣기 전에는 약속 시각, 실은 뒤에는 + 60분). 매장 수령은 늦음이 없다. */
-export function deliverLateAt(o: FxOrder): number | undefined {
+/** 차량 배달의 늦음 기준(싣기 전에는 약속 시각, 실은 뒤에는 + 차량 여유). 매장 수령은 늦음이 없다. */
+export function deliverLateAt(state: ShopState, o: FxOrder): number | undefined {
   if (!isVehiclePickup(o) || !pendingIssue(o)) return undefined;
   const loaded = o.lines.every((l) => Math.max(l.loaded, l.issued) >= l.qty);
-  return loaded ? o.pickup.at + LATE_AFTER_VEHICLE : o.pickup.at;
+  return loaded ? lateAtOf(state.settings, o.pickup) : o.pickup.at;
 }
 
 /**
@@ -330,11 +329,11 @@ export function checklist(state: ShopState, o: FxOrder, steps: Steps, slipStepKe
     switch (step.rule_key) {
       case 'qty_loaded':
         parts.push({ text: vehicleLabel(state.registry, o.pickup.vehicleId), drop: 9 });
-        lateAt = deliverLateAt(o);
+        lateAt = deliverLateAt(state, o);
         break;
       case 'qty_issued':
         if (cell.state === 'delegated') parts.push({ text: '차량 배달', drop: 7 }, { text: hm(o.pickup.at) + ' ' + placeLabel(state.registry, o.pickup.placeId), drop: 8 });
-        lateAt = deliverLateAt(o);
+        lateAt = deliverLateAt(state, o);
         break;
       case 'qty_returned': {
         // 윗줄 '반납 · 오늘 22:00', 둘째 줄은 장소 · 방법('설천 주차장 · 차량 수거'). 일정 변경으로 일정이 둘 이상이면 둘째 줄이
@@ -352,7 +351,7 @@ export function checklist(state: ShopState, o: FxOrder, steps: Steps, slipStepKe
           ]
           : list.map((p, i) => ({ text: (p.at === first.at ? '' : when(p.at, today.date, today.cutoff) + ' ') + where(p), drop: i === 0 ? 0 : i }));
         items = undefined;
-        lateAt = returnLateAt(o);
+        lateAt = returnLateAt(state, o);
         laterDay = businessDateOf(first.at, today.cutoff) > today.date;
         break;
       }

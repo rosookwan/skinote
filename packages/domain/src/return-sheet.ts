@@ -1,5 +1,5 @@
 // V1 반납 확인 창 · 부분 반납(spec 3-1, ui 6-2, data-model 4-18)의 읽기 모델(returnSheet).
-// 창은 처음에 이 팀이 가진 것을 모두 골라 두고(번호로 세는 품목은 번호, 수량 품목은 수량), 사람이 고른 것(번호 · 수량 ·
+// 창은 처음에 이 팀이 가진 것을 모두 골라 두고(번호로 세는 품목은 번호, 수량 품목은 수량 — 첫 매장은 모두 수량), 사람이 고른 것(번호 · 수량 ·
 // 반환 방법)을 인자로 다시 물으면 미반납 줄 · 보증금 줄 · 반환 방법 · 주 버튼 · 명령을 여기서 새로 쓴다(화면은 계산하지 않는다).
 //   - 매장 반납은 원래 일정부터 채운다(promises.ts lineBuckets): 미반납 줄은 그 결과로 남는 일정(`수거 예정`)과 받을 것이 없어지는
 //     차량 수거(`수거 취소`)를 적는다. 약속은 고치지 않는다(채운 일정의 수거 업무는 '매장 반납'으로 남음, plan §8 D20).
@@ -16,7 +16,7 @@ import { backHeldUnits, baseRefundKey, canOffset, heldAmount, heldUnits, takenMe
 import type { FxDeposit, FxLine, FxOrder, FxPromise, ShopRegistry, ShopState } from './model.ts';
 import { countWordOf, countWords, piecesText, pieceWord, placeText, whenText } from './promise-sheet.ts';
 import { attributeReturn, bucketOut, lineBuckets, returnPromises, samePromise } from './promises.ts';
-import { backCount, findOrder, LATE_AFTER_STORE, LATE_AFTER_VEHICLE, placeShortLabel, selfDue } from './rules.ts';
+import { backCount, findOrder, lateAtOf, othersDue, placeShortLabel, selfDue } from './rules.ts';
 import { businessDateOf, shopCutoff } from './time.ts';
 import type { ViewContext } from './views.ts';
 
@@ -27,7 +27,9 @@ const WIDE_FROM = 4;
 /** 번호가 이보다 많으면 한 줄에도 들어가지 않아 번호 버튼 대신 작은 창(`대여 12개 · 번호 선택 ›`)을 연다(875 폭 창 기준 8개). */
 const PICKER_OVER = 8;
 
+/** ① 회색 표시: 번호 칸이 있으면 번호를 빼고(문구 표 3-4), 수량 칸만 있으면(번호 없는 매장, 첫 매장) 수를 줄인다(문구 표 3-18, 확인 대기). */
 const LEAD = '전체 선택 · 미반납 번호 해제';
+const LEAD_COUNT = '전체 선택 · 미반납 수량 감소';
 
 type Mode = 'unit' | 'count' | 'none';
 
@@ -75,14 +77,18 @@ type Areas = { readonly areas: ShopRegistry['areas'] };
 const shortName = (reg: Areas, p: FxPromise) => (p.mode === 'vehicle' ? placeShortLabel(reg, p.placeId) : '매장');
 
 /**
- * 칸 둘째 줄: 번호 칸은 일정별 수(`설천 2 · 두솔동 1`, 일정이 하나면 `설천 2대`), 수량 칸은 `대여 6개`. `N개 중`은 쓰지 않는다
- * (헬멧 규격 `중`과 헷갈림). 짧은 이름이 겹치면 온전한 장소 이름.
+ * 칸 둘째 줄(모든 매장 같음, 2026-09-26): 이 줄이 반납 일정 둘 이상으로 나뉘어 나가 있으면 일정별 수(`설천 2 · 두솔동 1`: −/+로 줄이거나
+ * 번호를 뺀 것이 어느 일정의 몫으로 남는지). 일정이 하나면 번호 칸은 그 일정과 수(`설천 2대`, 시안 V1: 번호 버튼만으로는 수가 한눈에 안
+ * 보임), 수량 칸은 차량 수거 일정의 장소만(`설천`) · 매장 일정은 없음(−/+ 칸의 수가 곧 그 수라 `매장 4대` 옆 `4대`처럼 같은 수를 두 번
+ * 쓰지 않고, `매장`이 매장 재고로 읽히지 않게). `N개 중`은 쓰지 않는다(헬멧 규격 `중`과 헷갈림). 짧은 이름이 겹치면 온전한 장소 이름.
  */
-function lineNote(reg: Areas, o: FxOrder, l: FxLine, mode: Mode): string {
-  const held = heldOf(l);
-  if (mode === 'count') return '대여 ' + held + countWordOf(l);
+function lineNote(reg: Areas, o: FxOrder, l: FxLine, mode: 'unit' | 'count' | 'none'): string {
   const open = lineBuckets(o, l).filter((b) => b.planned > 0 && bucketOut(b) > 0);
-  if (open.length <= 1) return shortName(reg, open[0]?.promise ?? o.giveBack) + ' ' + held + countWordOf(l);
+  if (open.length <= 1) {
+    const promise = open[0]?.promise ?? o.giveBack;
+    if (mode === 'unit') return shortName(reg, promise) + ' ' + heldOf(l) + countWordOf(l);
+    return promise.mode === 'vehicle' ? shortName(reg, promise) : '';
+  }
   const short = open.map((b) => shortName(reg, b.promise));
   const names = new Set(short).size === short.length ? short : open.map((b) => placeText(reg, b.promise));
   return open.map((b, i) => names[i] + ' ' + bucketOut(b)).join(' · ');
@@ -209,15 +215,17 @@ function primaryOf(picks: readonly Pick[], refund: number): ReturnSheetView['pri
   if (chosen.length === 0) return { label: name, alts: [name], enabled: false };
   const money = refund > 0 ? ' · 보증금 ' + won(refund) : '';
   const counts = countWords(chosen.map((p) => ({ l: p.l, n: p.n })));
+  // 보증금이 없으면(첫 매장) 돈 없는 글과 같은 줄이 겹치므로 한 번만.
+  const unique = (list: string[]) => [...new Set(list)];
   if (picks.every((p) => p.n === p.held)) {
     const label = name + ' · ' + counts + money;
-    return { label, alts: [label, name + ' · ' + counts, name], enabled: true };
+    return { label, alts: unique([label, name + ' · ' + counts, name]), enabled: true };
   }
   const items = piecesText(chosen.map((p) => ({ l: p.l, n: p.n })));
   const label = name + ' · ' + items.join(' · ') + money;
   const shorter = items.slice(1).map((_, i) => items.slice(0, items.length - 1 - i).join(' · ') + ' 외 ' + (i + 1) + '종')
     .map((text) => name + ' · ' + text + money);
-  return { label, alts: [label, ...shorter, name + ' · ' + counts + money, name + ' · ' + counts, name], enabled: true };
+  return { label, alts: unique([label, ...shorter, name + ' · ' + counts + money, name + ' · ' + counts, name]), enabled: true };
 }
 
 // ── returnSheet ───────────────────────────────────────────────────
@@ -232,15 +240,15 @@ export function returnSheet(ctx: ViewContext, params: ReturnSheetParams): Return
   const scope = range.filter((l) => heldOf(l) > 0);
   const picks = scope.map((l) => pickOf(l, params));
 
-  // ① 한 줄: 보인 줄의 가장 이른 남은 일정이 늦었으면(매장 30분 · 차량 60분 뒤, 장부의 늦음과 같은 기준) 빨강 `반납 지연 · 일정 22:00`.
+  // ① 한 줄: 보인 줄의 가장 이른 남은 일정이 늦었으면(매장 30분 · 차량 여유 뒤, 장부의 늦음과 같은 기준) 빨강 `반납 지연 · 일정 22:00`.
   const first = scope.flatMap((l) => lineBuckets(o, l).filter((b) => b.planned > 0 && bucketOut(b) > 0).map((b) => b.promise)).sort((a, b) => a.at - b.at)[0];
-  const late = first !== undefined && ctx.now >= first.at + (first.mode === 'vehicle' ? LATE_AFTER_VEHICLE : LATE_AFTER_STORE);
+  const late = first !== undefined && ctx.now >= lateAtOf(state.settings, first);
   // 다음 영업일 뒤의 일정을 오늘 받으면 조기 반납이다: 첫 줄이 그 일정을 알린다(`조기 반납 · 일정 내일 12:00`, 모두 골라 둔 것은 그대로).
   const early = first !== undefined && businessDateOf(first.at, shopCutoff(state.settings)) > state.businessDate;
   const lead: RichText = late
     ? [{ text: '반납 지연 · 일정 ' + whenText(state, first.at), strong: true, tone: 'red' }]
     : early ? [{ text: '조기 반납', strong: true }, { text: ' · 일정 ' + whenText(state, first.at) }]
-      : scope.length === 0 ? [{ text: '반납 완료', strong: true }] : [{ text: LEAD }];
+      : scope.length === 0 ? [{ text: '반납 완료', strong: true }] : [{ text: picks.some((p) => p.mode === 'unit') ? LEAD : LEAD_COUNT }];
 
   // ② 품목 칸(세지 않는 줄은 칸이 없다). 보증금을 맡은 줄은 표시(deposit): 칸이 여러 쪽이면 창이 첫 쪽에 둔다.
   const held = state.deposits.filter((d) => d.orderId === o.id && heldAmount(d) > 0);
@@ -270,6 +278,7 @@ export function returnSheet(ctx: ViewContext, params: ReturnSheetParams): Return
     lines,
     remainder: remainderOf(state, o, picks, ctx.now),
     ...(refund ? { deposit: depositLine(o, refund) } : {}),
+    ...(!refund && selfDue(o) + othersDue(state, o) > 0 ? { money: [{ text: '미수 ' + won(selfDue(o) + othersDue(state, o)), strong: true }] } : {}),
     ...(methods ? { refundMethods: methods.options } : {}),
     primary: primaryOf(picks, refund?.amount ?? 0),
   };

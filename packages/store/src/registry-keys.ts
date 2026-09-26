@@ -31,6 +31,13 @@ export const EXTENSION_UNDO = 'extension_undo';
 export const axisAttribute = (kindKey: string) => 'axis:' + kindKey;
 export const axisOption = (kindKey: string, variantKey: string) => 'axis:' + kindKey + ':' + variantKey;
 export const variantId = (productKey: string, variantKey: string) => productKey + ':' + variantKey;
+/**
+ * 수량 상품의 기본 규격(첫 매장의 스키 · 보드 · 리프트권처럼 규격 없는 상품, 또는 규격 없이 적힌 줄, 2026-09-26): 수량 재고(stock_balances)와
+ * 이동 줄은 늘 규격을 가진다(schema `count items always have at least one variant`). 명세의 수량 재고 key ''(domain sample NO_VARIANT)이고,
+ * 접수 줄에는 규격을 적지 않는다.
+ */
+export const DEFAULT_VARIANT = '';
+export const defaultVariantId = (productKey: string) => variantId(productKey, DEFAULT_VARIANT);
 export const priceRuleId = (productKey: string) => PRICE_VERSION + ':' + productKey;
 export const reasonId = (domain: string, key: string) => domain + ':' + key;
 export const kindTargetSeq = (index: number) => index + 1;
@@ -48,6 +55,10 @@ export const SETTING = {
   maxLineQuantity: 'max_line_quantity',
   openingCash: 'opening_cash',
   defaultReturnSlot: 'default_return_slot',
+  /** 차량 늦음의 여유(마이그레이션 0003): { minutes, night_minutes }. */
+  vehicleLate: 'vehicle_late_after_minutes',
+  /** 야간 수거 준비 알림(0001): { minutes }. */
+  nightNotice: 'night_collection_notice_minutes',
 } as const;
 
 /** 역할(roles.key)과 이름(직원 타일 · 사용 내역). */

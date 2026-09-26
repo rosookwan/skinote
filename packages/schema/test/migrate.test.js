@@ -42,8 +42,8 @@ const columns = (db, table) => /** @type {{ name: string }[]} */ (db.prepare(`PR
 
 const LOCALE = { '0002_control_locale.sql': '-- 계정의 화면 언어(예시)\nALTER TABLE accounts ADD COLUMN locale TEXT;\n' };
 
-// 배포한 마이그레이션: control은 0001, shop은 0001 + 0002(첫 서버 연결, 2026-09-26).
-const SHIPPED = /** @type {const} */ ({ control: ['0001_control'], shop: ['0001_shop', '0002_shop_server_link'] });
+// 배포한 마이그레이션: control은 0001, shop은 0001 + 0002(첫 서버 연결, 2026-09-26) + 0003(차량 늦음 여유, 첫 매장 답 2026-09-26).
+const SHIPPED = /** @type {const} */ ({ control: ['0001_control'], shop: ['0001_shop', '0002_shop_server_link', '0003_shop_vehicle_late'] });
 
 for (const kind of /** @type {const} */ (['control', 'shop'])) {
   test(`${kind}: a fresh file gets every shipped migration with WAL, synchronous FULL, foreign keys, recursive triggers and incremental auto_vacuum`, () => {

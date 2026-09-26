@@ -10,7 +10,7 @@ import { writeSettingsChange } from './registry-write.ts';
 import type { ChangeEntry } from './journal.ts';
 import { appended, idMaker, unmapped, type WriteContext } from './map/common.ts';
 import { checkFixedLine, checkFixedOrder, insertAddedLines, insertOrder, syncPaymentPromises, syncPromises } from './map/orders.ts';
-import { blankLine, checkAssets, writeClaims, writeFulfillments, writeStock } from './map/stock.ts';
+import { blankLine, checkAssets, checkVanSpares, writeClaims, writeFulfillments, writeStock } from './map/stock.ts';
 import { writeMoney } from './map/money.ts';
 import { writeCharges, writePins, writeRouteRanks, writeVisits } from './map/dispatch.ts';
 import { writeCash } from './map/cash.ts';
@@ -79,6 +79,7 @@ export function writeState(ctx: WriteContext): void {
     return row ? str(row.id) : undefined;
   });
   checkAssets(before, after, movements);
+  checkVanSpares(before, after, movements);
   const receives = appended(before.vanReceipts, after.vanReceipts, '매장 입고');
   const receiveMoves = movements.filter((m) => m.kind === 'receive');
   if (receives.length !== receiveMoves.length) unmapped('매장 입고 기록과 입고 이동의 수가 다르다');

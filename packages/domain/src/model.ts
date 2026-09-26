@@ -37,7 +37,10 @@ export type FxMethodKey = 'card' | 'cash' | 'transfer' | 'easy_pay' | 'voucher';
  */
 export type FxPayMethodKey = FxMethodKey | 'deposit';
 
-/** 재고 방식(catalog 2 tracking): unit = 번호로 하나씩(스키 · 보드 · 헬멧 · 의류 · 부츠 · 리프트권), count = 수량(고글), none = 세지 않음. */
+/**
+ * 재고 방식(catalog 2 tracking, 매장이 품목마다 고름): unit = 번호로 하나씩(번호 스티커 · 권 번호가 있는 매장), count = 수량(번호 없음:
+ * 첫 매장은 장비 · 리프트권 모두 수량, 2026-09-26 사장님 답), none = 세지 않음.
+ */
 export type FxTracking = 'unit' | 'count' | 'none';
 
 export interface FxLine {
@@ -190,6 +193,24 @@ export interface FxShopRules {
   returnSlots: FxReturnSlot[];
   /** 기본 반납 타임(권이 없는 새 접수의 반납 시각 처음 값, spec 3-5). 없으면 첫 반납 타임. */
   defaultReturnSlotKey?: string;
+  /**
+   * 차량 약속이 늦음(빨강)이 되기까지의 여유 분(vehicle_late_after_minutes, 마이그레이션 0003): minutes = 그 밖의 차량 약속, nightMinutes =
+   * 야간 반납 타임(20시 이후 반납 타임 중 가장 이른 것) 이후의 차량 약속. 없으면 60 · 60(rules.ts lateAfter). 첫 매장은 스키장이 22:00에 끝나
+   * 손님 연락이 22:30 ~ 23:00에 오므로 야간 90분(2026-09-26 답 15).
+   */
+  vehicleLate?: { minutes: number; nightMinutes: number };
+  /** 야간 수거 준비 안내를 그 반납 타임 몇 분 전부터(night_collection_notice_minutes). 없으면 60. */
+  nightNoticeMinutes?: number;
+}
+
+/**
+ * 수량으로 세는 차량 예비 재고(번호 없는 차량 예비권, 첫 매장): 차량 · 상품마다 지금 차에 실린 수. 리프트권 추가(field.add_ticket)가
+ * 줄이고, 다 쓰여도 행은 0으로 남는다(차례 = 매장 목록의 차량 차례 → 상품 차례). 번호로 세는 권의 예비권은 assets(vehicleId)다.
+ */
+export interface FxVanSpare {
+  vehicleId: string;
+  productKey: string;
+  quantity: number;
 }
 
 /** 번호로 세는 실물 하나(스키 17번, 야간권 31번). 손님 · 차량 어디에 있는지는 줄의 번호로 알고, 차량 예비권만 vehicleId를 가진다. */
@@ -434,8 +455,10 @@ export interface ShopState {
   driverDevice: FxDevice;
   /** 운영 규칙(매장 설정). */
   settings: FxShopRules;
-  /** 번호로 세는 실물(매장 재고 · 차량 예비권). */
+  /** 번호로 세는 실물(매장 재고 · 차량 예비권). 번호 없는 매장은 비어 있다. */
   assets: FxAsset[];
+  /** 수량으로 세는 차량 예비권(번호 없는 매장). 옛 자료 · 번호 매장에는 없을 수 있다. */
+  vanSpares?: FxVanSpare[];
   /** 보증금 보관과 보증금 장부. */
   deposits: FxDeposit[];
   /** 결제 자리(돈 한 건). 배분은 접수마다의 payments. */

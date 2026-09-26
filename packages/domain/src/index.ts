@@ -31,4 +31,4 @@ export * from './shop-rules.ts';
 export * from './commands.ts';
 export * from './execute.ts';
 export * from './query.ts';
-export { SAMPLE_STAFF, prepareImport, sampleDay, sampleRegistry, sampleRules, sampleSpec, type ImportOptions, type SampleDayOptions } from './sample/index.ts';
+export { SAMPLE_STAFF, prepareImport, sampleDay, sampleRegistry, sampleRules, sampleSpec, type ImportOptions, type SampleDayOptions, type SampleShop } from './sample/index.ts';

@@ -330,6 +330,10 @@ html, body { margin: 0; height: 100%; overflow: hidden; }
 .pos-task-items.is-bare col.is-qty { width: var(--sn-target); }
 .pos-task-items.is-bare col.is-stamp { width: calc(var(--sn-stamp) * 1.6 + var(--sn-space-xs)); }
 .pos-task-pager { display: flex; justify-content: center; flex: none; }
+/* 휴대폰 반납 일정: 이름을 첫 줄 앞에 붙인 한 줄씩(줄 높이 = 본문 × 4/3, TaskSheetScreen phonePlanPx). */
+.pos-task-plan.is-inline { gap: var(--sn-space-xs); margin-top: 0; }
+.pos-task-plan-row { display: flex; align-items: baseline; gap: var(--sn-space-s); min-width: 0; height: calc(var(--sn-font-body) * 4 / 3); }
+.pos-task-plan-row > .pos-task-plan-line { flex: 1 1 0; min-width: 0; }
 
 /* V7 아래 판(현장 수납 · 리프트권 추가, ui 6-5): 아래에서 올라오는 종이(높이 ≤ --sn-panel-max), 휴대폰은 전체 화면. 스크롤 없음. */
 .pos-panel {
@@ -350,6 +354,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; }
 .pos-field-pay-amount { display: flex; align-items: center; gap: var(--sn-space-s); min-width: 0; }
 .pos-field-pay-amount > .sn-keypad-display { flex: 1 1 0; min-width: 0; letter-spacing: 0; }
 .pos-field-pay-label { flex: none; font-size: var(--sn-font-min); font-weight: 800; color: var(--sn-ink-muted); white-space: nowrap; }
+/* 기사 수단(첫 매장 현금 · 계좌이체 둘): 줄을 나눠 가진 큰 버튼(장갑 낀 손, 2026-09-26 검토). 글은 버튼 밖으로 나가지 않는다(버튼 최소 폭 = 글). */
+.pos-field-pay .sn-choices > .sn-choice { flex: 1 1 0; }
 .pos-add-ticket-row { display: flex; align-items: center; gap: var(--sn-space-s); min-width: 0; }
 .pos-add-ticket-row > .sn-choices { flex: 1 1 0; }
 .pos-add-ticket-lines { display: flex; flex-direction: column; gap: var(--sn-space-xs); min-width: 0; }
@@ -454,3 +460,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; }
 .pos-rules-save-value { font-size: var(--sn-font-body); font-weight: 700; white-space: nowrap; text-align: right; }
 .pos-rules-save-note { font-size: var(--sn-font-body); font-weight: 700; color: var(--sn-ink-soft); white-space: nowrap; }
 .pos-rules-save-note.is-refused { font-weight: 900; color: var(--sn-ink); }
+
+/* 확인 창의 수량 칸(지급 · 적재 · 배달 · 수거, 수량으로 세는 줄 여럿): 반납 창의 칸을 한 줄에 하나씩, 넘치면 칸 아래 쪽 넘김. */
+.pos-counts { display: flex; flex-direction: column; gap: var(--sn-space-s); flex: none; }
+.pos-counts > .sn-pager { align-self: center; }

@@ -1,7 +1,7 @@
 // 체험 자료의 뒷이야기(docs/design/screens-v2/spec.md 2-4): 15:40 뒤에 다른 직원 · 기사가 한 일. 체험 시계를 앞으로 돌리면
 // (나가기 화면의 +10분 · +1시간) 그 사이의 사건을 같은 명령(applyCommand)으로 그 시각에 적는다. 그래서 시계를 시안의 시각으로
 // 돌리면 그 화면의 예시 자료가 된다(V5 16:40, V7 16:55, V9 19:40, V1 21:30, V6 27일 00:40). 7단계는 16:40 적재 · 16:57 배달 · 16:58 권 추가 ·
-// 22:00 · 22:10 차량 수거를, 8단계는 23:48 매장 입고 · 현금 인계와 27일 00:32 차량 현금 점검을 더했다.
+// 22:00 · 22:10 일정의 차량 수거(첫 매장의 밤처럼 22:40 · 23:05에 함)를, 8단계는 23:48 매장 입고 · 현금 인계와 27일 00:32 차량 현금 점검을 더했다.
 // 사건은 한 번만 적고(storyApplied), 사람이 먼저 같은 일을 했으면(명령이 superseded · rejected) 건너뛴다.
 // 사건의 시각은 시안 화면의 '바로 뒤'다: 시계가 그 시각에 멈추면 화면은 시안처럼 사건 전 상태다.
 // 사건은 단계마다 더한다(work/impl-v2/plan.md 5절의 표). 이 파일은 체험 전용이다(규칙은 @skinote/domain, work/impl-server/plan.md D14).
@@ -16,7 +16,7 @@ import {
 } from '@skinote/domain';
 import { DEMO_DATE } from './demo.ts';
 
-/** 사건 하나: 그 시각에 적을 명령들(지금 자료를 보고 만든다: 번호 · 받을 금액 · 보관 보증금). */
+/** 사건 하나: 그 시각에 적을 명령들(지금 자료를 보고 만든다: 수 · 번호 · 받을 금액 · 보관 보증금). 첫 매장(수량 · 보증금 없음)과 번호 매장 모두. */
 export interface FxStoryEvent {
   id: string;
   /** 명령을 적는 시각(ms). */
@@ -47,7 +47,7 @@ function issueLeft(o: FxOrder): { l: FxLine; qty: number; units: { lineId: strin
 /** 매장 반납 · 차량 수거로 아직 돌아오지 않은 것 모두. */
 const backLeft = (o: FxOrder) => o.lines.filter((l) => l.returnable && l.issued - backCount(l) > 0).map((l) => ({ lineId: l.id, quantity: l.issued - backCount(l) }));
 
-/** 지급(준비 번호) + 권 보증금(창이 먼저 묻는 것과 같은 매수 · 금액, 지급에 이어짐). 이미 지급했으면 없음. */
+/** 지급(번호로 세는 줄은 준비 번호) + 권 보증금이 있으면 그 입금(창이 먼저 묻는 것과 같은 매수 · 금액, 지급에 이어짐). 이미 지급했으면 없음. */
 function issueWithDeposit(state: FxState, eventId: string, orderId: string): AnyCommandEnvelope[] {
   const o = findOrder(state, orderId);
   const picks = o ? issueLeft(o) : [];
@@ -122,17 +122,23 @@ function payDue(state: FxState, eventId: string, orderId: string, methodKey: str
 }
 
 /**
- * 박준호 팀 부분 반납(21:30 가족이 매장에 옴, V1): 스키 17 · 18번, 헬멧 12 · 14번, 권 31 · 32번(반납 창과 같은 번호) + 돌아온 권 2매의
- * 보증금 10,000원 현금 반환(반납에 이어짐, 창을 연 때의 보관 금액 expect). 보드 5번 · 헬멧 15번 · 권 33번은 22:00 솔마을 두솔동에서
- * 1호 차량이 받는다. 이미 돌아온 번호는 빼고, 남은 것이 없으면(사람이 V1에서 먼저 함) 없음.
+ * 박준호 팀 부분 반납(21:30 가족이 매장에 옴, V1): 스키 2 · 헬멧 2 · 권 2매(반납 창과 같은 수, 첫 매장은 수량). 번호로 세는 매장이면 스키
+ * 17 · 18번, 헬멧 12 · 14번, 권 31 · 32번(반납 창과 같은 번호) + 돌아온 권 2매의 보증금 10,000원 현금 반환(반납에 이어짐, 창을 연 때의
+ * 보관 금액 expect). 보드 1 · 헬멧 1 · 권 1매는 22:00 솔마을 두솔동에서 1호 차량이 받는다. 이미 돌아온 것은 빼고, 남은 것이 없으면(사람이
+ * V1에서 먼저 함) 없음.
  */
 function parkReturn(state: FxState, eventId: string): AnyCommandEnvelope[] {
   const o = findOrder(state, 'o22');
   if (!o) return [];
   const want: [string, string[]][] = [['o22-l1', ['17', '18']], ['o22-l3', ['12', '14']], ['o22-l4', ['31', '32']]];
-  const lines = want.flatMap(([lineId, nos]) => {
+  const lines = want.flatMap(([lineId, nos]): { lineId: string; quantity: number; assetIds?: string[] }[] => {
     const l = o.lines.find((x) => x.id === lineId);
     if (!l) return [];
+    if (!numbered(l)) {
+      // 수량 줄(첫 매장): 창의 수(2)에서, 이 줄이 아직 가진 것 중 원래 일정(설천 주차장) 몫만큼(두솔동 몫은 남긴다).
+      const quantity = Math.min(nos.length, l.issued - backCount(l) - splitOut(o, l.id));
+      return quantity > 0 ? [{ lineId, quantity }] : [];
+    }
     const held = new Set(heldNumbers(l));
     const ids = nos.map((no) => assetId(l.kind, no)).filter((id) => held.has(id));
     return ids.length ? [{ lineId, quantity: ids.length, assetIds: ids }] : [];
@@ -143,7 +149,7 @@ function parkReturn(state: FxState, eventId: string): AnyCommandEnvelope[] {
   const dep = rule ? depositOf(state, o.id, rule.key) : undefined;
   const refunds = dep ? lines.flatMap((x) => {
     const units = Math.min(x.quantity, heldUnits(dep, x.lineId));
-    return units > 0 ? [{ lineId: x.lineId, quantity: units, assetIds: x.assetIds.slice(0, units) }] : [];
+    return units > 0 ? [{ lineId: x.lineId, quantity: units, ...(x.assetIds ? { assetIds: x.assetIds.slice(0, units) } : {}) }] : [];
   }) : [];
   const units = refunds.reduce((sum, x) => sum + x.quantity, 0);
   if (!dep || units === 0) return [back];
@@ -151,6 +157,11 @@ function parkReturn(state: FxState, eventId: string): AnyCommandEnvelope[] {
     type: 'deposit.return', payload: { orderId: o.id, ruleKey: dep.ruleKey, lines: refunds, amount: units * dep.unitAmount, refundMethodKey: 'cash' },
   }, { expect: { depositHeld: heldAmount(dep), dueAmount: selfDue(o) }, dependsOn: [back.requestId] });
   return [back, refund];
+}
+
+/** 이 줄에서 나눈 일정(일정 변경)으로 옮겨 아직 나가 있는 수. */
+function splitOut(o: FxOrder, lineId: string): number {
+  return (o.splits ?? []).filter((x) => x.lineId === lineId).reduce((n, x) => n + x.quantity - (x.returned ?? 0) - (x.collected ?? 0), 0);
 }
 
 /** 차량 배달 적재(매장에서 1호 차량에 실음, spec 2-4 16:40): 아직 싣지 않은 것 모두. 이미 실었거나 배달 접수가 아니면 없음. */
@@ -173,15 +184,16 @@ function deliverAll(state: FxState, eventId: string, orderId: string): AnyComman
 }
 
 /**
- * 배달 자리의 리프트권 추가(16:58, V7): 차량 예비권 번호가 낮은 것부터 매수만큼, 값 · 보증금은 그때 셈(quoteHash) + 이어서 현장 수납(값만큼,
- * 추가에 이어짐 dependsOn, 창이 본 받을 금액 = 지금 미수 + 권 값). 이미 권이 있는 팀(사람이 V7에서 먼저 추가)이면 없음.
+ * 배달 자리의 리프트권 추가(16:58, V7): 차량 예비권에서 매수만큼(번호로 세는 권이면 번호가 낮은 것부터), 값 · 보증금은 그때 셈(quoteHash) +
+ * 이어서 현장 수납(값만큼, 추가에 이어짐 dependsOn, 창이 본 받을 금액 = 지금 미수 + 권 값). 이미 권이 있는 팀(사람이 V7에서 먼저 추가)이면 없음.
  */
 function addTicketAndPay(state: FxState, eventId: string, orderId: string, productKey: string, quantity: number, methodKey: string): AnyCommandEnvelope[] {
   const o = findOrder(state, orderId);
   if (!o || !isVehiclePickup(o) || o.lines.some((l) => l.section === 'lift')) return [];
   const taskId = deliverTaskId(o);
-  const spare = spareTickets(state, o.pickup.vehicleId ?? 'v1').find((x) => x.productKey === productKey)?.ids ?? [];
-  if (spare.length < quantity) return [];
+  const found = spareTickets(state, o.pickup.vehicleId ?? 'v1').find((x) => x.productKey === productKey);
+  if (!found || found.quantity < quantity) return [];
+  const spare = found.ids;
   const quote = ticketQuote(state, o, productKey, quantity);
   const add = envelope(state, eventId, 0, {
     type: 'field.add_ticket',
@@ -329,19 +341,21 @@ function groupPay(state: FxState, eventId: string, orderId: string, methodKey: s
 }
 
 /**
- * 매장 반납(남은 것 모두) + 돌아온 권의 보증금 현금 반환(반납에 이어짐, 창을 연 때의 보관 금액 expect). 이미 돌아왔으면 없음.
+ * 매장 반납(남은 것 모두, 번호로 세는 줄은 가진 번호) + 권 보증금이 있으면 돌아온 권의 보증금 현금 반환(반납에 이어짐, 창을 연 때의 보관
+ * 금액 expect). 이미 돌아왔으면 없음.
  */
 function returnWithDeposit(state: FxState, eventId: string, orderId: string): AnyCommandEnvelope[] {
   const o = findOrder(state, orderId);
   if (!o) return [];
-  const lines = o.lines.filter((l) => l.returnable && l.issued - backCount(l) > 0).map((l) => ({ lineId: l.id, quantity: l.issued - backCount(l), assetIds: heldNumbers(l) }));
+  const lines = o.lines.filter((l) => l.returnable && l.issued - backCount(l) > 0)
+    .map((l) => ({ lineId: l.id, quantity: l.issued - backCount(l), ...(numbered(l) ? { assetIds: heldNumbers(l) } : {}) }));
   if (lines.length === 0) return [];
   const back = envelope(state, eventId, 0, { type: 'stock.direct_return', payload: { orderId: o.id, lines } });
   const rule = state.settings.liftDeposit;
   const dep = rule ? depositOf(state, o.id, rule.key) : undefined;
   const refunds = dep ? lines.flatMap((x) => {
     const units = Math.min(x.quantity, heldUnits(dep, x.lineId));
-    return units > 0 ? [{ lineId: x.lineId, quantity: units, assetIds: x.assetIds.slice(0, units) }] : [];
+    return units > 0 ? [{ lineId: x.lineId, quantity: units, ...(x.assetIds ? { assetIds: x.assetIds.slice(0, units) } : {}) }] : [];
   }) : [];
   const units = refunds.reduce((sum, x) => sum + x.quantity, 0);
   if (!dep || units === 0) return [back];
@@ -372,12 +386,12 @@ const HAYUN: NewTeam = { name: '송하윤', last4: '0045', party: 1, items: [{ p
 /**
  * 이야기 사건(시각 순). 단계마다 더한다: 1단계는 16:05 · 16:10 · 16:20 · 16:30 · 21:50, 2단계는 19:41 일정 변경, 3단계는 21:31 부분 반납 ·
  * 21:32 미수 수납 · 27일 00:15 정하늘 반납, 5단계는 16:26 ~ 16:35 새 접수 네 팀 · 지급과 21:55 이민호 팀 반납, 6단계는 16:41 이정호 팀
- * 일괄 수납, 7단계는 16:40 적재 · 16:57 배달 · 16:58 권 추가 · 22:00 · 22:10 차량 수거, 8단계는 23:48 매장 입고 · 현금 인계와 27일 00:32 차량
+ * 일괄 수납, 7단계는 16:40 적재 · 16:57 배달 · 16:58 권 추가 · 22:40 · 23:05 차량 수거(22:00 · 22:10 일정), 8단계는 23:48 매장 입고 · 현금 인계와 27일 00:32 차량
  * 현금 점검(plan.md 4-2 표). 9단계(운영 규칙)는 사건이 없다.
  */
 export const STORY: readonly FxStoryEvent[] = [
   {
-    id: 'park-issue', at: at(16, 5), note: '박준호 팀 수령 · 지급(준비 번호) + 권 3매 보증금 15,000원 현금',
+    id: 'park-issue', at: at(16, 5), note: '박준호 팀 수령 · 지급(번호 매장: 준비 번호 + 권 3매 보증금 15,000원 현금)',
     commands: (state) => issueWithDeposit(state, 'park-issue', 'o22'),
   },
   {
@@ -389,7 +403,7 @@ export const STORY: readonly FxStoryEvent[] = [
     commands: (state) => issueWithDeposit(state, 'jungho-pickup', 'o32'),
   },
   {
-    id: 'minho-order', at: at(16, 26), note: '이민호 팀 접수 확정 261226-019: 리프트권 140,000원 현금 + 보증금 20,000원 현금, 장비 225,000원 후불 → 이정호 팀',
+    id: 'minho-order', at: at(16, 26), note: '이민호 팀 접수 확정 261226-019: 리프트권 140,000원 현금(번호 매장: + 보증금 20,000원 현금), 장비 225,000원 후불 → 이정호 팀',
     commands: (state) => newOrder(state, 'minho-order', at(16, 26), MINHO),
   },
   { id: 'minho-issue', at: at(16, 27), note: '이민호 팀 지급', commands: (state) => issueNew(state, 'minho-issue', MINHO.last4) },
@@ -429,7 +443,7 @@ export const STORY: readonly FxStoryEvent[] = [
     commands: (state) => deliverAll(state, 'haeun-deliver', 'o26'),
   },
   {
-    id: 'haeun-ticket', at: at(16, 58), note: '최하은 팀 리프트권 추가 야간권 1매 35,000원 + 보증금 5,000원(예비권 51번, 차량 지갑) → 현장 수납 35,000원 현금',
+    id: 'haeun-ticket', at: at(16, 58), note: '최하은 팀 리프트권 추가 야간권 1매 35,000원(차량 예비권, 번호 매장: 51번 + 보증금 5,000원 차량 지갑) → 현장 수납 35,000원 현금',
     commands: (state) => addTicketAndPay(state, 'haeun-ticket', 'o26', 'night_adult', 1, 'cash'),
   },
   {
@@ -437,7 +451,7 @@ export const STORY: readonly FxStoryEvent[] = [
     commands: (state) => parkPromise(state, 'park-promise'),
   },
   {
-    id: 'park-return', at: at(21, 31), note: '박준호 팀 부분 반납: 스키 17 · 18, 헬멧 12 · 14, 권 31 · 32 + 권 2매 보증금 10,000원 현금 반환',
+    id: 'park-return', at: at(21, 31), note: '박준호 팀 부분 반납: 스키 2 · 헬멧 2 · 권 2매(번호 매장: 스키 17 · 18, 헬멧 12 · 14, 권 31 · 32 + 권 2매 보증금 10,000원 현금 반환)',
     commands: (state) => parkReturn(state, 'park-return'),
   },
   {
@@ -449,16 +463,18 @@ export const STORY: readonly FxStoryEvent[] = [
     commands: (state) => collect(state, 'oseungmin-collect', ['o39']),
   },
   {
-    id: 'minho-return', at: at(21, 55), note: '이민호 팀 매장 반납(권 4매 포함) + 보증금 20,000원 현금 반환',
+    id: 'minho-return', at: at(21, 55), note: '이민호 팀 매장 반납(권 4매 포함, 번호 매장: + 보증금 20,000원 현금 반환)',
     commands: (state) => { const o = byLast4(state, MINHO.last4); return o ? returnWithDeposit(state, 'minho-return', o.id) : [
 ]; },
   },
   {
-    id: 'van-2200', at: at(22, 0), note: '1호 차량 22:00 수거: 설천 주차장(7팀 + 강지은 · 이준서 · 송하윤), 솔마을 두솔동 박준호(보드 5 · 헬멧 15 · 권 33) + 권 1매 보증금 5,000원 현장 반환',
+    // 첫 매장의 밤(2026-09-26 답 15): 스키장이 22:00에 끝나 손님 연락이 22:30 ~ 23:00에 온다. 22:00 반납 타임의 수거는 그 사이에 한다
+    // (22:00 + 90분 23:30까지는 늦음이 아님, 운영 규칙 vehicleLate).
+    id: 'van-2200', at: at(22, 40), note: '1호 차량 22:00 반납 수거(22:40): 설천 주차장(7팀 + 강지은 · 이준서 · 송하윤), 솔마을 두솔동 박준호(보드 1 · 헬멧 1 · 권 1매, 번호 매장: + 권 1매 보증금 5,000원 현장 반환)',
     commands: (state) => vanCollect(state, 'van-2200', 'v1', at(22, 0)),
   },
   {
-    id: 'tirol-2210', at: at(22, 10), note: '만선 티롤 앞: 최하은 팀 장비 수거(권 1매 못 받음), 정하늘 팀 고객 부재',
+    id: 'tirol-2210', at: at(23, 5), note: '만선 티롤 앞 22:10 일정(23:05): 최하은 팀 장비 수거(권 1매 못 받음), 정하늘 팀 고객 부재',
     commands: (state) => [
       ...vanCollect(state, 'tirol-2210', 'v1', at(22, 10), { orderIds: ['o26'], only: (l) => l.section !== 'lift' }),
       ...visitFailed(state, 'tirol-2210-visit', 'o41', 'customer_absent'),

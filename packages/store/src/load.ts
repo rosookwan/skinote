@@ -10,7 +10,7 @@ import { isoOf } from './ids.ts';
 import { num, one, str, type Db } from './db.ts';
 import { loadRegistry } from './registry-read.ts';
 import { loadOrderShells, splitChains } from './map/orders.ts';
-import { loadAssets, loadStock } from './map/stock.ts';
+import { loadAssets, loadStock, loadVanSpares } from './map/stock.ts';
 import { loadMoney } from './map/money.ts';
 import { loadDispatch } from './map/dispatch.ts';
 import { loadCash } from './map/cash.ts';
@@ -70,6 +70,7 @@ export function loadShopState(db: Db, shopId: string, now: number): ShopState {
     driverDevice: { offline: false, queue: [] },
     settings,
     assets: loadAssets(db, shopId),
+    vanSpares: loadVanSpares(db, shopId, registry),
     deposits,
     paymentGroups,
     drawers,

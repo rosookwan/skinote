@@ -114,8 +114,8 @@ export function loadRegistry(db: Db, shopId: string, nowIso?: string): LoadedReg
     };
   });
 
-  const payMethods: FxPayMethod[] = all(db, 'SELECT key, label, quick FROM payment_methods WHERE shop_id = ? AND active = 1 AND is_system = 0 ORDER BY sort, rowid', shopId)
-    .map((r) => ({ key: str(r.key) as FxMethodKey, label: str(r.label), quick: bool(r.quick) }));
+  const payMethods: FxPayMethod[] = all(db, 'SELECT key, label, quick, driver_allowed FROM payment_methods WHERE shop_id = ? AND active = 1 AND is_system = 0 ORDER BY sort, rowid', shopId)
+    .map((r) => ({ key: str(r.key) as FxMethodKey, label: str(r.label), quick: bool(r.quick), driver: bool(r.driver_allowed) }));
   const paySections: FxPaySection[] = all(db, 'SELECT key, label, default_method_id FROM payment_sections WHERE shop_id = ? AND active = 1 AND is_system = 0 ORDER BY sort, rowid', shopId)
     .map((r) => ({ key: str(r.key) as FxSection, label: str(r.label), defaultMethod: str(r.default_method_id) as FxMethodKey }));
   const sectionOfKind = new Map(kindRows.map((k) => [str(k.id), str(k.payment_section_id)]));
@@ -177,6 +177,8 @@ export function loadRegistry(db: Db, shopId: string, nowIso?: string): LoadedReg
   const seesDue = currentSetting<{ enabled: boolean }>(db, shopId, SETTING.driverSeesDue, nowIso) ?? { enabled: true };
   const opening = currentSetting<{ amount: number }>(db, shopId, SETTING.openingCash, nowIso) ?? { amount: 0 };
   const defaultSlot = currentSetting<{ return_slot_id: string | null }>(db, shopId, SETTING.defaultReturnSlot, nowIso);
+  const vehicleLate = currentSetting<{ minutes: number; night_minutes: number }>(db, shopId, SETTING.vehicleLate, nowIso);
+  const nightNotice = currentSetting<{ minutes: number }>(db, shopId, SETTING.nightNotice, nowIso);
   const cutoff = cutoffHistory(db, shopId);
   const settings: FxShopRules = {
     liftReturnPolicy: (liftPolicy === 'optional' ? 'optional' : 'required'),
@@ -191,6 +193,8 @@ export function loadRegistry(db: Db, shopId: string, nowIso?: string): LoadedReg
     driverSeesDue: seesDue.enabled,
     returnSlots,
     ...(defaultSlot?.return_slot_id ? { defaultReturnSlotKey: defaultSlot.return_slot_id } : {}),
+    ...(vehicleLate ? { vehicleLate: { minutes: num(vehicleLate.minutes, 60), nightMinutes: num(vehicleLate.night_minutes, 60) } } : {}),
+    ...(nightNotice ? { nightNoticeMinutes: num(nightNotice.minutes, 60) } : {}),
   };
 
   const drawers: FxDrawer[] = all(db, 'SELECT id, kind_key, label, vehicle_id FROM cash_drawers WHERE shop_id = ? AND active = 1 ORDER BY rowid', shopId).map((d) => ({

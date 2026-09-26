@@ -1,13 +1,13 @@
 // 매장 목록 값(ShopRegistry) · 운영 규칙(FxShopRules) · 돈통 → 표(plan §4-2 '머리와 목록'). 매장을 만들 때(provision) 한 번 모두
 // 쓰고, 운영 규칙 저장(setting.set)은 바뀐 곳만 쓴다(목록 행은 제자리 수정 + config_changes 기록, 설정은 shop_settings 새 판).
 // 되읽기(registry-read)가 같은 값을 돌려주는 것이 기준이다(load(write(x)) ≡ x, D3). 규칙 셈은 하지 않고 모양만 옮긴다.
-import { DRIVER_METHODS, type FxDepositRule, type FxDrawer, type FxKind, type FxProduct, type FxReturnSlot, type FxShopRules, type ShopRegistry } from '@skinote/domain';
+import type { FxDepositRule, FxDrawer, FxKind, FxProduct, FxReturnSlot, FxShopRules, ShopRegistry } from '@skinote/domain';
 import { StoreError } from './errors.ts';
 import { canonicalJson, isoOf } from './ids.ts';
 import { insert, num, one, run, type Db } from './db.ts';
 import {
   axisAttribute, axisOption, CASH_METHOD, CLOSING_DIFFERENCE, DEPOSIT_METHOD, DEPOSIT_SECTION, EXTENSION, EXTENSION_UNDO, HANDOVER, INCLUDES_ATTRIBUTE,
-  MAIN_SCOPE, OK_CONDITION, PRICE_LIST, PRICE_VERSION, priceRuleId, reasonId, SETTING, TICKET_VENDOR, variantId, VISIT_RESULT,
+  MAIN_SCOPE, OK_CONDITION, PRICE_LIST, PRICE_VERSION, priceRuleId, reasonId, SETTING, TICKET_VENDOR, defaultVariantId, variantId, VISIT_RESULT,
 } from './registry-keys.ts';
 
 /** 누가 언제 쓰나(목록 행의 updated_at · config_changes · shop_settings). */
@@ -63,6 +63,9 @@ export function settingValues(reg: ShopRegistry, settings: FxShopRules): Record<
     [SETTING.maxLineQuantity]: { max: reg.maxLineQuantity },
     [SETTING.openingCash]: { amount: settings.openingCash },
     [SETTING.defaultReturnSlot]: { return_slot_id: settings.defaultReturnSlotKey ?? null },
+    // 없는 매장(옛 명세)은 적지 않는다: 되읽기가 없음 = 시작 값(rules.ts lateAfter · nightNoticeBefore)으로 읽는다.
+    ...(settings.vehicleLate ? { [SETTING.vehicleLate]: { minutes: settings.vehicleLate.minutes, night_minutes: settings.vehicleLate.nightMinutes } } : {}),
+    ...(settings.nightNoticeMinutes !== undefined ? { [SETTING.nightNotice]: { minutes: settings.nightNoticeMinutes } } : {}),
   };
 }
 
@@ -106,7 +109,7 @@ export function writeRegistry(
   drawers.forEach((d) => insert(db, 'cash_drawers', { ...base, id: d.id, kind_key: d.kind, label: d.label, vehicle_id: d.vehicleId, closing_scope_id: MAIN_SCOPE }));
 
   reg.payMethods.forEach((m, i) => insert(db, 'payment_methods', {
-    ...base, id: m.key, key: m.key, label: m.label, affects_cash_drawer: m.key === CASH_METHOD, driver_allowed: DRIVER_METHODS.includes(m.key), quick: m.quick, sort: i,
+    ...base, id: m.key, key: m.key, label: m.label, affects_cash_drawer: m.key === CASH_METHOD, driver_allowed: m.driver, quick: m.quick, sort: i,
   }));
   // 보증금 결제(미수 차감): 돈이 움직이지 않는 시스템 수단. 매장 목록(registry.payMethods)에는 없다.
   insert(db, 'payment_methods', {
@@ -175,6 +178,11 @@ export function writeRegistry(
         shop_id: shopId, variant_id: variantId(p.key, v.key), attribute_id: axisAttribute(kind.key), option_id: axisOption(kind.key, v.key), updated_at: at, updated_by: meta.actorKey,
       });
     });
+    // 수량 상품은 기본 규격 하나(축 값 없음: 목록 되읽기의 규격에 나오지 않는다). 규격 없는 수량 상품(첫 매장의 스키 · 권)의 재고와, 규격 없이
+    // 적힌 줄(견본 하루의 의류 · 헬멧 줄)의 이동 줄이 이 규격을 쓴다(수량 이동 줄은 늘 규격을 가진다).
+    if (p.tracking === 'count') {
+      insert(db, 'item_variants', { ...base, id: defaultVariantId(p.key), catalog_item_id: p.key, label: p.label, sort: kind.variants?.length ?? 0 });
+    }
     if (p.unit !== undefined) {
       const slot = p.returnSlotKey === undefined ? undefined : (settings.returnSlots.find((s) => s.key === p.returnSlotKey) ?? bad('권 ' + p.key + '의 반납 타임이 없다: ' + p.returnSlotKey));
       insert(db, 'ticket_products', { shop_id: shopId, catalog_item_id: p.key, vendor_counterparty_id: TICKET_VENDOR, window_end: slot ? slotRow(slot).local_time : undefined });
@@ -324,9 +332,12 @@ export function writeSettingsChange(
   }
 
   // 설정 새 판(값이 바뀐 key만)
-  for (const k of ['prepaymentMode', 'prepaymentAmount', 'sameDayCancelRefund', 'driverSeesDue', 'openingCash', 'defaultReturnSlotKey'] as const) handled.add(k);
+  for (const k of ['prepaymentMode', 'prepaymentAmount', 'sameDayCancelRefund', 'driverSeesDue', 'openingCash', 'defaultReturnSlotKey', 'vehicleLate', 'nightNoticeMinutes'] as const) handled.add(k);
   const valuesBefore = settingValues(reg, before);
   const valuesAfter = settingValues(reg, after);
+  // 있던 설정을 지우는 바뀜은 표에 없다(설정은 새 판만 쌓는다).
+  const dropped = Object.keys(valuesBefore).filter((key) => !(key in valuesAfter));
+  if (dropped.length) throw new StoreError('UNMAPPED_CHANGE', '설정을 지우는 바뀜: ' + dropped.join(', '));
   for (const [key, value] of Object.entries(valuesAfter)) {
     if (!same(valuesBefore[key], value)) writeSetting(db, shopId, key, value, meta);
   }

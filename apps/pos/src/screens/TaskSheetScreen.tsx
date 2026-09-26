@@ -1,7 +1,8 @@
 // V7 기사 업무 판 · 한 팀(spec 3-8, ui 6-5): 배달 목록의 줄(팀 칸)을 누르면 연다(#/driver/tasks/:taskId). 배달 · 수거 한 팀의 일을 크게 본다.
 // 태블릿(1024×520 ~ 1280×720): 왼쪽 종이(제목 · 팀 · 품목 표 · 돈 줄) + 오른쪽 판(2 × 2 큰 버튼 · 반납 일정), 바닥줄 `‹ 배달 목록` ·
 // `완료 0 · 잔여 1` · 보라 주 버튼. 휴대폰(360×640, ui 6-5): 한 칸 세로, 2 × 2 버튼 56px, 주 버튼 가로 전체 64px.
-// 줄 · 버튼 높이는 연결 띠가 떠 있을 때의 높이로 정한다(화면 높이에서 띠를 늘 뺌, spec 3-8): 연결이 끊겨도 크기가 그대로이고 띠 아래가 내려갈 뿐이다.
+// 태블릿의 줄 · 버튼 높이는 연결 띠가 떠 있을 때의 높이로 정한다(화면 높이에서 띠를 늘 뺌, spec 3-8): 연결이 끊겨도 크기가 그대로이고 띠 아래가
+// 내려갈 뿐이다. 휴대폰(360×640)은 품목 세 줄이 들어가야 해서 띠가 보일 때만 빼고, 끊기면 반납 일정 줄부터 뺀다(phoneTaskLayout).
 // 품목 줄은 남는 높이를 나눠 쓴다(layout fillRows, DeviceProfile fill 60 ~ 88), 넘치면 쪽을 넘긴다. 스크롤은 없다.
 // 화면은 규칙을 계산하지 않는다: 제목 · 표 · 돈 줄 · 버튼 · 주 버튼 · 바닥줄 글은 읽기 모델(taskSheet) 그대로이고, 누르면 확인 창(stamp.* →
 // confirmDraft: 배달 처리 · 적재 처리 · 수거 처리)이나 판(현장 수납 · 리프트권 추가 · 방문 결과)을 연다.
@@ -11,7 +12,7 @@ import {
 } from '@skinote/contract';
 import { fillRows } from '@skinote/layout';
 import {
-  AppHeader, BigButton, ConnectionStrip, Icon, Keypad, Pager, PrimaryButton, RichLine, Stamp, TextFit, formatTime, t, useDeviceProfile, useServerNow,
+  AppHeader, BigButton, ConnectionStrip, Icon, Keypad, Pager, PrimaryButton, RichLine, Stamp, TextFit, connectionStripVisible, formatTime, t, useDeviceProfile, useServerNow,
   useUi, type DeviceProfile, type IconName,
 } from '@skinote/ui';
 import { useMemo, useState, type CSSProperties } from 'react';
@@ -31,23 +32,46 @@ const ACTION_ICON: Partial<Record<ActionKey, IconName>> = {
 };
 
 /**
- * 품목 줄에 쓸 높이(spec 3-8): 화면 높이 − 머리 − 연결 띠(늘 뺌) − 바닥 − 제목 − 팀 묶음 − 돈 줄 − 사이. 태블릿은 표 머리(묶음 제목 높이)가 있고,
- * 휴대폰은 한 칸 세로라 반납 일정(배달만) · 2 × 2 버튼(누르는 곳 높이 두 줄)도 빼고 표 머리가 없다(도장 동그라미 안에 단계 이름).
- * 값은 모두 DeviceProfile에서 온다.
+ * 품목 줄에 쓸 높이(spec 3-8): 화면 높이 − 머리 − 연결 띠 − 바닥 − 제목 − 팀 묶음 − 돈 줄 − 사이. 태블릿은 표 머리(묶음 제목 높이)가 있고 연결
+ * 띠를 늘 뺀다(끊겨도 크기가 그대로). 휴대폰은 한 칸 세로라 반납 일정(배달만, 이름을 앞에 붙인 한 줄씩) · 2 × 2 버튼(누르는 곳 높이 두 줄)도
+ * 빼고 표 머리가 없다(도장 동그라미 안에 단계 이름). 휴대폰은 띠가 보일 때만 뺀다(strip): 360×640에 품목 세 줄(스키 · 헬멧 · 야간권)이
+ * 들어가야 해서 띠 자리를 비워 두지 않고, 끊기면 반납 일정 줄부터 뺀다(화면의 차례). 값은 모두 DeviceProfile에서 온다.
  */
-export function taskRowRoom(profile: DeviceProfile, height: number, options: { oneColumn: boolean; planLines: number; pager: boolean }): number {
-  const fixed = profile.headerPx + profile.connectionStripPx + profile.footerPx + profile.titleTabsPx + profile.pinRowPx + profile.keypad.loadPx;
+export function taskRowRoom(profile: DeviceProfile, height: number, options: { oneColumn: boolean; planLines: number; pager: boolean; strip?: boolean }): number {
+  const strip = options.oneColumn && options.strip === false ? 0 : profile.connectionStripPx;
+  const fixed = profile.headerPx + strip + profile.footerPx + profile.titleTabsPx + profile.pinRowPx + profile.keypad.loadPx;
   if (!options.oneColumn) return height - fixed - profile.groupTitlePx - 2 * profile.space.s;
   const gap = profile.space.xs;
-  const plan = options.planLines ? planPx(profile, options.planLines) + gap : 0;
+  const plan = options.planLines ? phonePlanPx(profile, options.planLines) + gap : 0;
   const actions = 2 * profile.minTargetPx + profile.space.s + gap;
   const pager = options.pager ? profile.minTargetPx + gap : 0;
   return height - fixed - 2 * gap - plan - actions - pager;
 }
 
-/** 반납 일정 칸의 높이: 이름 + 첫 줄이 누르는 곳 높이(56, 시안), 권이 있는 둘째 줄마다 본문 한 줄(글자 × 4/3) + 사이. */
+/** 반납 일정 칸의 높이(태블릿 판): 이름 + 첫 줄이 누르는 곳 높이(56, 시안), 권이 있는 둘째 줄마다 본문 한 줄(글자 × 4/3) + 사이. */
 export function planPx(profile: DeviceProfile, lines: number): number {
   return lines <= 0 ? 0 : profile.minTargetPx + (lines - 1) * (Math.round((profile.bodyFontPx * 4) / 3) + profile.space.xs);
+}
+
+/** 휴대폰의 반납 일정 칸 높이: 위 사이(가는 선) + 줄마다 본문 한 줄(글자 × 4/3, 첫 줄 앞에 이름 `반납 일정`) + 줄 사이. */
+export function phonePlanPx(profile: DeviceProfile, lines: number): number {
+  return lines <= 0 ? 0 : profile.space.s + lines * Math.round((profile.bodyFontPx * 4) / 3) + (lines - 1) * profile.space.xs;
+}
+
+/**
+ * 휴대폰 업무 판의 품목 줄 · 반납 일정 줄 수: 품목이 한 쪽에 들 때까지 반납 일정의 권 줄(`권 1매 포함`, 표의 권 줄과 같은 사실) → 일정 줄 순서로
+ * 빼고, 그래도 넘치면 일정 없이 표 아래 쪽 넘김.
+ */
+export function phoneTaskLayout(profile: DeviceProfile, height: number, lines: number, planLines: number, strip: boolean): { plan: number; rows: ReturnType<typeof fillRows>; pager: boolean } {
+  const fit = (plan: number, pager: boolean) => fillRows(taskRowRoom(profile, height, { oneColumn: true, planLines: plan, pager, strip }), lines, profile.fill.rowMinPx, profile.fill.rowMaxPx);
+  let plan = planLines;
+  let rows = fit(plan, false);
+  while (rows.pageCount > 1 && plan > 0) {
+    plan -= 1;
+    rows = fit(plan, false);
+  }
+  if (rows.pageCount === 1) return { plan, rows, pager: false };
+  return { plan: 0, rows: fit(0, true), pager: true };
 }
 
 /**
@@ -104,14 +128,13 @@ export function TaskSheetScreen({ taskId, device }: { taskId: string; device: De
   };
 
   // 품목 줄의 높이 · 쪽(태블릿은 바닥줄의 쪽 넘김, 휴대폰은 표 아래 한 줄). 휴대폰에서 품목이 한 쪽에 들지 않으면 반납 일정의 권 줄
-  // (`권 1매 포함 · …`, 돈 줄의 `보증금 · 권 1매 5,000원`과 같은 사실)을 먼저 빼고, 그래도 넘치면 쪽을 넘긴다.
+  // (`권 1매 포함 · …`, 표의 권 줄과 같은 사실) → 일정 줄을 빼고, 그래도 넘치면 쪽을 넘긴다(phoneTaskLayout). 휴대폰은 연결 띠가 보일 때만
+  // 그 높이를 뺀다(360×640에 품목 세 줄).
   const lines = view?.lines ?? [];
   const { fill } = profile;
-  const fit = (planShown: number, pager: boolean) => fillRows(taskRowRoom(profile, viewport.height, { oneColumn, planLines: planShown, pager }), lines.length, fill.rowMinPx, fill.rowMaxPx);
-  let shownPlan = planLines;
-  let rows = fit(shownPlan, false);
-  if (oneColumn && rows.pageCount > 1 && shownPlan > 1) { shownPlan = 1; rows = fit(shownPlan, false); }
-  if (oneColumn && rows.pageCount > 1) rows = fit(shownPlan, true);
+  const phone = oneColumn ? phoneTaskLayout(profile, viewport.height, lines.length, planLines, connectionStripVisible(connection)) : null;
+  const shownPlan = phone ? phone.plan : planLines;
+  const rows = phone ? phone.rows : fillRows(taskRowRoom(profile, viewport.height, { oneColumn, planLines, pager: false }), lines.length, fill.rowMinPx, fill.rowMaxPx);
   const current = Math.min(page, rows.pageCount - 1);
   const shown = lines.slice(current * rows.perPage, (current + 1) * rows.perPage);
   const pager = rows.pageCount > 1 ? <Pager page={current} pageCount={rows.pageCount} onChange={setPage} /> : null;
@@ -244,11 +267,23 @@ export function TaskSheetScreen({ taskId, device }: { taskId: string; device: De
       {view.money.map((line, i) => <RichLine key={i} runs={line} />)}
     </div>
   ) : null;
-  const plan = view.returnPlan?.length ? (
-    <div className="pos-task-plan">
-      <span className="pos-task-plan-label">{say('returnPlan')}</span>
-      {view.returnPlan.slice(0, oneColumn ? shownPlan : undefined).map((line, i) => <TextFit key={i} className="pos-task-plan-line" input={{ mode: 'words', text: line }} />)}
-    </div>
+  // 반납 일정: 태블릿은 이름 한 줄 + 일정 줄, 휴대폰은 이름을 첫 줄 앞에 붙인 한 줄씩(좁으면 뒤 조각부터 뺌: 차량 → 장소, 시각은 남김).
+  const plan = view.returnPlan?.length && (!oneColumn || shownPlan > 0) ? (
+    oneColumn ? (
+      <div className="pos-task-plan is-inline">
+        {view.returnPlan.slice(0, shownPlan).map((line, i) => (
+          <div key={i} className="pos-task-plan-row">
+            {i === 0 ? <span className="pos-task-plan-label">{say('returnPlan')}</span> : null}
+            <TextFit className="pos-task-plan-line" input={{ mode: 'parts', parts: line.split(' · ').map((text, j) => ({ text, drop: j })) }} />
+          </div>
+        ))}
+      </div>
+    ) : (
+      <div className="pos-task-plan">
+        <span className="pos-task-plan-label">{say('returnPlan')}</span>
+        {view.returnPlan.map((line, i) => <TextFit key={i} className="pos-task-plan-line" input={{ mode: 'words', text: line }} />)}
+      </div>
+    )
   ) : null;
   const buttonPx = taskButtonPx(profile, viewport.height, planLines);
   const actions = (

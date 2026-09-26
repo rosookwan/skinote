@@ -1,7 +1,7 @@
 // 글자 맞추기 부품(ui 5 TextFit). 말줄임표 없이 덜 중요한 부분이 통째로 빠진다(@skinote/layout의 fitText).
 // 폭은 부르는 쪽이 알면(장부 칸) width로 받고, 모르면 스스로 잰다. 묶은 글꼴을 다 읽으면 다시 맞춘다.
 import { fitText, fullText, type Measure, type TextFitInput } from '@skinote/layout';
-import { useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useDeviceProfile } from '../context.tsx';
 import { approximateMeasure, measureFor, useElementSize, useFontsVersion, useIsoLayoutEffect } from '../measure.ts';
 
@@ -15,6 +15,11 @@ export interface TextFitProps {
   /** 한 줄에 안 들어가면 이 줄 수까지 내려 쓴다(빨리 확인 64px 줄은 두 줄). 넘길 때는 낱말 사이에서만 줄이 바뀐다. */
   lines?: number;
   style?: CSSProperties;
+  /**
+   * 고른 글을 그리는 법(없으면 글 그대로). 맞추기는 글로 하고, 그리기만 조각마다 색을 달리할 때 쓴다(합친 묶음 제목에서 늦은 묶음만 늦음 색).
+   * 같은 글꼴 · 크기로만 그린다(폭이 달라지면 안 된다).
+   */
+  render?: (text: string) => ReactNode;
 }
 
 /** 여러 줄로 내려 쓸 때 줄 끝 빈자리를 셈한 몫(낱말 사이에서만 줄이 바뀌므로 넉넉히 뺀다). */
@@ -35,7 +40,7 @@ export function fitLines(input: TextFitInput, width: number, lines: number, meas
   return { text: many.text, fits: many.fits, wrapped: true };
 }
 
-export function TextFit({ input, width, className, allowTwoLines = false, lines = 1, style }: TextFitProps) {
+export function TextFit({ input, width, className, allowTwoLines = false, lines = 1, style, render }: TextFitProps) {
   const profile = useDeviceProfile();
   const ref = useRef<HTMLSpanElement>(null);
   const measured = useElementSize(ref);
@@ -64,7 +69,7 @@ export function TextFit({ input, width, className, allowTwoLines = false, lines 
   const classes = ['sn-fit', shown.wrapped || (!shown.fits && allowTwoLines) ? 'is-two-lines' : '', className ?? ''].filter(Boolean).join(' ');
   return (
     <span ref={ref} className={classes} style={style} data-fits={shown.fits ? undefined : 'false'}>
-      {shown.text}
+      {render ? render(shown.text) : shown.text}
     </span>
   );
 }

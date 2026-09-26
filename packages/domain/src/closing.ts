@@ -15,7 +15,7 @@ import { bucketOnVan, bucketOut, currentReturn, lineBuckets, taskBucket } from '
 import { countWordOf, countWords, pieceWord, slotTime } from './promise-sheet.ts';
 import { conflict, done, nothing, rejected, unsupported, type Result } from './result.ts';
 import {
-  lastReturnSlotAt, LATE_AFTER_STORE, LATE_AFTER_VEHICLE, moneyLateAt, othersDue, pendingIssue, routeTasks, selfDue, slotAt, vehicleLabel,
+  lastReturnSlotAt, lateAtOf, moneyLateAt, othersDue, pendingIssue, routeTasks, selfDue, slotAt, vehicleLabel,
 } from './rules.ts';
 import { businessDateOf, dateTitle, hm, iso, kstAt, kstDate, shopCutoff } from './time.ts';
 import type { ViewContext } from './views.ts';
@@ -322,7 +322,7 @@ function returnCarry(state: ShopState, now: number, date: string): CarryItem[] {
       for (const b of lineBuckets(o, l)) {
         const n = bucketOut(b);
         if (n <= 0) continue;
-        const lateAt = b.promise.at + (b.promise.mode === 'vehicle' ? LATE_AFTER_VEHICLE : LATE_AFTER_STORE);
+        const lateAt = lateAtOf(state.settings, b.promise);
         const day = businessDateOf(b.promise.at, cutoff);
         const entry = { at: b.promise.at, o, l, n };
         if (day <= date && lateAt <= now) overdue.set(l.section, [...(overdue.get(l.section) ?? []), entry]);
@@ -432,7 +432,7 @@ export function closeConfirmLine(state: ShopState, now: number, date: string): s
       if (!l.returnable) continue;
       for (const b of lineBuckets(o, l)) {
         const n = bucketOut(b);
-        const lateAt = b.promise.at + (b.promise.mode === 'vehicle' ? LATE_AFTER_VEHICLE : LATE_AFTER_STORE);
+        const lateAt = lateAtOf(state.settings, b.promise);
         if (n > 0 && businessDateOf(b.promise.at, cutoff) === date && lateAt > now) due.push({ l, n });
       }
     }
@@ -442,7 +442,7 @@ export function closeConfirmLine(state: ShopState, now: number, date: string): s
   // 항목(`리프트권 미반납` · `확인 필요`)이라 묻지 않는다.
   for (const v of state.registry.vehicles) {
     const receipt = lastReceipt(state, date, v.id);
-    const out = routeTasks(state, v.id, date).some((task) => task.promise.at + LATE_AFTER_VEHICLE > now && task.order.lines.some((l) => {
+    const out = routeTasks(state, v.id, date).some((task) => lateAtOf(state.settings, task.promise) > now && task.order.lines.some((l) => {
       const b = l.returnable ? taskBucket(task, l) : undefined;
       return b !== undefined && (bucketOut(b) > 0 || (bucketOnVan(b) > 0 && (receipt === undefined || (l.collectedAt ?? 0) > receipt)));
     }));

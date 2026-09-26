@@ -6,7 +6,7 @@ import type { ReactElement } from 'react';
 import { describe, expect, it } from 'vitest';
 import {
   AppHeader, Checklist, ConfirmDialog, ConnectionStrip, DeviceProfileProvider, FooterBar, IndexTabs, Keypad, Ledger, Pager, PinBar,
-  PrimaryButton, RowActionBar, Slip, Stamp, fillTitle, fitLines, keypadKeyAction, rowBarSteps, typingIn, type RowAction,
+  PrimaryButton, RowActionBar, Slip, Stamp, confirmLabelAlts, paymentParts, fillTitle, fitLines, keypadKeyAction, rowBarSteps, typingIn, type RowAction,
 } from '../src/index.ts';
 import type { DeviceRole, Size } from '../src/device-profile.ts';
 import { collectionList, dayLedger, NOW_MS, kst, orderSlip } from './fixtures.ts';
@@ -136,6 +136,23 @@ describe('기사 수거 목록', () => {
     const late = { ...collectionList, rows: collectionList.rows.map((r) => (r.groupKey === 's2200' ? { ...r, lateAt: kst(21, 0) } : r)) };
     const html = render(<Ledger view={driverView} result={late} steps={steps} nowMs={Date.parse(kst(21, 40))} page={0} size={{ width: 992, height: 324 }} />, { width: 1024, height: 520 }, 'driver');
     expect(html).toContain('<span class="sn-fit tone-late">22:00 반납 · 지연 · 2 / 4</span>');
+  });
+
+  it('합친 묶음 제목은 늦은 묶음의 조각만 지연 색(끝난 · 늦지 않은 묶음은 보통 먹, 2026-09-26 검토)', () => {
+    const late = {
+      ...collectionList,
+      groups: [{ key: 's1630', label: '16:30 반납', at: kst(16, 30), done: 1, total: 1 }, ...collectionList.groups],
+      rows: [
+        { ...collectionList.rows[0]!, id: 't21', groupKey: 's1630', finished: false },
+        ...collectionList.rows.map((r) => (r.groupKey === 's2200' ? { ...r, lateAt: kst(21, 0) } : r)),
+      ],
+    };
+    // 284: 나눈 제목(16:30 한 줄 + 22:00 두 줄 = 세 줄)보다 합친 제목(네 줄)이 더 많이 들어가 한 줄로 합친다.
+    const html = render(<Ledger view={driverView} result={late} steps={steps} nowMs={Date.parse(kst(21, 40))} page={0} size={{ width: 992, height: 284 }} />, { width: 1024, height: 520 }, 'driver');
+    const heading = /<th colSpan="\d+" scope="colgroup"><span class="sn-fit">(.*?)<\/span><\/th>/.exec(html)?.[1] ?? '';
+    expect(heading).toContain('16:30 반납 · 1 / 1');
+    expect(heading).toContain('<span class="tone-late">22:00 반납 · 지연 · 2 / 4</span>');
+    expect(heading).not.toMatch(/tone-late">16:30/);
   });
 
   it('휴대폰 360×640: 품목이 팀 칸 둘째 줄로(64px 두 줄 줄), 묶음 제목과 6줄', () => {
@@ -409,5 +426,35 @@ describe('머리줄 · 탭 · 바닥줄 · 작은 부품', () => {
     expect(phone).toContain('data-device="driver_phone"');
     expect(phone).toContain('data-accent="purple"');
     expect(phone).toContain('--sn-target:56px');
+  });
+});
+
+describe('확인 창 주 버튼의 짧은 글(confirmLabelAlts)', () => {
+  it('수를 끝까지 지킨다: 이름의 `처리`를 떼고, 금액 조각을 뺀 뒤에야 뒤 조각을 뺀다', () => {
+    expect(confirmLabelAlts('수거 처리 · 2개 · 1매')).toEqual(['수거 처리 · 2개 · 1매', '수거 · 2개 · 1매', '수거 처리 · 2개', '수거 처리']);
+    expect(confirmLabelAlts('지급 처리 · 6개 · 3매 · 보증금 15,000원')).toEqual([
+      '지급 처리 · 6개 · 3매 · 보증금 15,000원', '지급 · 6개 · 3매 · 보증금 15,000원', '지급 처리 · 6개 · 3매', '지급 · 6개 · 3매', '지급 처리 · 6개', '지급 처리',
+    ]);
+    expect(confirmLabelAlts('긴급 요청')).toEqual(['긴급 요청']);
+    expect(confirmLabelAlts('반납 처리 · 5개')).toEqual(['반납 처리 · 5개', '반납 · 5개', '반납 처리']);
+  });
+});
+
+describe('접수증 돈 줄의 수단(paymentParts)', () => {
+  it('수단이 하나면 이름만, 둘 이상이면 수단마다 금액(오늘 받은 수단 먼저), 다른 날 받은 돈은 날짜', () => {
+    expect(paymentParts([{ amount: 365_000, methodLabel: '카드', date: '2026-12-26' }], '2026-12-26')).toEqual([{ text: '카드', drop: 5 }]);
+    expect(paymentParts([{ amount: 105_000, methodLabel: '계좌이체', date: '2026-12-24' }], '2026-12-26')).toEqual([{ text: '계좌이체 12/24', drop: 5 }]);
+    expect(paymentParts([
+      { amount: 225_000, methodLabel: '카드', date: '2026-12-26' }, { amount: 140_000, methodLabel: '현금', date: '2026-12-26' },
+    ], '2026-12-26')).toEqual([{ text: '카드 225,000원 · 현금 140,000원', drop: 5 }]);
+    // 선입금(12/24 계좌이체) 뒤 오늘 카드: 오늘 받은 카드가 먼저.
+    expect(paymentParts([
+      { amount: 105_000, methodLabel: '계좌이체', date: '2026-12-24' }, { amount: 120_000, methodLabel: '카드', date: '2026-12-26' },
+    ], '2026-12-26')).toEqual([{ text: '카드 120,000원 · 계좌이체 12/24 105,000원', drop: 5 }]);
+    // 같은 수단 여러 번(선입금 + 오늘 현장 계좌이체)은 한 조각(오늘).
+    expect(paymentParts([
+      { amount: 135_000, methodLabel: '계좌이체', date: '2026-12-25' }, { amount: 35_000, methodLabel: '계좌이체', date: '2026-12-26' },
+    ], '2026-12-26')).toEqual([{ text: '계좌이체', drop: 5 }]);
+    expect(paymentParts([], '2026-12-26')).toEqual([]);
   });
 });

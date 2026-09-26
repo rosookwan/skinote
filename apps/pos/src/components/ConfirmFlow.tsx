@@ -9,10 +9,11 @@
 // 고를 때마다 서버에 다시 묻고, 요청번호 · 이어진 명령을 스스로 연 때 정한다(여기의 초안은 만들지 않는다).
 import {
   chainDrafts, draftToEnvelope, isAccepted, type ActionKey, type AnyCommandDraft, type AnyCommandEnvelope, type Basis, type CommandOutcome,
-  type ConfirmCommand, type ConfirmDraftParams, type ConfirmDraftView, type ConfirmStep, type OpenDraftOptions, type StampCell, type StampStepRow,
+  type ConfirmCommand, type ConfirmDraftParams, type ConfirmDraftView, type ConfirmStep, type LineUnits, type OpenDraftOptions, type ReturnPieceLine,
+  type StampCell, type StampStepRow,
 } from '@skinote/contract';
-import { ConfirmDialog, formatTime, useCommandDraft } from '@skinote/ui';
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { ConfirmDialog, Pager, ReturnPieces, formatTime, useCommandDraft, useUi } from '@skinote/ui';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useClient } from '../app/client.tsx';
 import { actionLabel } from '../app/labels.ts';
 import { say } from '../app/strings.ts';
@@ -39,6 +40,12 @@ export interface ConfirmFlow {
 }
 
 const NO_BASIS: Basis = { epoch: '', rev: 0 };
+
+/** 초안을 묻는 인자(창의 앞 한 줄 lead는 화면 몫이라 보내지 않는다: 서버는 모르는 칸을 받지 않는다). */
+export function draftParams(request: ConfirmRequest, picked?: LineUnits[] | null): ConfirmDraftParams {
+  const { lead: _lead, ...params } = request;
+  return picked ? { ...params, picked } : params;
+}
 
 function draftKey(request: ConfirmRequest): string {
   return ['confirm', request.orderId ?? request.taskId ?? request.vehicleId ?? '', request.actionKey, ...(request.lineIds ?? [])].join(':');
@@ -99,16 +106,59 @@ export async function sendChain(send: (envelope: AnyCommandEnvelope) => Promise<
   return null;
 }
 
+/**
+ * 수량 칸(초안의 counts)의 한 줄을 바꾼 고른 수(순수 함수). 처음(picked 없음)은 창이 보인 수 그대로. 모든 줄이 0이 되는 바꿈은 받지 않는다
+ * (보낼 것이 없는 창: 닫기로 끝낸다) — null.
+ */
+export function withCount(picked: LineUnits[] | null, counts: readonly ReturnPieceLine[], lineId: string, value: number): LineUnits[] | null {
+  const now = picked ?? counts.map((c) => ({ lineId: c.lineId, quantity: c.quantity?.value ?? 0 }));
+  const next = now.map((u) => (u.lineId === lineId ? { lineId, quantity: Math.max(0, value) } : u));
+  return next.some((u) => u.quantity > 0) ? next : null;
+}
+
 /** 주 버튼 글: 초안의 동작 이름에, 수량 −/+가 있으면 지금 수량을 붙인다('지급 처리 · 2개', 수를 바꾸면 따라 바뀜). */
 export function confirmText(view: ConfirmDraftView, qty: number | null): string {
   const label = view.confirmLabel ?? view.title;
   return view.quantity && qty !== null ? say('confirmQty', { label, n: qty, unit: view.quantity.unit }) : label;
 }
 
+/**
+ * 수량 칸(수량으로 세는 줄 여럿의 지급 · 적재 · 배달 · 수거, ui 3-1): 반납 창(V1)과 같은 칸을 한 줄에 하나씩, 한 쪽 세 줄(DeviceProfile
+ * pages.returnPieceRows, 넘치면 쪽 넘김). 마지막 하나 남은 수는 낮출 수 없다(모두 0이면 보낼 것이 없음).
+ */
+function CountCells({ counts, onChange }: { counts: readonly ReturnPieceLine[]; onChange: (lineId: string, value: number) => void }) {
+  const { profile } = useUi();
+  const [page, setPage] = useState(0);
+  const per = Math.max(1, profile.pages.returnPieceRows);
+  const pageCount = Math.max(1, Math.ceil(counts.length / per));
+  const current = Math.min(page, pageCount - 1);
+  const total = counts.reduce((n, c) => n + (c.quantity?.value ?? 0), 0);
+  // 칸 하나가 한 줄 전체(창 폭이 좁은 휴대폰에서도 이름 · −/+가 들어가게). 마지막 남은 수의 −는 막는다.
+  const lines = counts.slice(current * per, (current + 1) * per).map((c) => ({
+    ...c, wide: true, ...(c.quantity && total - 1 <= 0 && c.quantity.value > 0 ? { quantity: { ...c.quantity, min: c.quantity.value } } : {}),
+  }));
+  return (
+    <div className="pos-counts">
+      <ReturnPieces
+        rows={lines.map((l) => [l])}
+        rowCount={Math.min(per, counts.length)}
+        groupLabel={(line) => say('qtyOf', { item: line.ariaLabel ?? line.label })}
+        onPiece={() => {}}
+        onQuantity={onChange}
+        onPicker={() => {}}
+      />
+      {pageCount > 1 ? <Pager page={current} pageCount={pageCount} onChange={setPage} /> : null}
+    </div>
+  );
+}
+
 export function useConfirmFlow(): ConfirmFlow {
   const client = useClient();
   const [request, setRequest] = useState<ConfirmRequest | null>(null);
   const [view, setView] = useState<ConfirmDraftView | null>(null);
+  /** 수량 칸에서 고른 수(없으면 창을 연 그대로). 고를 때마다 초안을 다시 묻는다(요청번호 · 바탕은 연 때 그대로). */
+  const [picked, setPicked] = useState<LineUnits[] | null>(null);
+  const asked = useRef(0);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [qty, setQty] = useState<number | null>(null);
   const [method, setMethod] = useState<string | null>(null);
@@ -135,13 +185,27 @@ export function useConfirmFlow(): ConfirmFlow {
   const close = useCallback(() => {
     setRequest(null);
     setView(null);
+    setPicked(null);
     setError(null);
     setBusy(false);
     setSpent(false);
   }, []);
 
+  /** 수량 칸 하나를 바꾼다: 고른 수로 초안을 다시 묻고(늦게 온 옛 답은 버림) 요약 · 주 버튼 · 명령만 바꾼다. */
+  const changeCount = useCallback((lineId: string, value: number) => {
+    if (!request || !view?.counts || busy) return;
+    const next = withCount(picked, view.counts, lineId, value);
+    if (!next) return;
+    setPicked(next);
+    setError(null);
+    const ask = (asked.current += 1);
+    client.query('confirmDraft', draftParams(request, next)).then((again) => {
+      if (asked.current === ask && again.command) setView(again);
+    }, () => { if (asked.current === ask) setError(say('openFailed')); });
+  }, [client, request, view, picked, busy]);
+
   const open = useCallback((next: ConfirmRequest) => {
-    client.query('confirmDraft', next).then((draftView) => {
+    client.query('confirmDraft', draftParams(next)).then((draftView) => {
       if (!draftView.command) {
         setNotice({ title: draftView.title, lines: [...(next.lead ? [next.lead] : []), draftView.notice ?? ''] });
         return;
@@ -149,6 +213,7 @@ export function useConfirmFlow(): ConfirmFlow {
       setNotice(null);
       setRequest(next);
       setView(draftView);
+      setPicked(null);
       setQty(draftView.quantity?.value ?? null);
       setMethod(draftView.methods?.[0]?.key ?? null);
       setError(null);
@@ -178,7 +243,7 @@ export function useConfirmFlow(): ConfirmFlow {
         setBusy(false);
         setError(stopped.error?.message ?? say('commandFailed'));
         // 앞 명령은 적용되었다: 남은 일(보증금 입금 등)을 지금 자료로 다시 묻는다. 보낼 것이 있으면 새 요청번호로 이 창에서, 없으면 막는다.
-        const again = request ? await client.query('confirmDraft', request).catch(() => null) : null;
+        const again = request ? await client.query('confirmDraft', draftParams(request, picked)).catch(() => null) : null;
         if (chainRetry(again) === 'retry' && again) {
           setView(again);
           setQty(again.quantity?.value ?? null);
@@ -197,7 +262,7 @@ export function useConfirmFlow(): ConfirmFlow {
       setBusy(false);
       setError(say('sendFailed'));
     });
-  }, [draft, command, busy, spent, client, qty, method, close, view, markSent, chain, thenSteps, request]);
+  }, [draft, command, busy, spent, client, qty, method, close, view, markSent, chain, thenSteps, request, picked]);
 
   const element = (
     <>
@@ -222,6 +287,7 @@ export function useConfirmFlow(): ConfirmFlow {
           disabled={spent}
           requestId={draft.requestId}
         >
+          {view.counts?.length ? <CountCells counts={view.counts} onChange={changeCount} /> : null}
           {view.methods ? (
             <div className="pos-methods" role="group" aria-label={say('methodGroup')}>
               {view.methods.map((m) => (

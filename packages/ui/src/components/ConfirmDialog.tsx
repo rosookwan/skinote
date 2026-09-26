@@ -90,12 +90,21 @@ export function clearCommandDraft(key: string): void {
 }
 
 /**
- * 주 버튼 글이 창 폭에 들어가지 않을 때의 짧은 글들: 뒤의 ' · ' 조각부터 통째로 뺀다(`수거 처리 · 6개 · 3매 · 보증금 15,000원` →
- * `수거 처리 · 6개 · 3매` → … → `수거 처리`). 동작 이름은 남고, 뺀 조각(보증금 · 금액)은 창의 요약 줄에 있다(기사 휴대폰 창).
+ * 주 버튼 글이 창 폭에 들어가지 않을 때의 짧은 글들(긴 것부터). 수(`2개` · `1매`)는 끝까지 지킨다: 좁은 기사 휴대폰에서 `수거 처리 · 2개`만
+ * 보이면 권 1매를 두고 올 수 있다(2026-09-26 첫 매장 검토). 차례는 ① 그대로, ② 동작 이름의 `처리`를 뗀 것(`수거 · 2개 · 1매`), ③ 금액 조각
+ * (`보증금 15,000원`, 창의 요약 줄에 있음)을 뺀 것과 그 짧은 이름, ④ 마지막으로 뒤 조각부터 뺀 것(`수거 처리 · 2개` → `수거 처리`).
  */
 export function confirmLabelAlts(label: string): string[] {
   const parts = label.split(' · ');
-  return parts.map((_, i) => parts.slice(0, parts.length - i).join(' · '));
+  const [name = '', ...rest] = parts;
+  const short = name.includes(' ') ? name.split(' ')[0]! : name;
+  const counts = rest.filter((p) => !/원$/.test(p));
+  const out: string[] = [label];
+  const add = (list: string[]) => { const text = list.join(' · '); if (!out.includes(text)) out.push(text); };
+  if (rest.length) add([short, ...rest]);
+  if (counts.length < rest.length) { add([name, ...counts]); if (counts.length) add([short, ...counts]); }
+  for (let i = 1; i < parts.length; i += 1) add(parts.slice(0, parts.length - i));
+  return out;
 }
 
 export interface ConfirmQuantity {

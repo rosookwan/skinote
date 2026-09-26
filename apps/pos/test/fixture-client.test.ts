@@ -95,8 +95,9 @@ describe('체험 자료(시안의 하루)', () => {
     expect(r.cells['items']).toMatchObject({ items: [{ label: '스키', qty: 2 }, { label: '보드', qty: 1 }, { label: '헬멧', qty: 3 }, { label: '야간권', qty: 3, unit: '매' }] });
     expect(r.cells['promise']).toMatchObject({ parts: [{ text: '22:00 설천 주차장' }, { text: '차량' }] });
     expect(money(r)).toMatchObject({ alts: ['미수 120,000원', '120,000원'], stacked: { over: '미수', main: '120,000원' }, tone: 'ink' });
-    // 장비 값은 반납 때 받기로 했다(spec 2-4 16:05): 미수의 지연 기준은 반납 일정 22:00 + 30분(그 전에는 검정).
-    expect(money(r).lateAt).toBe(at(22, 30));
+    // 장비 값은 반납 때 받기로 했다(spec 2-4 16:05): 미수의 지연 기준은 그 반납의 지연 기준 — 차량 수거라 22:00 + 야간 90분(첫 매장
+    // 운영 규칙 vehicleLate, 2026-09-26 답 15). 그 전에는 검정.
+    expect(money(r).lateAt).toBe(at(23, 30));
     expect(stamp(r, 'stamp:issue')).toEqual({ stepKey: 'issue', state: 'todo' });
     expect(stamp(r, 'stamp:return')).toMatchObject({ stepKey: 'return', state: 'blocked', blockedBy: { stepKey: 'issue', message: '반납 불가 · 지급 대기' } });
     expect(stamp(r, 'stamp:pay')).toEqual({ stepKey: 'pay', state: 'partial' });
@@ -212,14 +213,11 @@ describe('확인 창 → 명령 → 도장', () => {
     const { client, pass } = setup();
     const view = await client.query('confirmDraft', { orderId: 'o22', actionKey: 'stamp.issue' });
     expect(view.title).toBe('지급 처리 · 박준호 팀');
-    // 접수 때 받지 못한 권 보증금을 지급 창이 먼저 묻는다(확정 창 V4의 보증금 칸과 같은 말), 이어 보낼 보증금 입금.
-    expect(view.summary).toEqual(['스키 2 · 보드 1 · 헬멧 3 · 야간권 성인 3매', '리프트권 보증금 · 3매 · 매장 기준 1매 5,000원 · 반납 시 반환 · 현금 15,000원']);
-    expect(view.confirmLabel).toBe('지급 처리 · 6개 · 3매 · 보증금 15,000원');
+    // 첫 매장은 권 보증금이 없어 지급 창에 보증금 줄 · 이어 보낼 명령이 없다(번호 · 보증금 매장은 v2-core.test.ts).
+    expect(view.summary).toEqual(['스키 2 · 보드 1 · 헬멧 3 · 야간권 성인 3매']);
+    expect(view.confirmLabel).toBe('지급 처리 · 6개 · 3매');
     expect(view.quantity).toBeUndefined();
-    expect(view.then).toEqual([{
-      command: { type: 'deposit.take', payload: { orderId: 'o22', ruleKey: 'lift_ticket_card', lines: [{ lineId: 'o22-l4', quantity: 3 }], amount: 15_000, methodKey: 'cash' } },
-      expect: { depositHeld: 0 },
-    }]);
+    expect(view.then).toBeUndefined();
     expect(view.command).toEqual({ type: 'stock.issue', payload: { orderId: 'o22', lines: [
       { lineId: 'o22-l1', quantity: 2 }, { lineId: 'o22-l2', quantity: 1 }, { lineId: 'o22-l3', quantity: 3 }, { lineId: 'o22-l4', quantity: 3 },
     ] } });
@@ -233,7 +231,6 @@ describe('확인 창 → 명령 → 도장', () => {
     const r = row(await client.ledgerView('day_ledger', {}), 'o22');
     expect(stamp(r, 'stamp:issue')).toEqual({ stepKey: 'issue', state: 'done', at: at(15, 42) });
     expect(stamp(r, 'stamp:return')).toMatchObject({ state: 'delegated' });
-    // 준비 번호로 지급했다(시안 V1의 번호).
     expect((await client.query('orderSlip', { orderId: 'o22' })).lines[3]!.cells['stamp:return']).toMatchObject({ stamp: { state: 'delegated', delegatedTo: '1호 차량' } });
     expect(r.dueAt).toBe(at(22, 0));
     const slip = await client.query('orderSlip', { orderId: 'o22' });
@@ -368,18 +365,23 @@ describe('찾기 · 저장 · 체험 시계', () => {
     expect((await setup(blocked).client.ledgerView('day_ledger', {})).rows).toHaveLength(18);
   });
 
-  it('시계를 앞으로: 21:10부터 야간 수거 준비 안내(차량 수거가 있는 마지막 타임 22:00), 심야 24:00 뒤에는 주 버튼 조건이 마지막 반납 타임 뒤', async () => {
+  it('시계를 앞으로: 21:10부터 야간 수거 준비 안내(차량 수거가 있는 마지막 타임 22:00, 그 수거가 늦음이 되는 23:30 전까지), 심야 24:00 뒤에는 주 버튼 조건이 마지막 반납 타임 뒤', async () => {
     const { client } = setup();
     client.advanceClock(5 * 60 + 30);
     const prep = await client.ledgerView('day_ledger', {});
     expect(prep.serverTime).toBe(at(21, 10));
     expect(prep.nightPrep).toEqual({ slotAt: at(22, 0), placeLabel: '설천 주차장', teams: 8 });
     client.advanceClock(60);
-    const late = await client.ledgerView('day_ledger', {});
+    const collecting = await client.ledgerView('day_ledger', {});
     // 마지막 반납 타임은 심야 24:00(운영 규칙의 반납 타임): 22:10에는 아직 마감 전.
-    expect(late.activeConditions).toEqual(['before_last_return_slot']);
+    expect(collecting.activeConditions).toEqual(['before_last_return_slot']);
+    // 22:00 뒤에도 밤 수거가 이어지는 동안(첫 매장 야간 90분, 2026-09-26 답 15) 안내가 남는다: 카운터가 22:00 ~ 23:30에 밤 일을 본다.
+    expect(collecting.nightPrep).toEqual({ slotAt: at(22, 0), placeLabel: '설천 주차장', teams: 8 });
+    client.advanceClock(80);
+    const late = await client.ledgerView('day_ledger', {});
+    expect(late.serverTime).toBe(at(23, 30));
     expect(late.nightPrep).toBeUndefined();
-    client.advanceClock(2 * 60);
+    client.advanceClock(40);
     const after = await client.ledgerView('day_ledger', {});
     expect(after.serverTime).toBe(at(0, 10, 1));
     // 27일 00:10도 06:00 전이라 26일 영업일 장부다.
@@ -408,7 +410,8 @@ describe('수거 목록(C3) · 긴급 · 기사 기기 연결', () => {
       ['16:30 반납', '16:30', 0, 2], ['21:50 반납', '21:50', 0, 1], ['22:00 반납', '22:00', 0, 7], ['22:10 반납', '22:10', 0, 1],
     ]);
     const kim = row(tablet, 'collect:o25');
-    expect(kim).toMatchObject({ subgroupLabel: '설천 주차장', subgroupShortLabel: '설천', lateAt: at(23, 0), taskId: 'collect:o25', orderId: 'o25' });
+    // 22:00 야간 반납 타임의 차량 수거는 90분 뒤(23:30)부터 늦음(첫 매장 운영 규칙 vehicleLate, 2026-09-26 답 15).
+    expect(kim).toMatchObject({ subgroupLabel: '설천 주차장', subgroupShortLabel: '설천', lateAt: at(23, 30), taskId: 'collect:o25', orderId: 'o25' });
     expect(row(tablet, 'collect:o39')).toMatchObject({ subgroupLabel: '꽃마을 들국화', subgroupShortLabel: '들국화' });
     expect(stamp(kim, 'stamp:collect')).toEqual({ stepKey: 'collect', state: 'todo' });
     expect([metric(tablet, 'collected_count'), metric(tablet, 'pending_count'), metric(tablet, 'remaining_count')].map((m) => m && 'value' in m ? m.value : null)).toEqual([0, 0, 11]);

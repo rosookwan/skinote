@@ -265,6 +265,7 @@ export function ReturnDialog({ orderId, lineIds, onClose, onNotice }: ReturnDial
           <p className="pos-return-left"><RichLine runs={view.remainder} /></p>
         )}
         {view.deposit ? <p className="pos-return-deposit"><RichLine runs={view.deposit} /></p> : null}
+        {!view.deposit && view.money ? <p className="pos-return-deposit"><RichLine runs={view.money} /></p> : null}
         {view.refundMethods ? (
           <div className="pos-return-refund">
             <span className="sn-form-label">{say('refundMethod')}</span>

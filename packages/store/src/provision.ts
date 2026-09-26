@@ -1,7 +1,8 @@
 // 매장 만들기(plan §4-6): 빈 매장 파일(shops가 빔)에 명세(ShopSpec)를 한 트랜잭션으로 쓴다 — 매장 · epoch · 마감 범위, 역할과 권한,
 // 차량 · 직원 · 차량 배정 · 돈통, 매장 목록 값 · 요금표 · 운영 규칙(registry-write), rev · 기기 번호 셈, 재고 위치 · 실물 · 기초 재고
 // 이동 · 수량 재고. control 파일의 계정(tenants · accounts)은 control 저장소가 같은 명령줄 실행에서 따로 쓴다(control/).
-// 매장은 한 번만 만든다: 두 번째 만들기는 거절한다(장부는 지우지 않으니 새로 시작하려면 새 매장 id).
+// 매장은 한 번만 만든다: 두 번째 만들기는 거절한다(장부는 지우지 않으니 새로 시작하려면 새 매장 id). 시험 매장 새로 만들기(reset.ts)는
+// 새 빈 파일에 같은 쓰기(provisionRows)를 옛 직원 id · 다음 epoch와 함께 한 트랜잭션으로 한다.
 import { assetId, businessDateOf, kstAt, type ShopSpec } from '@skinote/domain';
 import { StoreError } from './errors.ts';
 import { addDays, isoOf, ulid } from './ids.ts';
@@ -9,7 +10,8 @@ import { all, insert, num, one, str, type Db } from './db.ts';
 import { ensureBusinessDay } from './dates.ts';
 import { writeRegistry } from './registry-write.ts';
 import {
-  COUNTER_EXCLUDED, DRIVER_PERMISSIONS, EXTERNAL_LOCATION, MAIN_SCOPE, OK_CONDITION, ROLES, SHOP_LOCATION, SYSTEM_ACTOR, TICKET_VENDOR, variantId, vehicleLocation,
+  COUNTER_EXCLUDED, DEFAULT_VARIANT, DRIVER_PERMISSIONS, EXTERNAL_LOCATION, MAIN_SCOPE, OK_CONDITION, ROLES, SHOP_LOCATION, SYSTEM_ACTOR, TICKET_VENDOR, variantId,
+  vehicleLocation,
 } from './registry-keys.ts';
 import type { StaffRow } from './registry-read.ts';
 
@@ -18,6 +20,10 @@ export interface ProvisionOptions {
   isTest: boolean;
   /** 직원마다 control 계정 id(명세의 직원 차례). 없으면 계정 없이 만든다(시험). */
   accountIds?: readonly (string | undefined)[];
+  /** 직원마다 staff_members id(명세의 직원 차례). 시험 매장 새로 만들기가 옛 id를 그대로 쓴다(세션이 이어지게). 없으면 새 ULID. */
+  staffIds?: readonly (string | undefined)[];
+  /** epoch 번호와 rev 바닥(shop_instance). 없으면 1번 · 0. 새로 만들기는 옛 번호 + 1과 지금까지 쓴 가장 큰 rev + 1,000,000(sync 10-2). */
+  epoch?: { no: number; revFloor: number };
 }
 
 export interface ProvisionResult {
@@ -57,7 +63,7 @@ function grants(db: Db): Map<string, { key: string; scope: string }[]> {
 }
 
 /** 명세가 표로 옮겨지는지 먼저 본다(쓰다가 멈추지 않게). */
-function checkSpec(spec: ShopSpec): void {
+export function checkSpec(spec: ShopSpec): void {
   if (spec.shop.timezone !== 'Asia/Seoul' || spec.registry.timezone !== 'Asia/Seoul') throw new StoreError('TIMEZONE_UNSUPPORTED', '매장 시간대는 Asia/Seoul만(D13)');
   if (spec.shop.cutoff !== spec.settings.businessDayCutoff) throw new StoreError('BAD_SPEC', '매장 기준 시각과 운영 규칙의 기준 시각이 다르다');
   if (spec.settings.cutoffBefore?.length) throw new StoreError('BAD_SPEC', '새 매장에는 기준 시각을 바꾼 기록이 없다');
@@ -78,51 +84,58 @@ function checkSpec(spec: ShopSpec): void {
  */
 export function provision(db: Db, shopId: string, spec: ShopSpec, now: number, options: ProvisionOptions): ProvisionResult {
   checkSpec(spec);
-  return inWriteTransaction(db, () => {
-    if (num(one(db, 'SELECT count(*) AS n FROM shops')?.n) > 0) throw new StoreError('ALREADY_PROVISIONED', '이미 만든 매장 파일이다');
-    const at = isoOf(now);
-    const businessDate = businessDateOf(now, spec.shop.cutoff);
-    const effectiveFrom = spec.season.from < businessDate ? spec.season.from : businessDate;
-    const meta = { now, actorKey: SYSTEM_ACTOR, rev: 0 };
-    const base = { shop_id: shopId, created_at: at, updated_at: at };
-    const epoch = ulid(now);
+  return inWriteTransaction(db, () => provisionRows(db, shopId, spec, now, options));
+}
 
-    insert(db, 'shops', {
-      id: shopId, code: spec.shop.code, name: spec.shop.name, timezone: spec.shop.timezone, business_day_cutoff: spec.shop.cutoff, is_test: options.isTest,
-      config_rev: 0, created_at: at, updated_at: at,
-    });
-    insert(db, 'shop_instance', { shop_id: shopId, epoch_id: epoch, epoch_no: 1, rev_floor: 0, updated_at: at });
-    insert(db, 'closing_scopes', { ...base, id: MAIN_SCOPE, key: MAIN_SCOPE, label: '매장' });
-    const roleGrants = grants(db);
-    ROLES.forEach((r, i) => {
-      insert(db, 'roles', { ...base, id: r.key, key: r.key, label: r.label, is_system: true, sort: i });
-      for (const g of roleGrants.get(r.key) ?? []) insert(db, 'role_permissions', { shop_id: shopId, role_id: r.key, permission_key: g.key, scope_key: g.scope });
-    });
+/** 매장 만들기의 쓰기(트랜잭션은 부르는 쪽: provision · rebuildShop). 명세는 checkSpec을 지난 것이어야 한다. */
+export function provisionRows(db: Db, shopId: string, spec: ShopSpec, now: number, options: ProvisionOptions): ProvisionResult {
+  if (num(one(db, 'SELECT count(*) AS n FROM shops')?.n) > 0) throw new StoreError('ALREADY_PROVISIONED', '이미 만든 매장 파일이다');
+  const epochNo = options.epoch?.no ?? 1;
+  const revFloor = options.epoch?.revFloor ?? 0;
+  if (!Number.isInteger(epochNo) || epochNo < 1 || !Number.isInteger(revFloor) || revFloor < 0) throw new StoreError('BAD_SPEC', 'epoch 번호 · rev 바닥 모양');
+  const at = isoOf(now);
+  const businessDate = businessDateOf(now, spec.shop.cutoff);
+  const effectiveFrom = spec.season.from < businessDate ? spec.season.from : businessDate;
+  const meta = { now, actorKey: SYSTEM_ACTOR, rev: 0 };
+  const base = { shop_id: shopId, created_at: at, updated_at: at };
+  const epoch = ulid(now);
 
-    writeRegistry(db, shopId, spec.registry, spec.settings, spec.drawers, meta, effectiveFrom);
-
-    const staff: StaffRow[] = spec.staff.map((s, i) => {
-      const id = ulid(now);
-      const accountId = options.accountIds?.[i];
-      insert(db, 'staff_members', { ...base, id, account_id: accountId, display_name: s.name, role_id: s.role, default_vehicle_id: s.vehicleKey });
-      if (s.vehicleKey) {
-        insert(db, 'vehicle_assignments', { shop_id: shopId, id: ulid(now), vehicle_id: s.vehicleKey, staff_member_id: id, valid_from: effectiveFrom, created_at: at, created_by: SYSTEM_ACTOR });
-      }
-      return { id, name: s.name, roleKey: s.role, ...(s.vehicleKey ? { vehicleId: s.vehicleKey } : {}), ...(accountId ? { accountId } : {}) };
-    });
-
-    insert(db, 'shop_counters', { shop_id: shopId, counter_key: 'rev', scope_key: '', value: 0 });
-    insert(db, 'shop_counters', { shop_id: shopId, counter_key: 'device_short_no', scope_key: '', value: 0 });
-    ensureBusinessDay(db, shopId, businessDate, at);
-
-    writeOpeningStock(db, shopId, spec, now, businessDate);
-    return { epoch, businessDate, staff };
+  insert(db, 'shops', {
+    id: shopId, code: spec.shop.code, name: spec.shop.name, timezone: spec.shop.timezone, business_day_cutoff: spec.shop.cutoff, is_test: options.isTest,
+    config_rev: 0, created_at: at, updated_at: at,
   });
+  insert(db, 'shop_instance', { shop_id: shopId, epoch_id: epoch, epoch_no: epochNo, rev_floor: revFloor, updated_at: at });
+  insert(db, 'closing_scopes', { ...base, id: MAIN_SCOPE, key: MAIN_SCOPE, label: '매장' });
+  const roleGrants = grants(db);
+  ROLES.forEach((r, i) => {
+    insert(db, 'roles', { ...base, id: r.key, key: r.key, label: r.label, is_system: true, sort: i });
+    for (const g of roleGrants.get(r.key) ?? []) insert(db, 'role_permissions', { shop_id: shopId, role_id: r.key, permission_key: g.key, scope_key: g.scope });
+  });
+
+  writeRegistry(db, shopId, spec.registry, spec.settings, spec.drawers, meta, effectiveFrom);
+
+  const staff: StaffRow[] = spec.staff.map((s, i) => {
+    const id = options.staffIds?.[i] ?? ulid(now);
+    const accountId = options.accountIds?.[i];
+    insert(db, 'staff_members', { ...base, id, account_id: accountId, display_name: s.name, role_id: s.role, default_vehicle_id: s.vehicleKey });
+    if (s.vehicleKey) {
+      insert(db, 'vehicle_assignments', { shop_id: shopId, id: ulid(now), vehicle_id: s.vehicleKey, staff_member_id: id, valid_from: effectiveFrom, created_at: at, created_by: SYSTEM_ACTOR });
+    }
+    return { id, name: s.name, roleKey: s.role, ...(s.vehicleKey ? { vehicleId: s.vehicleKey } : {}), ...(accountId ? { accountId } : {}) };
+  });
+
+  insert(db, 'shop_counters', { shop_id: shopId, counter_key: 'rev', scope_key: '', value: 0 });
+  insert(db, 'shop_counters', { shop_id: shopId, counter_key: 'device_short_no', scope_key: '', value: 0 });
+  ensureBusinessDay(db, shopId, businessDate, at);
+
+  writeOpeningStock(db, shopId, spec, now, businessDate);
+  return { epoch, businessDate, staff };
 }
 
 /**
  * 재고 위치와 기초 재고: 번호 실물(assets, 권은 ticket_units도)을 매장 · 차량에 두고, 위치마다 기초 재고 이동(stock_opening, 바깥 →
- * 매장 · 차량) 한 건과 실물마다 이동 줄을 쓴다. 수량 품목(고글)은 규격마다 이동 줄 + stock_balances.
+ * 매장 · 차량) 한 건과 실물마다 이동 줄을 쓴다. 수량 품목(고글, 번호 없는 매장은 모든 품목)은 규격마다 이동 줄 + stock_balances(규격 없는
+ * 상품은 기본 규격). 수량 차량 예비권(vehicleCounts)은 그 차량 위치의 기초 재고다(ShopState.vanSpares의 처음 값, map/stock loadVanSpares).
  */
 function writeOpeningStock(db: Db, shopId: string, spec: ShopSpec, now: number, businessDate: string): void {
   const at = isoOf(now);
@@ -141,20 +154,32 @@ function writeOpeningStock(db: Db, shopId: string, spec: ShopSpec, now: number, 
   for (const [productKey, [from, to]] of Object.entries(spec.stock.numbers)) for (let n = from; n <= to; n += 1) add(SHOP_LOCATION, productKey, String(n));
   for (const spare of spec.stock.vehicleSpares) for (const no of spare.numbers) add(vehicleLocation(spare.vehicleId), spare.productKey, no);
 
-  const counts: { productKey: string; variantKey: string; quantity: number }[] = [];
-  for (const [productKey, byVariant] of Object.entries(spec.stock.counts)) {
+  const counts = new Map<string, { productKey: string; variantKey: string; quantity: number }[]>();
+  const addCount = (location: string, productKey: string, variantKey: string, quantity: number) => {
     const product = reg.products[productKey];
     if (!product || product.tracking !== 'count') throw new StoreError('BAD_SPEC', '수량 재고는 수량으로 세는 상품만: ' + productKey);
     const variants = reg.kinds.find((k) => k.key === product.kindKey)?.variants ?? [];
-    for (const [variantKey, quantity] of Object.entries(byVariant)) {
-      if (!variants.some((v) => v.key === variantKey)) throw new StoreError('BAD_SPEC', '수량 재고의 규격이 없다: ' + productKey + ' ' + variantKey);
-      if (quantity > 0) counts.push({ productKey, variantKey, quantity });
+    const known = variants.length ? variants.some((v) => v.key === variantKey) : variantKey === DEFAULT_VARIANT;
+    if (!known) throw new StoreError('BAD_SPEC', '수량 재고의 규격이 없다: ' + productKey + ' ' + variantKey);
+    if (!Number.isInteger(quantity) || quantity < 0) throw new StoreError('BAD_SPEC', '수량 재고의 수: ' + productKey);
+    if (quantity > 0) counts.set(location, [...(counts.get(location) ?? []), { productKey, variantKey, quantity }]);
+  };
+  for (const [productKey, byVariant] of Object.entries(spec.stock.counts)) {
+    for (const [variantKey, quantity] of Object.entries(byVariant)) addCount(SHOP_LOCATION, productKey, variantKey, quantity);
+  }
+  const vehicles = new Set(reg.vehicles.map((v) => v.id));
+  for (const spare of spec.stock.vehicleCounts ?? []) {
+    if (!vehicles.has(spare.vehicleId)) throw new StoreError('BAD_SPEC', '차량 예비권의 차량이 없다: ' + spare.vehicleId);
+    if (reg.products[spare.productKey]?.section !== 'lift') throw new StoreError('BAD_SPEC', '차량 예비 수량은 리프트권만: ' + spare.productKey);
+    if ((spec.stock.vehicleCounts ?? []).filter((x) => x.vehicleId === spare.vehicleId && x.productKey === spare.productKey).length > 1) {
+      throw new StoreError('BAD_SPEC', '차량 예비 수량이 겹친다: ' + spare.vehicleId + ' ' + spare.productKey);
     }
+    addCount(vehicleLocation(spare.vehicleId), spare.productKey, DEFAULT_VARIANT, spare.quantity);
   }
 
   const validFrom = isoOf(kstAt(spec.season.from, 0, 0, 0));
   const validTo = isoOf(kstAt(addDays(spec.season.to, 1), 0, 0, 0));
-  const locations = [...new Set([...units.keys(), ...(counts.length ? [SHOP_LOCATION] : [])])];
+  const locations = [...new Set([...units.keys(), ...counts.keys()])];
   for (const location of locations) {
     const movementId = 'opening:' + location;
     const kind = location === SHOP_LOCATION ? 'shop' : 'vehicle';
@@ -177,15 +202,13 @@ function writeOpeningStock(db: Db, shopId: string, spec: ShopSpec, now: number, 
       }
       insert(db, 'stock_movement_lines', { shop_id: shopId, movement_id: movementId, line_no: (lineNo += 1), catalog_item_id: u.productKey, asset_id: id, quantity: 1, created_rev: 0 });
     }
-    if (location === SHOP_LOCATION) {
-      for (const c of counts) {
-        const variant = variantId(c.productKey, c.variantKey);
-        insert(db, 'stock_movement_lines', {
-          shop_id: shopId, movement_id: movementId, line_no: (lineNo += 1), catalog_item_id: c.productKey, variant_id: variant, quantity: c.quantity,
-          before_condition_id: OK_CONDITION, after_condition_id: OK_CONDITION, created_rev: 0,
-        });
-        insert(db, 'stock_balances', { shop_id: shopId, location_id: SHOP_LOCATION, variant_id: variant, condition_id: OK_CONDITION, quantity: c.quantity, updated_rev: 0 });
-      }
+    for (const c of counts.get(location) ?? []) {
+      const variant = variantId(c.productKey, c.variantKey);
+      insert(db, 'stock_movement_lines', {
+        shop_id: shopId, movement_id: movementId, line_no: (lineNo += 1), catalog_item_id: c.productKey, variant_id: variant, quantity: c.quantity,
+        before_condition_id: OK_CONDITION, after_condition_id: OK_CONDITION, created_rev: 0,
+      });
+      insert(db, 'stock_balances', { shop_id: shopId, location_id: location, variant_id: variant, condition_id: OK_CONDITION, quantity: c.quantity, updated_rev: 0 });
     }
   }
 }

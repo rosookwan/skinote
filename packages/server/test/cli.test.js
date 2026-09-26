@@ -165,6 +165,31 @@ test('load-sample: test shops only, never while the server runs; it puts the sam
   assert.equal(bad.code, EXIT.usage);
 });
 
+test('load-sample picks the sample shape from the shop registry (numbered test shop → numbered day), and a registry that does not fit is refused with one line', async () => {
+  const numbered = await migratedDir('numbered-shop');
+  const file = join(numbered.dataDir, 'numbered.json');
+  writeFileSync(file, JSON.stringify(sampleSpec('numbered')));
+  assert.equal((await cli(['provision', '--shop', SHOP, '--code', 'test-shop', '--name', '번호 매장', '--spec', file, '--staff', '정하늘:manager', '--test'], numbered.env)).code, 0);
+  const loaded = await cli(['load-sample', '--shop', SHOP, '--date', '2026-12-27'], numbered.env);
+  assert.equal(loaded.code, 0, loaded.err);
+  assert.match(loaded.out, /접수\t18팀\n/);
+
+  const odd = await migratedDir('odd-shop');
+  const spec = sampleSpec();
+  // 스키만 번호로 세는 다른 명세: 번호 매장 모양의 견본 하루(권도 번호)가 이 목록과 맞지 않는다.
+  spec.registry.products.ski = { ...spec.registry.products.ski, tracking: 'unit' };
+  spec.stock.numbers = { ski: [1, 40] };
+  delete spec.stock.counts.ski;
+  const oddFile = join(odd.dataDir, 'odd.json');
+  writeFileSync(oddFile, JSON.stringify(spec));
+  const made = await cli(['provision', '--shop', SHOP, '--code', 'odd-shop', '--name', '다른 매장', '--spec', oddFile, '--staff', '정하늘:manager', '--test'], odd.env);
+  assert.equal(made.code, 0, made.err);
+  const refused = await cli(['load-sample', '--shop', SHOP, '--date', '2026-12-27'], odd.env);
+  assert.equal(refused.code, EXIT.data);
+  assert.match(refused.err, /견본 모양이 다릅니다 · reset-test-shop 먼저/);
+  assert.equal(JSON.parse((await cli(['status', '--shop', SHOP], odd.env)).out).orders, 0, 'nothing was written');
+});
+
 test('--stdin JSON runs the same operations (deploy.sh --shop-cli), including an inline spec', async () => {
   const { env } = await migratedDir('stdin');
   const spec = sampleSpec();

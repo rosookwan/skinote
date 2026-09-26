@@ -36,12 +36,13 @@ export function StartScreen() {
             <span>{say('startCounter')}</span>
             <small>{say('startCounterNote')}</small>
           </button>
-          <button type="button" className="sn-button pos-big-choice" onClick={() => today && go({ name: 'driver', date: today, device: 'tablet' })}>
-            <span>{say('startTablet')}</span>
-            <small>{say('startDriverNote')}</small>
-          </button>
+          {/* 기사 휴대폰이 먼저: 첫 매장 기사의 주 기기는 개인 휴대폰이다(2026-09-26 답 12). */}
           <button type="button" className="sn-button pos-big-choice" onClick={() => today && go({ name: 'driver', date: today, device: 'phone' })}>
             <span>{say('startPhone')}</span>
+            <small>{say('startDriverNote')}</small>
+          </button>
+          <button type="button" className="sn-button pos-big-choice" onClick={() => today && go({ name: 'driver', date: today, device: 'tablet' })}>
+            <span>{say('startTablet')}</span>
             <small>{say('startDriverNote')}</small>
           </button>
         </div>

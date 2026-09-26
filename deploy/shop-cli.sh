@@ -6,7 +6,7 @@
 # 받은 JSON을 skinote 계정의 `node server/bin/shop.js --stdin`에 그대로 넘기고, 설정(/etc/skinote/skinote.env)과 비밀값
 # (/etc/skinote/secrets.env)은 그 프로세스의 환경으로만 준다. 출력(비밀번호 표 · 등록 번호)은 ssh를 거쳐 부른 사람의 터미널로만 간다:
 # 이 스크립트는 파일 · 기록에 아무것도 적지 않는다.
-# provision · load-sample은 매장 파일을 혼자 써야 해서 서버를 잠깐 멈추고, 끝나면(실패해도) 다시 켠다. 배포 작업과 같은 잠금
+# provision · load-sample · reset-test-shop은 매장 파일을 혼자 써야 해서 서버를 잠깐 멈추고, 끝나면(실패해도) 다시 켠다. 배포 작업과 같은 잠금
 # (/run/skinote-deploy.lock)을 잡아 배포와 겹치지 않는다.
 # 끝 코드: bin/shop.js의 끝 코드(0 성공, 64 쓰는 법, 65 자료, 69 지금 못 함, 70 처리 오류, 78 설정), 이 스크립트의 거절은 64 · 75 · 77.
 set -euo pipefail
@@ -34,7 +34,7 @@ process.stdin.setEncoding("utf8").on("data", (c) => { text += c; }).on("end", ()
   try { const r = JSON.parse(text); process.stdout.write(typeof r.op === "string" ? r.op : ""); } catch { process.stdout.write(""); }
 });')"
 case "$op" in
-  provision | load-sample) solo=1 ;;
+  provision | load-sample | reset-test-shop) solo=1 ;;
   device-code | rotate-pin | revoke-device | status) solo=0 ;;
   *) say "요청이 { \"op\": …, \"args\": { … } } JSON이 아니거나 모르는 명령입니다: ${op:-없음}"; exit 64 ;;
 esac

@@ -1,7 +1,7 @@
 // @ts-check
 // 배포 파일(deploy/): 셸 문법, 서버 유닛의 비밀값 파일 · /run/skinote(관리 소켓), Caddy 틀의 손님 주소 · 앞단 표 자리(값은 저장소에 없음),
 // 설정 예시가 운영 설정(NODE_ENV=production, API 켬)으로 읽히는지, 맥 쪽 매장 명령줄 요청(deploy/shop-cli-request.mjs)이 bin/shop.js와
-// 같은 깃발을 JSON 하나로 바꾸는지(명세 파일은 객체로 넣음).
+// 같은 깃발을 JSON 하나로 바꾸는지(명세 파일은 객체로 넣음), 서버 쪽 입구가 서버를 멈추는 명령이 bin/shop.js의 혼자 쓰는 명령과 같은지.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -24,6 +24,13 @@ test('deploy scripts parse (bash -n) and --help lists the shop command line', ()
   assert.match(help.stdout, /--shop-cli <명령>/);
   assert.match(help.stdout, /--allow-no-e2e/);
   assert.doesNotMatch(help.stdout, /set -euo pipefail/);
+});
+
+test('the server-side entry stops the server for exactly the exclusive shop.js commands', async () => {
+  const { EXCLUSIVE_OPS } = await import('../bin/shop.js');
+  const solo = /^\s*([a-z-]+(?: \| [a-z-]+)*)\) solo=1 ;;$/m.exec(read('shop-cli.sh'))?.[1]?.split(' | ') ?? [];
+  assert.deepEqual([...solo].sort(), [...EXCLUSIVE_OPS].sort());
+  assert.match(read('shop-cli.sh'), /^\s*device-code \| rotate-pin \| revoke-device \| status\) solo=0 ;;$/m);
 });
 
 test('the server unit reads the secrets file and owns /run/skinote for the admin socket', () => {
@@ -83,6 +90,7 @@ test('shop-cli-request turns the shop.js flags into one JSON request and inlines
     rmSync(dir, { recursive: true, force: true });
   }
   assert.deepEqual(JSON.parse(run(['status', '--shop', 'S1']).stdout), { op: 'status', args: { shop: 'S1' } });
+  assert.deepEqual(JSON.parse(run(['reset-test-shop', '--shop', 'S1']).stdout), { op: 'reset-test-shop', args: { shop: 'S1' } });
   assert.equal(run(['provision', '--bogus']).status, 64);
   assert.equal(run(['--stdin']).status, 64);
   assert.equal(run(['drop-shop', '--shop', 'S1']).status, 64);

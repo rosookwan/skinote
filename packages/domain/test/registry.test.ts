@@ -43,7 +43,8 @@ describe('매장 목록 읽기', () => {
   it('결제 수단 이름: 기사 현장 수납 판 · 접수증 수납 줄 · 수납 창', () => {
     const state = renamed();
     const view = runQuery(state, 'fieldPaySheet', { taskId: 'collect:o25' }, ctx);
-    expect(view.methods.map((m) => m.label)).toEqual(['카드', '현찰', '계좌이체']);
+    // 기사 수단은 매장 목록의 driver(첫 매장: 현금 · 계좌이체, 카드 단말기는 카운터 1대).
+    expect(view.methods.map((m) => m.label)).toEqual(['현찰', '계좌이체']);
     // 최은정 팀(0024)은 현금으로 냈다.
     expect(runQuery(state, 'orderSlip', { orderId: 'o24' }, ctx).money.payments.map((p) => p.methodLabel)).toEqual(['현찰']);
     expect(runQuery(state, 'confirmDraft', { orderId: 'o27', actionKey: 'pay' }, ctx).methods?.map((m) => m.label)).toEqual(['카드', '현찰', '계좌이체']);
@@ -62,6 +63,16 @@ describe('매장 목록 읽기', () => {
     expect(sheet.check?.title).toBe('가 돈통');
     expect(sheet.check?.reasons.map((r) => r.label)).toEqual(['잔돈 착오', '모름', '직접 입력']);
     expect(sheet.cash.find((c) => c.key === 'counter')?.label).toBe('가 돈통');
+  });
+
+  it('기사 수단은 매장 목록의 driver: 카드를 켠 매장은 카드도 받고, 꺼진 수단의 현장 수납은 거절', () => {
+    const state = renamed();
+    const card = draftToEnvelope(openCommandDraft({ type: 'field.collect', payload: { taskId: 'collect:o28', orderId: 'o28', amount: 1_000, methodKey: 'card' } },
+      { epoch: 'e', rev: state.rev }, { expect: { dueAmount: 120_000 } }));
+    expect(applyCommand(structuredClone(state), card, NOW)).toMatchObject({ outcome: 'rejected', error: { message: '등록되지 않은 결제 수단' } });
+    state.registry = { ...state.registry, payMethods: state.registry.payMethods.map((m) => (m.key === 'card' ? { ...m, driver: true } : m)) };
+    expect(runQuery(state, 'fieldPaySheet', { taskId: 'collect:o28' }, ctx).methods.map((m) => [m.key, m.selected])).toEqual([['card', false], ['cash', true], ['transfer', false]]);
+    expect(applyCommand(state, card, NOW).outcome).toBe('applied');
   });
 
   it('매장 목록에 없는 결제 수단 · 방문 결과는 거절한다', () => {

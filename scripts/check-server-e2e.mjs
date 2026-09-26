@@ -2,7 +2,8 @@
 // index.html에 서버 표시)으로 띄우고, 진짜 서버(packages/server)를 임시 자료 폴더로 띄워 브라우저(Playwright chromium) 여럿으로 쓴다.
 //
 //   준비: 빈 포트 둘(서버 · 앞단) → 임시 자료 폴더 · 무작위 비밀값 · 짧은 관리 소켓 → 서버를 한 번 띄워 마이그레이션 → 멈춤 →
-//         명령줄 provision(시험 매장 · 견본 명세 · 직원 셋, 비밀번호는 표준 출력에서 읽음) · device-code(포스 셋 · 기사 태블릿 하나)
+//         명령줄 provision(시험 매장 · 견본 명세 · 직원 셋, 비밀번호는 표준 출력에서 읽음) · device-code(포스 셋 · 기사 태블릿 · 기사 휴대폰)
+//         · load-sample(오늘 견본 하루)
 //         → 서버 · 앞단을 다시 띄움
 //   A(카운터 1, 1024×600): 기기 등록(숫자판으로 12자리) → 로그인(타일 → 비밀번호 숫자판) → 장부 → 새 접수: 대표자 이름을 화면 키보드로
 //         (ㄱ ㅣ ㅁ ㅁ ㅣ ㄴ ㅅ ㅜ = 김민수) → 연락처 숫자판 → 품목 → 일정 → 접수 확정(현금) → 접수증 → 지급 도장 → 새로 고침에도 그대로
@@ -11,6 +12,8 @@
 //   A 연결: 끊기면 머리줄에 연결 띠와 같은 노랑 이름표 `연결 끊김 · 마지막 연결 …`(875×600에서도 잘리지 않음), 다시 이으면 사라짐
 //   C(기사 태블릿 · 1호 차량): 등록 · 로그인 → 수거 목록(바닥줄에 `전송 대기` 없음: 서버에 붙은 기기는 보냄 대기가 없다), 끊기면 연결 띠,
 //         장부 조회는 403
+//   E(기사 휴대폰 · 1호 차량, 360×640 — 첫 매장 기사의 주 기기): 등록 · 로그인(휴대폰 등급) → 배달 목록(촘촘한 줄) → 업무 판(품목 줄 한 쪽)
+//         → 현장 수납 수단은 현금 · 계좌이체뿐 → 장부 조회 403 → 끝에 명령줄로 그 휴대폰을 끊으면 기기 등록 화면
 //   D(카운터 3): 관리자 비밀번호를 다섯 번 틀림 → `로그인 잠김 · … 이후 가능`, B는 그대로 로그인
 //   화면 키보드 875×600(A의 새 접수) 찍기 → 우리 주소의 ?demo는 서버 모드 그대로(기기 등록 화면) → 표시를 찍지 않는 둘째 앞단(체험판)의
 //   360×640 미리 보기 키보드 → A 로그아웃(로그인 화면, 머리 401) → 다시 로그인하면 장부(나가기 화면이 아님) → 명령줄로 C 기기 끊기(관리
@@ -283,8 +286,14 @@ async function main() {
       secretsSeen.push(digits, m[1]);
       return digits;
     };
-    const codes = { a: await codeOf('pos', '카운터 1'), b: await codeOf('pos', '카운터 2'), c: await codeOf('driver_tablet', '1호 차량 태블릿', 'v1'), d: await codeOf('pos', '카운터 3') };
-    check('명령줄 device-code: 등록 번호 넷(포스 셋 · 기사 태블릿 하나)', Object.values(codes).every((c) => /^\d{12}$/.test(c)));
+    const codes = {
+      a: await codeOf('pos', '카운터 1'), b: await codeOf('pos', '카운터 2'), c: await codeOf('driver_tablet', '1호 차량 태블릿', 'v1'), d: await codeOf('pos', '카운터 3'),
+      e: await codeOf('driver_phone', '1호 차량 기사 휴대폰', 'v1'),
+    };
+    check('명령줄 device-code: 등록 번호 다섯(포스 셋 · 기사 태블릿 · 기사 휴대폰)', Object.values(codes).every((c) => /^\d{12}$/.test(c)));
+    // 견본 하루(시험 매장): 기사 휴대폰(첫 매장 기사의 주 기기, 2026-09-26 답 12)이 오늘 배달 · 수거 업무를 본다.
+    const sample = await runCli(['load-sample', '--shop', SHOP, '--date', 'today'], env, cliLog);
+    check('명령줄 load-sample: 오늘 견본 하루(첫 매장 모양)', sample.code === 0 && /접수\t18팀/.test(sample.out), '끝 코드 ' + sample.code + ' · ' + sample.err.trim().split('\n').pop());
 
     server = await startServer();
     proxy = await startLocalProxy({ port: proxyPort, serverPort, log: (line) => proxyLines.push(line) });
@@ -385,9 +394,12 @@ async function main() {
     await b.waitForSelector('.sn-header', { timeout: STEP_MS });
     check('B: 다른 기기 · 관리자 로그인 → 장부', /#\/ledger/.test(b.url()));
     if (orderSaved) {
-      // 장부 줄은 로그인 뒤 조회가 끝나야 그려진다: 바로 세지 않고 그 팀 줄이 나타나기를 기다린다.
-      const listed = await b.locator('.sn-ledger').getByText(TEAM.name).first().waitFor({ timeout: STEP_MS }).then(() => 1, () => 0);
-      check('B: A가 적은 팀이 B의 장부에 있음(한 장부)', listed > 0);
+      // 장부에는 견본 하루 18팀도 있어 A의 팀이 다른 쪽일 수 있다: B 세션으로 장부를 물어 A의 팀(끝 4자리)이 있는지 본다.
+      await b.waitForSelector('.sn-ledger tr.sn-row', { timeout: STEP_MS });
+      const ledgerB = await pageQuery(b, { name: 'ledgerView', params: { viewKey: 'day_ledger' } });
+      const last4 = TEAM.phone.slice(-4);
+      const listed = (ledgerB.body?.rows ?? []).some((row) => Object.values(row.cells ?? {}).some((cell) => cell?.renderer === 'team' && cell.last4 === last4 && cell.name === TEAM.name));
+      check('B: A가 적은 팀이 B의 장부에 있음(한 장부)', ledgerB.status === 200 && listed, String(ledgerB.status));
     } else {
       blocked('B: A가 적은 팀이 B의 장부에 있음', '접수를 서버에 적지 못함');
     }
@@ -488,6 +500,39 @@ async function main() {
     await sleep(300);
     check('C: 기사 기기에서 장부 주소를 열면 수거 목록으로', /#\/driver\//.test(c.url()), c.url().replace(APP, '/'));
 
+    // ── E: 기사 휴대폰(1호 차량, 360×640 — 첫 매장 기사의 주 기기는 개인 휴대폰, 2026-09-26 답 12) ─────────────
+    const ctxE = await newContext({ width: 360, height: 640 });
+    const e = await ctxE.newPage();
+    watch(e, 'E');
+    await e.goto(APP);
+    await enroll(e, codes.e);
+    const phoneTiles = await e.locator('.pos-login-tile').allTextContents();
+    check('E: 기사 휴대폰 등록 → 로그인 타일은 기사가 먼저', phoneTiles[0]?.includes(STAFF.driver), phoneTiles.join(', '));
+    await shot(e, 'e-login-360x640');
+    await login(e, STAFF.driver, pins[STAFF.driver]);
+    await e.waitForFunction(() => /#\/driver\/\d{4}-\d{2}-\d{2}/.test(location.hash), null, { timeout: STEP_MS });
+    await e.waitForSelector('.sn-ledger tr.sn-row', { timeout: STEP_MS });
+    const phoneClass = await e.evaluate(() => document.querySelector('.sn-root')?.getAttribute('data-device'));
+    check('E: 비밀번호 로그인 → 360×640 기사 휴대폰 등급의 수거 목록', phoneClass === 'driver_phone', String(phoneClass));
+    await shot(e, 'e-collections-360x640');
+    const phoneDate = /#\/driver\/(\d{4}-\d{2}-\d{2})/.exec(e.url())?.[1] ?? '';
+    await e.goto(APP + '#/driver/' + phoneDate + '/deliveries');
+    await e.waitForSelector('.sn-ledger tr.sn-row', { timeout: STEP_MS });
+    const deliveryRows = await e.locator('.sn-ledger tr.sn-row').count();
+    check('E: 배달 목록은 촘촘한 줄(카드 아님) · 쪽 넘김', deliveryRows > 0 && !(await e.locator('.sn-card').count()), '줄 ' + deliveryRows);
+    await shot(e, 'e-deliveries-360x640');
+    await e.locator('.sn-ledger tr.sn-row .sn-cell-open').first().click();
+    await e.waitForSelector('.pos-task-sheet', { timeout: STEP_MS });
+    const taskId = decodeURIComponent(/#\/driver\/tasks\/([^?]+)/.exec(e.url())?.[1] ?? '');
+    const itemRows = await e.locator('.pos-task-items tr.sn-row').count();
+    check('E: 업무 판(360×640)에 품목 줄이 모두 한 쪽(쪽 넘김 없음)', itemRows >= 2 && !(await e.locator('.pos-task-pager').count()), taskId + ' · 줄 ' + itemRows);
+    await shot(e, 'e-task-360x640');
+    const fieldPay = await pageQuery(e, { name: 'fieldPaySheet', params: { taskId } });
+    const methods = (fieldPay.body?.result?.methods ?? fieldPay.body?.methods ?? []).map((m) => m.label);
+    check('E: 현장 수납 수단은 현금 · 계좌이체뿐(카드 단말기는 카운터 1대)', fieldPay.status === 200 && methods.join(',') === '현금,계좌이체', fieldPay.status + ' · ' + methods.join(','));
+    const ledgerE = await pageQuery(e, { name: 'ledgerView', params: { viewKey: 'day_ledger' } });
+    check('E: 기사 휴대폰 세션의 장부 조회는 403', ledgerE.status === 403, String(ledgerE.status));
+
     // ── D: 비밀번호 잠김 ─────────────────────────────────────────────────
     const ctxD = await newContext();
     const d = await ctxD.newPage();
@@ -562,9 +607,15 @@ async function main() {
     const toEnroll = await c.waitForSelector('.pos-enroll', { timeout: 20_000 }).then(() => true, () => false);
     await shot(c, 'c-revoked-1024x600');
     check('C: 끊은 기기는 곧 기기 등록 화면으로(열쇠를 지움)', toEnroll);
+    // 기사가 그만두면(개인 휴대폰): 그 휴대폰 끊기 → 세션이 끝나 기기 등록 화면으로(deployment 10-5).
+    const revokePhone = await runCli(['revoke-device', '--shop', SHOP, '--device', '1호 차량 기사 휴대폰'], env, cliLog);
+    check('명령줄 revoke-device: 기사 휴대폰', revokePhone.code === 0, revokePhone.out.trim());
+    const phoneOut = await e.waitForSelector('.pos-enroll', { timeout: 20_000 }).then(() => true, () => false);
+    await shot(e, 'e-revoked-360x640');
+    check('E: 끊은 기사 휴대폰은 곧 기기 등록 화면으로(세션 끝)', phoneOut);
 
     check('페이지 오류 없음', pageErrors.length === 0, pageErrors.slice(0, 5).join(' | '));
-    for (const ctx of [ctxA, ctxB, ctxC, ctxD]) await ctx.close();
+    for (const ctx of [ctxA, ctxB, ctxC, ctxD, ctxE]) await ctx.close();
   } catch (error) {
     check('끝까지 돌기', false, String(error?.stack ?? error).split('\n').slice(0, 4).join(' | '));
     // 실패한 때의 화면(열린 창마다).

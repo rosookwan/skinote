@@ -3,7 +3,7 @@
 import { DomainError, draftToEnvelope, openCommandDraft, type AnyCommandEnvelope, type ConfirmCommand } from '@skinote/contract';
 import { describe, expect, it } from 'vitest';
 import { assetId, businessDateOf, kstAt } from '@skinote/domain';
-import { DRAWERS, SHOP_RULES } from '@skinote/domain/sample';
+import { DRAWERS, NUMBERED_SHOP_RULES, SHOP_RULES } from '@skinote/domain/sample';
 import { applyCommand, createSeed } from '../src/fixture/demo.ts';
 import { FixtureClient, type FixtureStorage } from '../src/fixture/fixture-client.ts';
 import { applyStory, type FxStoryEvent, storyRequestId } from '../src/fixture/story.ts';
@@ -30,12 +30,14 @@ describe('영업일 기준 시각(data-model 3-3)', () => {
 });
 
 describe('체험 자료 판 3', () => {
-  it('이 매장의 운영 규칙: 리프트권 반납 필수 · 보증금 1매 5,000원 현금 · 접수 시 · 몰수(1일) · 06:00 · 시재 100,000원', () => {
+  it('첫 매장의 운영 규칙(2026-09-26): 리프트권 반납 필수 · 권 보증금 없음 · 당일 취소 환불 · 06:00 · 시재 100,000원', () => {
     const state = createSeed('e');
     expect(state.version).toBe(3);
     expect(state.settings).toEqual(SHOP_RULES);
     expect(state.settings.liftReturnPolicy).toBe('required');
-    expect(state.settings.liftDeposit).toMatchObject({ unitAmount: 5_000, timing: 'at_intake', refundDefault: 'cash', unreturned: 'keep', afterDays: 1, methods: ['cash'] });
+    // 권 카드의 1,000원은 리조트와 가게 사이의 돈이라 손님과 주고받지 않는다: 보증금 규칙이 없다.
+    expect(state.settings.liftDeposit).toBeNull();
+    expect(state.settings.sameDayCancelRefund).toBe('refund');
     expect(state.settings.businessDayCutoff).toBe('06:00');
     expect(state.settings.openingCash).toBe(100_000);
     expect(state.settings.returnSlots.map((s) => s.label + ' ' + String(s.hour).padStart(2, '0') + ':' + String(s.minute).padStart(2, '0')))
@@ -46,8 +48,19 @@ describe('체험 자료 판 3', () => {
     expect(state.storyApplied).toEqual([]);
   });
 
-  it('번호: 박준호 팀의 준비 번호는 시안 V1(스키 17 · 18, 보드 5, 헬멧 12 · 14 · 15, 야간권 31 · 32 · 33), 지급한 줄은 겹치지 않는 번호', () => {
+  it('첫 매장은 번호가 없다: 모든 줄이 수량, 번호 실물 없음, 1호 차량 예비권은 야간권 6매(수량)', () => {
     const state = createSeed('e');
+    const lines = state.orders.flatMap((o) => o.lines);
+    expect(lines.every((l) => l.tracking === 'count')).toBe(true);
+    expect(lines.some((l) => l.assetIds || l.plannedAssetIds || l.backAssetIds)).toBe(false);
+    expect(state.assets).toEqual([]);
+    expect(state.vanSpares).toEqual([{ vehicleId: 'v1', productKey: 'night_adult', quantity: 6 }]);
+  });
+
+  it('번호 매장(numbered)의 운영 규칙과 번호: 보증금 1매 5,000원 현금 · 접수 시 · 몰수(1일), 박준호 팀의 준비 번호는 시안 V1, 지급한 줄은 겹치지 않는 번호', () => {
+    const state = createSeed('e', 'numbered');
+    expect(state.settings).toEqual(NUMBERED_SHOP_RULES);
+    expect(state.settings.liftDeposit).toMatchObject({ unitAmount: 5_000, timing: 'at_intake', refundDefault: 'cash', unreturned: 'keep', afterDays: 1, methods: ['cash'] });
     const park = state.orders.find((o) => o.id === 'o22')!;
     expect(park.lines.map((l) => l.plannedAssetIds)).toEqual([
       ['ski-17', 'ski-18'], ['board-5'], ['helmet-12', 'helmet-14', 'helmet-15'], ['night_adult-31', 'night_adult-32', 'night_adult-33'],
@@ -82,6 +95,19 @@ describe('체험 자료 판 3', () => {
     const ledger = await client.ledgerView('day_ledger', {});
     expect(ledger.basis.epoch).not.toBe('old');
     expect(JSON.parse(storage.getItem('skinote.demo.v1') ?? '{}').version).toBe(3);
+  });
+
+  it('옛 견본(번호 · 보증금)으로 저장한 판 3 자료도 버리고 첫 매장 견본으로 시작한다(견본 판 표시가 다름)', async () => {
+    const storage = new MemoryStorage();
+    storage.setItem('skinote.demo.v1', JSON.stringify({ version: 3, state: createSeed('old', 'numbered'), clock: at(18, 0) }));
+    const client = new FixtureClient({ storage, realNow: () => 1_800_000_000_000 });
+    expect((await client.ledgerView('day_ledger', {})).basis.epoch).not.toBe('old');
+    const saved = JSON.parse(storage.getItem('skinote.demo.v1') ?? '{}') as { sample: string; state: { assets: unknown[] } };
+    expect(saved.sample).toMatch(/:first$/);
+    expect(saved.state.assets).toEqual([]);
+    // 같은 견본으로 저장한 자료는 그대로 이어 간다.
+    const again = new FixtureClient({ storage, realNow: () => 1_800_000_000_000 });
+    expect((await again.ledgerView('day_ledger', {})).basis.epoch).toBe((await client.ledgerView('day_ledger', {})).basis.epoch);
   });
 });
 

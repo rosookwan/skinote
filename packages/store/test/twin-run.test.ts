@@ -6,14 +6,16 @@
 // 장부 트리거가 켜져 있으므로 장부 표를 고치는 쓰기가 있으면 명령이 INTERNAL로 끝나 결과 비교에서 걸린다. 표 옮기기의 되읽기를 명령
 // 종류마다(접수 · 지급 · 반납 · 수납 · 일괄 수납 · 보증금 · 일정 변경 · 적재 · 배달 · 수거 · 입고 · 현장 수납 · 리프트권 추가 · 방문 ·
 // 빨리 확인 · 순서 · 현금 인계 · 점검 · 마감 · 운영 규칙 · 후불 처리) 맞춘다.
+// 견본 매장은 첫 매장(2026-09-26: 모든 품목 수량 · 보증금 없음 · 수량 차량 예비권)이고, 번호 · 권 보증금을 켠 매장(shop 'numbered')도 같은
+// 이야기로 한 번 더 돌린다(번호 실물 · 보증금 장부의 되읽기).
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { defaultUiConfig, type AnyCommandEnvelope, type CommandOutcome, type OrderDraftInput, type PromiseSheetParams } from '@skinote/contract';
 import {
-  PRODUCTION_LINES, checkoutPlan, execute, kstAt, orderTasks, routeTasks, ruleKeys, runQuery, sampleDay, sortTasks, type ReadContext, type ShopState,
+  PRODUCTION_LINES, checkoutPlan, execute, kstAt, orderTasks, routeTasks, ruleKeys, runQuery, sampleDay, sortTasks, type ReadContext, type SampleShop, type ShopState,
 } from '@skinote/domain';
 import { STORY } from '../../../apps/pos/src/fixture/story.ts';
-import { canonicalJson, num, one, verifyChain, type Db, type ShopStore } from '../src/index.ts';
+import { all, canonicalJson, num, one, str, verifyChain, type Db, type ShopStore } from '../src/index.ts';
 import { COUNTER, envelope, provisioned, T0 } from './helpers.ts';
 
 const DATE = '2026-12-26';
@@ -48,11 +50,11 @@ interface Twin {
   read(now: number): ReadContext;
 }
 
-/** 견본 매장 + 견본 하루(체험 id)를 넣은 쌍둥이. */
-function twin(): Twin {
-  const { db, store, reopen } = provisioned();
+/** 견본 매장 + 견본 하루(체험 id)를 넣은 쌍둥이. shop: 첫 매장(기본) · 번호 매장. */
+function twin(shop: SampleShop = 'first'): Twin {
+  const { db, store, reopen } = provisioned(':memory:', {}, shop);
   const empty = store.state(T0);
-  const day = sampleDay({ date: DATE, epoch: empty.epoch, ids: 'demo' });
+  const day = sampleDay({ date: DATE, epoch: empty.epoch, ids: 'demo', shop });
   const imported = store.importDay({ date: DATE, orders: day.orders, pins: day.pins, deposits: day.deposits, paymentGroups: day.paymentGroups }, 'import:sample:' + DATE, T0, COUNTER);
   assert.equal(imported.replay, false);
   const again = store.importDay({ date: DATE, orders: day.orders, pins: day.pins, deposits: day.deposits, paymentGroups: day.paymentGroups }, 'import:sample:' + DATE, T0, COUNTER);
@@ -105,8 +107,8 @@ function closeDay(t: Twin, now: number): CommandOutcome | null {
   return t.run(envelope(sheet.command.type, sheet.command.payload as never, basisOf(t), { expect: sheet.expect! }), now, 'closing');
 }
 
-test('twin run: the sample day, every story command and the closing give the same state in memory and in the shop file', () => {
-  const t = twin();
+/** 이야기의 모든 사건을 시각 순으로 쌍둥이에 보낸다. 보낸 명령 종류와 수. */
+function runStory(t: Twin): { types: Set<string>; commands: number } {
   const events = [...STORY].sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
   const types = new Set<string>();
   let commands = 0;
@@ -117,16 +119,130 @@ test('twin run: the sample day, every story command and the closing give the sam
       t.run(env, event.at, event.id + ' ' + env.type);
     }
   }
-  assert.ok(commands >= 30, 'the story sends many commands: ' + commands);
-  for (const type of ['order.create', 'stock.issue', 'stock.direct_return', 'payment.take', 'deposit.take', 'deposit.return', 'promise.change', 'stock.load', 'stock.deliver',
-    'stock.collect', 'stock.receive', 'field.collect', 'field.add_ticket', 'field.deposit_return', 'task.visit', 'cash.transfer', 'cash.transfer_confirm']) {
-    assert.ok(types.has(type), 'the story covers ' + type);
+  return { types, commands };
+}
+
+/**
+ * 수량 재고의 투영(stock_balances)이 이동 줄의 합과 같은지(위치 · 규격마다, 처음 재고의 출발인 바깥 위치는 빼고). 첫 매장은 모든 종류가
+ * 수량이라 이 투영이 재고 기록의 전부다(2026-09-26). 음수를 0으로 멈춘 기록(integrity_findings projection_drift)도 없어야 한다.
+ */
+function assertBalancesMatchMovements(db: Db, name: string): void {
+  const moved = new Map<string, number>();
+  const add = (location: string, variant: string, n: number) => moved.set(location + '|' + variant, (moved.get(location + '|' + variant) ?? 0) + n);
+  for (const r of all(db, `SELECT m.from_location_id AS f, m.to_location_id AS t, ml.variant_id AS v, ml.quantity AS q FROM stock_movement_lines ml
+    JOIN stock_movements m ON m.shop_id = ml.shop_id AND m.id = ml.movement_id WHERE ml.asset_id IS NULL AND ml.variant_id IS NOT NULL`)) {
+    add(str(r.t), str(r.v), num(r.q));
+    add(str(r.f), str(r.v), -num(r.q));
   }
+  const balances = new Map(all(db, "SELECT location_id, variant_id, quantity FROM stock_balances WHERE owner_key = '' AND lot_key = ''")
+    .map((r) => [str(r.location_id) + '|' + str(r.variant_id), num(r.quantity)] as const));
+  for (const [key, n] of moved) {
+    if (key.startsWith('external|')) continue;
+    assert.equal(balances.get(key) ?? 0, n, name + ': stock_balances ' + key + ' = the sum of its movement lines');
+  }
+  for (const [key, n] of balances) if (!moved.has(key)) assert.equal(n, 0, name + ': a balance row without movements is 0: ' + key);
+  assert.equal(num(one(db, "SELECT count(*) AS n FROM integrity_findings WHERE check_key = 'projection_drift'")?.n), 0, name + ': no balance was clamped at 0');
+}
+
+const STOCK_AND_MONEY = ['order.create', 'stock.issue', 'stock.direct_return', 'payment.take', 'promise.change', 'stock.load', 'stock.deliver',
+  'stock.collect', 'stock.receive', 'field.collect', 'field.add_ticket', 'task.visit', 'cash.transfer', 'cash.transfer_confirm'];
+const DEPOSIT = ['deposit.take', 'deposit.return', 'field.deposit_return'];
+
+test('twin run (first shop: count only, no deposit): the sample day, every story command and the closing give the same state in memory and in the shop file', () => {
+  const t = twin();
+  const { types, commands } = runStory(t);
+  assert.ok(commands >= 25, 'the story sends many commands: ' + commands);
+  for (const type of STOCK_AND_MONEY) assert.ok(types.has(type), 'the story covers ' + type);
+  for (const type of DEPOSIT) assert.equal(types.has(type), false, 'no deposit command in the first shop: ' + type);
+  // 수량만: 번호 실물 · 번호 이동 줄이 없고, 리프트권 추가는 차량 예비권(수량)에서 1매.
+  assert.deepEqual(t.memory.assets, []);
+  assert.deepEqual(t.memory.deposits, []);
+  assert.deepEqual(t.memory.vanSpares, [{ vehicleId: 'v1', productKey: 'night_adult', quantity: 5 }]);
+  assert.equal(num(one(t.db, 'SELECT count(*) AS n FROM stock_movement_lines WHERE asset_id IS NOT NULL')?.n), 0);
+  // 수량 재고: 규격 품목(의류 · 헬멧)의 줄은 규격을 가져 없는 규격('')의 재고를 움직이지 않고, 투영이 이동과 맞는다.
+  assertBalancesMatchMovements(t.db, 'first shop story');
+  assert.equal(num(one(t.db, "SELECT count(*) AS n FROM stock_movement_lines WHERE variant_id IN ('helmet:', 'clothes:', 'boots:', 'goggles:')")?.n), 0,
+    'no movement line uses the empty variant of a sized kind');
+  const given = (variant: string) => num(one(t.db, "SELECT sum(ml.quantity) AS n FROM stock_movement_lines ml JOIN stock_movements m ON m.shop_id = ml.shop_id AND m.id = ml.movement_id WHERE m.kind_key = 'deliver' AND ml.variant_id = ?", variant)?.n);
+  for (const variant of ['helmet:소', 'helmet:중', 'helmet:대', 'clothes:95', 'clothes:100', 'clothes:105', 'ski:']) assert.ok(given(variant) > 0, variant + ' is handed out by its own variant row');
+  // 김민수 팀 헬멧 1개는 매장 입고되지 않아(23:48) 그 규격의 매장 재고가 처음보다 하나 적다.
+  const o25helmet = t.memory.orders.find((o) => o.id === 'o25')!.lines.find((l) => l.kind === 'helmet')!;
+  const opening = num(one(t.db, "SELECT sum(ml.quantity) AS n FROM stock_movement_lines ml JOIN stock_movements m ON m.shop_id = ml.shop_id AND m.id = ml.movement_id WHERE m.kind_key = 'stock_opening' AND m.to_location_id = 'shop' AND ml.variant_id = ?", 'helmet:' + o25helmet.variantKey)?.n);
+  const atShop = num(one(t.db, "SELECT quantity AS n FROM stock_balances WHERE location_id = 'shop' AND variant_id = ?", 'helmet:' + o25helmet.variantKey)?.n);
+  assert.ok(atShop < opening, 'the helmet left on the van is missing from the shop count of its size: ' + atShop + ' < ' + opening);
+  const closed = closeDay(t, at(0, 40, 1));
+  assert.equal(closed?.outcome, 'applied', 'the day closes after the story');
+  assert.equal(t.memory.closings.length, 1);
+  assert.deepEqual(verifyChain(t.db, 'shop0test'), { rows: t.applied + 1, brokenAt: null }, 'one events row per applied command + the import');
+});
+
+test('twin run (numbered shop with the lift-ticket deposit): the sample day, every story command and the closing give the same state in memory and in the shop file', () => {
+  const t = twin('numbered');
+  const { types, commands } = runStory(t);
+  assert.ok(commands >= 30, 'the story sends many commands: ' + commands);
+  for (const type of [...STOCK_AND_MONEY, ...DEPOSIT]) assert.ok(types.has(type), 'the story covers ' + type);
   const closed = closeDay(t, at(0, 40, 1));
   assert.equal(closed?.outcome, 'applied', 'the day closes after the story');
   assert.equal(t.memory.closings.length, 1);
   assert.deepEqual(verifyChain(t.db, 'shop0test'), { rows: t.applied + 1, brokenAt: null }, 'one events row per applied command + the import');
   assert.equal(num(one(t.db, "SELECT count(*) AS n FROM events WHERE engine_key = 'import' AND imported = 1")?.n), 1);
+});
+
+test('twin run (first shop): turning the lift-ticket deposit on later (V8 사용) creates its section and rule, and deposit take · return on count tickets round-trip', () => {
+  const t = twin();
+  assert.equal(num(one(t.db, "SELECT count(*) AS n FROM deposit_rules")?.n), 0, 'the first shop is provisioned without a deposit rule');
+  assert.equal(num(one(t.db, "SELECT count(*) AS n FROM payment_sections WHERE id = 'lift_deposit'")?.n), 0);
+  const keys = ruleKeys(t.memory.registry, t.memory.settings);
+  const on = t.run(envelope('setting.set', { changes: [{ key: keys.depositOn, value: 1 }] }, basisOf(t)), at(15, 45), 'deposit on');
+  assert.equal(on.outcome, 'applied');
+  assert.ok(t.memory.settings.liftDeposit, 'the deposit rule is on');
+  assert.equal(num(one(t.db, "SELECT count(*) AS n FROM deposit_rules WHERE active = 1")?.n), 1);
+  assert.equal(num(one(t.db, "SELECT count(*) AS n FROM payment_sections WHERE id = 'lift_deposit'")?.n), 1, 'the deposit section is created on the fly');
+  const change = one(t.db, "SELECT entity_type, before_json FROM config_changes WHERE entity_type = 'deposit_rules' ORDER BY config_rev DESC LIMIT 1");
+  assert.equal(change?.entity_type, 'deposit_rules', 'config_changes records the new rule');
+  assert.equal(change?.before_json, null);
+
+  // 새 접수(현장, 권 2매): 확정 창의 보증금 칸이 생기고 접수 확정이 보증금을 받는다(수량 권: 번호 없음).
+  const draft: OrderDraftInput = {
+    channel: 'walk_in', leader: { name: '한지민', phone: '01000005151', party: 2 },
+    items: [{ productKey: 'board', quantity: 1 }, { productKey: 'night_adult', quantity: 2 }], pickup: { mode: 'store', immediate: true }, giveBack: { mode: 'store' },
+  };
+  const now = at(15, 50);
+  const plan = checkoutPlan(structuredClone(t.memory), now, draft, [{ sectionKey: 'gear', methodKey: 'card' }, { sectionKey: 'lift', methodKey: 'cash' }], null);
+  assert.ok(plan.deposit && plan.deposit.amount > 0, 'the checkout plan has a deposit section');
+  const created = t.run(envelope('order.create', { draft, choices: plan.choices, payerOrderId: null }, basisOf(t), { expect: { quoteHash: plan.hash } }), now, 'order with deposit');
+  assert.equal(created.outcome, 'applied');
+  const orderId = (created.result as { orderId: string }).orderId;
+  const o = () => t.memory.orders.find((x) => x.id === orderId)!;
+  t.run(envelope('stock.issue', { orderId, lines: o().lines.map((l) => ({ lineId: l.id, quantity: l.qty })) }, basisOf(t)), at(15, 51), 'issue');
+  const ticket = o().lines.find((l) => l.section === 'lift')!;
+  assert.equal(ticket.tracking, 'count');
+  const held = t.memory.deposits.find((d) => d.orderId === orderId);
+  assert.ok(held && held.entries.some((e) => e.kind === 'take' && !e.assetIds), 'deposit.take on count tickets has no numbers');
+  // 권 1매만 돌아옴(부분 반납) + 그 1매의 보증금 반환.
+  const back = t.run(envelope('stock.direct_return', { orderId, lines: [{ lineId: ticket.id, quantity: 1 }] }, basisOf(t)), at(21, 40), 'partial return');
+  assert.equal(back.outcome, 'applied');
+  const dep = t.memory.deposits.find((d) => d.orderId === orderId)!;
+  const heldBefore = dep.entries.reduce((n, e) => n + (e.kind === 'take' ? e.amount : -e.amount), 0);
+  const refund = t.run(envelope('deposit.return', { orderId, ruleKey: dep.ruleKey, lines: [{ lineId: ticket.id, quantity: 1 }], amount: dep.unitAmount, refundMethodKey: 'cash' }, basisOf(t),
+    { expect: { depositHeld: heldBefore, dueAmount: 0 } }), at(21, 41), 'deposit return');
+  assert.equal(refund.outcome, 'applied');
+  assertBalancesMatchMovements(t.db, 'deposit on later');
+  const closed = closeDay(t, at(0, 40, 1));
+  assert.equal(closed?.outcome, 'applied', 'the day closes with one deposit still held');
+});
+
+test('twin run (first shop): a queued lift-ticket add beyond the recorded van spares is written (sync 8-12), the spare row goes below 0 and the drift is recorded', () => {
+  const t = twin();
+  const quote = 'ticket:night_adultx7=245000:d0';
+  const online = t.run(envelope('field.add_ticket', { taskId: 'deliver:o26', orderId: 'o26', productKey: 'night_adult', quantity: 7, assetIds: [], amount: 245_000 }, basisOf(t),
+    { expect: { quoteHash: quote } }), at(16, 58), 'online add beyond spares');
+  assert.equal(online.outcome, 'rejected');
+  const queuedEnv = { ...envelope('field.add_ticket', { taskId: 'deliver:o26', orderId: 'o26', productKey: 'night_adult', quantity: 7, assetIds: [], amount: 245_000 }, { epoch: t.memory.epoch, rev: 1 },
+    { expect: { quoteHash: quote } }), deviceSeq: 1 } as AnyCommandEnvelope;
+  assert.equal(t.run(queuedEnv, at(16, 59), 'queued add beyond spares').outcome, 'applied');
+  assert.deepEqual(t.memory.vanSpares, [{ vehicleId: 'v1', productKey: 'night_adult', quantity: -1 }], 'the spare row reads back from the facts below 0');
+  assert.equal(num(one(t.db, "SELECT count(*) AS n FROM integrity_findings WHERE check_key = 'projection_drift' AND entity_id = 'vehicle:v1|night_adult:'")?.n), 1, 'the van balance was clamped and recorded');
 });
 
 test('twin run: the corpus beyond the story (walk-in off the minute, goggles, pin · ack, route order, visit retry, extension and undo, rules, pay later)', () => {

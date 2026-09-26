@@ -6,6 +6,9 @@
 //   node bin/shop.js provision     --shop <id> --code <code> --name <이름> (--sample | --spec 파일.json) [--staff "<이름>:<역할>[:<차량>]" …]
 //                                  [--test] [--pin-digits 4]                        → 직원 · 역할 · 비밀번호 표(한 번)          [혼자]
 //   node bin/shop.js load-sample   --shop <id> --date today|YYYY-MM-DD   (시험 매장만)                                              [혼자]
+//   node bin/shop.js reset-test-shop --shop <id> [--sample | --spec 파일.json]  (시험 매장만, 없으면 --sample)                          [혼자]
+//                                  → 옛 파일의 사본을 backups/resets/에 받고 지금 견본(명세)으로 매장 파일을 다시 만든다. 직원 계정 ·
+//                                    비밀번호 · 등록한 기기 · 로그인은 그대로(새 명세에 차량이 없는 기사 기기만 끊음), 새 epoch
 //   node bin/shop.js device-code   --shop <id> --kind pos|driver_tablet|driver_phone --label <이름> [--vehicle <차량>] [--minutes 60]
 //                                  → 등록 번호 1234-5678-9012(한 번)                                                              [온라인 가능]
 //   node bin/shop.js rotate-pin    --shop <id> --staff <이름|id> [--pin-digits 4] → 새 비밀번호(한 번), 잠금 풀기                     [온라인 가능]
@@ -32,6 +35,7 @@ import { ConfigError, loadConfig } from '../src/config.js';
 import { generatePin, hashPin } from '../src/pin.js';
 import { loadSecrets } from '../src/secrets.js';
 import { ONLINE_OPS, OpError } from '../src/shop-ops.js';
+import { ResetError, resetTestShop } from '../src/shop-reset.js';
 import { openShopPort } from '../src/shops.js';
 
 export const EXIT = Object.freeze({ ok: 0, usage: 64, data: 65, unavailable: 69, software: 70, config: 78 });
@@ -73,8 +77,10 @@ const FLAGS = /** @type {Record<string, { key: string, kind: 'bool' | 'value' | 
   '--device': { key: 'device', kind: 'value' },
 });
 
-const OPS = ['provision', 'load-sample', 'device-code', 'rotate-pin', 'revoke-device', 'status'];
-const USAGE = '쓰는 법: node bin/shop.js <provision|load-sample|device-code|rotate-pin|revoke-device|status> --shop <매장 id> …  (또는 --stdin)';
+const OPS = ['provision', 'load-sample', 'reset-test-shop', 'device-code', 'rotate-pin', 'revoke-device', 'status'];
+/** 매장 파일을 혼자 써야 하는 명령(서버가 돌면 거절, deploy/shop-cli.sh는 서버를 잠깐 멈춘다). */
+export const EXCLUSIVE_OPS = Object.freeze(['provision', 'load-sample', 'reset-test-shop']);
+const USAGE = '쓰는 법: node bin/shop.js <provision|load-sample|reset-test-shop|device-code|rotate-pin|revoke-device|status> --shop <매장 id> …  (또는 --stdin)';
 
 /** @param {string[]} argv @returns {{ op: string, args: CliArgs, stdin: boolean }} */
 export function parseArgs(argv) {
@@ -119,7 +125,13 @@ function openFiles(config, shopId) {
   }
   const controlDb = openDatabase(files[0][1]);
   const shopDb = openDatabase(files[1][1]);
-  return { controlDb, shopDb, close: () => { shopDb.close(); controlDb.close(); } };
+  let shopOpen = true;
+  const closeShop = () => {
+    if (!shopOpen) return;
+    shopOpen = false;
+    shopDb.close();
+  };
+  return { controlDb, shopDb, closeShop, close: () => { closeShop(); controlDb.close(); } };
 }
 
 /** 비밀값(없으면 needPepper일 때 설정 오류, 아니면 이번 실행만의 값: 명령을 적용하지 않는 운영 명령). @param {CliIo} io @param {boolean} needPepper */
@@ -133,20 +145,27 @@ function secretsFor(io, needPepper) {
   }
 }
 
-/** @param {CliArgs} args @returns {import('@skinote/domain').ShopSpec} */
-function specOf(args) {
-  /** @type {import('@skinote/domain').ShopSpec} */
-  let spec;
+/**
+ * 명세 읽기: --spec(파일 경로 또는 --stdin의 명세 객체) 또는 --sample(견본). 둘 다 없으면 sampleByDefault일 때 견본.
+ * @param {CliArgs} args @param {{ sampleByDefault?: boolean }} [options] @returns {import('@skinote/domain').ShopSpec}
+ */
+function readSpec(args, { sampleByDefault = false } = {}) {
   if (args.spec !== undefined && args.sample) throw new CliError(EXIT.usage, '--sample과 --spec 가운데 하나만');
-  if (args.spec && typeof args.spec === 'object') spec = structuredClone(/** @type {any} */ (args.spec));
-  else if (typeof args.spec === 'string') {
+  if (args.spec && typeof args.spec === 'object') return structuredClone(/** @type {any} */ (args.spec));
+  if (typeof args.spec === 'string') {
     try {
-      spec = JSON.parse(readFileSync(args.spec, 'utf8'));
+      return JSON.parse(readFileSync(args.spec, 'utf8'));
     } catch {
       throw new CliError(EXIT.data, '--spec 파일을 JSON으로 읽지 못했습니다');
     }
-  } else if (args.sample) spec = sampleSpec();
-  else throw new CliError(EXIT.usage, 'provision에는 --sample 또는 --spec이 있어야 합니다');
+  }
+  if (args.sample || sampleByDefault) return sampleSpec();
+  throw new CliError(EXIT.usage, 'provision에는 --sample 또는 --spec이 있어야 합니다');
+}
+
+/** @param {CliArgs} args @returns {import('@skinote/domain').ShopSpec} */
+function specOf(args) {
+  const spec = readSpec(args);
   if (typeof args.code !== 'string' || !/^[a-z0-9][a-z0-9-]{1,31}$/.test(args.code)) throw new CliError(EXIT.usage, '--code는 영문 소문자 · 숫자 · -(2~32자)');
   if (typeof args.name !== 'string' || !/^[^\p{Cc}<>]{1,40}$/u.test(args.name)) throw new CliError(EXIT.usage, '--name은 1~40자');
   spec.shop = { ...spec.shop, code: args.code, name: args.name };
@@ -266,9 +285,15 @@ function loadSample(config, shopId, args, io) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date + 'T00:00:00Z'))) throw new CliError(EXIT.usage, '--date는 today 또는 YYYY-MM-DD');
     const prefix = date.slice(2).replace(/-/g, '') + '-';
     const used = state.orders.filter(o => o.receiptNo.startsWith(prefix)).map(o => Number(o.receiptNo.slice(prefix.length)) || 0);
+    // 견본 모양은 이 매장의 목록에서 고른다: 장비 · 리프트권을 번호로 세면 번호 매장 모양, 아니면 첫 매장 모양(2026-09-26). 견본 하루의 상품 ·
+    // 재고 방식이 목록과 다르면(옛 견본으로 만든 시험 매장 · 다른 명세) 처리 오류 대신 한 줄로 거절한다.
+    const shape = Object.values(state.registry.products).some(p => p.tracking === 'unit') ? 'numbered' : 'first';
+    const sample = sampleDay({ date, epoch: state.epoch, ids: 'demo', shop: shape });
+    const mismatch = sample.orders.flatMap(o => o.lines).find(l => state.registry.products[l.kind]?.tracking !== l.tracking);
+    if (mismatch) throw new CliError(EXIT.data, '견본 모양이 다릅니다 · reset-test-shop 먼저(' + mismatch.kind + ')');
     let day;
     try {
-      day = prepareImport(sampleDay({ date, epoch: state.epoch, ids: 'demo' }), { date, startSeq: Math.max(0, ...used) + 1, free: kind => freeNumbers(state, kind) });
+      day = prepareImport(sample, { date, startSeq: Math.max(0, ...used) + 1, free: kind => freeNumbers(state, kind) });
     } catch (error) {
       throw new CliError(EXIT.data, '견본 하루를 넣을 빈 번호가 모자랍니다: ' + /** @type {Error} */ (error).message);
     }
@@ -281,6 +306,48 @@ function loadSample(config, shopId, args, io) {
       throw error;
     }
     io.out(`견본 하루\t${date}\n접수\t${result.orders}팀${result.replay ? '(이미 넣음: 그대로)' : ''}\nrev\t${result.rev}\n`);
+  } finally {
+    files.close();
+  }
+}
+
+/**
+ * 시험 매장 새로 만들기(혼자, 시험 매장만): 옛 파일의 사본을 받고 지금 견본(또는 --spec)으로 매장 파일을 다시 만든다. 이 매장의 코드 ·
+ * 이름 · 직원은 control과 옛 파일의 것을 그대로 쓴다(--code · --name · --staff는 받지 않는다). 비밀번호는 control에 그대로라 찍지 않는다.
+ * @param {import('../src/config.js').ServerConfig} config @param {string} shopId @param {CliArgs} args @param {CliIo} io
+ */
+function resetShop(config, shopId, args, io) {
+  for (const [key, flag] of /** @type {const} */ ([['code', '--code'], ['name', '--name'], ['staff', '--staff'], ['test', '--test'], ['pinDigits', '--pin-digits']])) {
+    if (args[key] !== undefined) throw new CliError(EXIT.usage, `reset-test-shop은 지금 매장의 코드 · 이름 · 직원 · 비밀번호를 그대로 씁니다(${flag} 없이)`);
+  }
+  const baseSpec = readSpec(args, { sampleByDefault: true });
+  if (!baseSpec || typeof baseSpec !== 'object' || !baseSpec.registry || !baseSpec.shop) throw new CliError(EXIT.data, '명세가 틀렸습니다: shop · registry가 없습니다');
+  const secrets = secretsFor(io, false);
+  const files = openFiles(config, shopId);
+  try {
+    let summary;
+    try {
+      summary = resetTestShop(config, shopId, {
+        controlDb: files.controlDb, shopDb: files.shopDb, closeShop: files.closeShop, baseSpec, now: io.now(), fingerprintKey: secrets.fingerprintKey,
+      });
+    } catch (error) {
+      if (!(error instanceof ResetError)) throw error;
+      const exit = error.code === 'NOT_TEST_SHOP' || error.code === 'BAD_SPEC' ? EXIT.data : error.code === 'SWAP_FAILED' ? EXIT.software : EXIT.unavailable;
+      throw new CliError(exit, error.message);
+    }
+    io.out([
+      `시험 매장 새로 만듦\t${summary.shopId}`,
+      `직원\t${summary.staff}명(계정 · 비밀번호 그대로)`,
+      `기기\t${summary.devices.kept}대 그대로 · ${summary.devices.dropped}대 끊음`,
+      `세션\t${summary.sessions.kept}개 그대로 · ${summary.sessions.ended}개 끝냄`,
+      `epoch\t${summary.epoch.no} (rev ${summary.epoch.revFloor + 1}부터, 옛 rev ${summary.oldRev})`,
+      `백업\t${summary.backup.path}`,
+      `sha256\t${summary.backup.sha256}`,
+    ].join('\n') + '\n');
+    if (summary.movedDrivers) io.err(`기사 ${summary.movedDrivers}명의 차량이 새 명세에 없어 첫 차량으로 옮겼습니다\n`);
+    if (summary.devices.dropped) io.err(`새 명세에 차량이 없는 기사 기기 ${summary.devices.dropped}대를 끊었습니다: device-code로 다시 등록합니다\n`);
+    for (const line of summary.warnings) io.err(line + '\n');
+    io.err('옛 장부(접수 · 돈 · 재고)는 위 백업에만 있습니다. 견본 하루: load-sample --date today\n');
   } finally {
     files.close();
   }
@@ -330,11 +397,12 @@ export async function runShopCli(argv, io) {
     const shopId = typeof args.shop === 'string' ? args.shop : '';
     if (!config.shopIds.includes(shopId)) throw new CliError(EXIT.usage, '--shop이 SKINOTE_SHOP_IDS에 없습니다');
 
-    if (op === 'provision' || op === 'load-sample') {
+    if (EXCLUSIVE_OPS.includes(op)) {
       lock = acquireWriterLock(config.dataDir, shopId);
       if (!lock) throw new CliError(EXIT.unavailable, '서버가 이 매장 파일을 쓰는 중입니다: 서버를 멈춘 뒤 다시 하거나 deploy.sh --shop-cli를 씁니다');
       if (op === 'provision') await provision(config, shopId, args, io);
-      else loadSample(config, shopId, args, io);
+      else if (op === 'load-sample') loadSample(config, shopId, args, io);
+      else resetShop(config, shopId, args, io);
       return EXIT.ok;
     }
 
