@@ -55,7 +55,7 @@ describe('매장 목록 읽기', () => {
     const envelope = draftToEnvelope(openCommandDraft({ type: 'task.visit', payload: { taskId: 'collect:o25', outcomeKey: 'customer_absent' } }, { epoch: 'e', rev: state.rev }));
     expect(applyCommand(state, envelope, NOW).outcome).toBe('applied');
     const review = runQuery(state, 'reviewList', {}, ctx);
-    expect(review.find((r) => r.kindKey === 'visit_result')?.message).toContain('손님 없음');
+    expect(review.notices.find((r) => r.kindKey === 'visit_result')?.message).toContain('손님 없음');
   });
 
   it('차액 사유 · 돈통 이름: 마감의 돈통 점검 판', () => {

@@ -237,6 +237,25 @@ test('online-safe operations work with the server stopped: device code, new PIN,
   assert.equal(again.code, EXIT.data);
   const unknownStaff = await cli(['rotate-pin', '--shop', SHOP, '--staff', '모르는 사람'], env);
   assert.equal(unknownStaff.code, EXIT.data);
+  // 역할의 직접 입력 할인 한도(2026-09-27 점검: 적는 길이 없었다): 카운터는 시작 값 10,000원, set-limit이 바꾸고 none이 지운다.
+  const limitsOf = () => {
+    const db = openDatabase(join(dataDir, 'db', 'shops', SHOP + '.sqlite'), { readOnly: true });
+    try {
+      return openShopStore(/** @type {any} */ (db), SHOP, { secrets: { fingerprintKey: new Uint8Array(32) } }).roleLimits('counter');
+    } finally {
+      db.close();
+    }
+  };
+  assert.deepEqual(limitsOf(), { maxDiscountAmount: 10_000 });
+  const raised = await cli(['set-limit', '--shop', SHOP, '--role', 'counter', '--amount', '20000', '--percent', '10'], env);
+  assert.equal(raised.code, 0, raised.err);
+  assert.equal(raised.out, '역할\tcounter\n직접 입력 할인 한도\t금액 20000원 · 비율 10%\n');
+  assert.deepEqual(limitsOf(), { maxDiscountAmount: 20_000, maxDiscountPercentBp: 1_000 });
+  assert.equal((await cli(['set-limit', '--shop', SHOP, '--role', 'counter', '--amount', '12345'], env)).code, EXIT.data, '10원 단위');
+  assert.equal((await cli(['set-limit', '--shop', SHOP, '--role', 'boss', '--amount', '100'], env)).code, EXIT.data);
+  const cleared = await cli(['set-limit', '--shop', SHOP, '--role', 'counter', '--amount', 'none'], env);
+  assert.equal(cleared.code, 0, cleared.err);
+  assert.deepEqual(limitsOf(), {});
 });
 
 test('usage, config and file problems have their exit codes', async () => {

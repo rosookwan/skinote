@@ -18,8 +18,9 @@ import { businessDateAt, ensureBusinessDay } from './dates.ts';
 import { deviceRows, type DeviceRows } from './devices.ts';
 import { appendChanges, appendEvent, eventClass, fingerprintOf, intentConflict, isFinal, markIntents, readLog, recordFinding, shopFingerprintKey, splitPii, writeLog, type LogRow } from './journal.ts';
 import { loadShopState, readHead, readRev, type ShopHead } from './load.ts';
-import { provision as provisionShop, type ProvisionOptions, type ProvisionResult } from './provision.ts';
-import { listStaff, rolePermissions, type StaffRow } from './registry-read.ts';
+import { inWriteTransaction, provision as provisionShop, type ProvisionOptions, type ProvisionResult } from './provision.ts';
+import { listStaff, roleLimits, rolePermissions, type StaffRow } from './registry-read.ts';
+import { setRoleLimits } from './registry-write.ts';
 import { raiseReceiptCounter, writeState } from './write.ts';
 import { isoOf } from './ids.ts';
 
@@ -30,6 +31,8 @@ export interface Actor {
   deviceId?: string;
   vehicleId?: string;
   roleKey?: string;
+  /** 세션 역할의 권한 · 한도(서버). 도메인이 할인 권한 · 직접 입력 한도를 다시 본다(features-1 E10). 없으면 보지 않는다. */
+  viewer?: { permissions: readonly string[]; limits?: { maxDiscountAmount?: number; maxDiscountPercentBp?: number } };
 }
 
 /** 명령이 닿는 범위(도메인 commandScope). 서버의 권한 확인(guard)이 기사 세션의 '자기 차량'을 본다. */
@@ -41,13 +44,15 @@ export type Guard = (scope: CommandScope) => CommandOutcome | null;
 export type FaultPhase = 'load' | 'execute' | 'write' | 'journal' | 'commit' | 'after_commit';
 export type FaultHook = (phase: FaultPhase, envelope: AnyCommandEnvelope) => void;
 
-/** 가져올 하루(load-sample): 그 날짜와 더할 접수 · 고정 · 보증금 · 결제 자리. 접수 번호는 그 날짜의 것이다. */
+/** 가져올 하루(load-sample): 그 날짜와 더할 접수 · 고정 · 보증금 · 결제 자리 · 견본 확인 필요. 접수 번호는 그 날짜의 것이다. */
 export interface ImportDay {
   date: string;
   orders: ShopState['orders'];
   pins: ShopState['pins'];
   deposits: ShopState['deposits'];
   paymentGroups: ShopState['paymentGroups'];
+  /** 견본 확인 필요(features-1 §9-6, 출처 import). 없으면 넣지 않는다. */
+  reviews?: NonNullable<ShopState['reviews']>;
 }
 
 /** 가져오기의 작업 기록 종류(sys_event_types: engine import). */
@@ -94,6 +99,13 @@ export interface ShopStore {
   isTest(): boolean;
   staff(): StaffRow[];
   permissions(roleKey: string): Map<string, string>;
+  /** 역할의 한도(role_permissions.limits_json을 합친 것: 직접 입력 할인의 금액 · 비율, features-1 E10). 없으면 빈 객체. */
+  roleLimits(roleKey: string): { maxDiscountAmount?: number; maxDiscountPercentBp?: number };
+  /**
+   * 역할의 직접 입력 할인 한도를 바꾼다(명령줄 `shop set-limit`, 관리자 일, 2026-09-27 점검: 한도를 적는 길이 없었다). null은 한도 없음. 그 역할에
+   * discount.manual이 없으면 false.
+   */
+  setRoleLimits(roleKey: string, limits: { maxDiscountAmount?: number; maxDiscountPercentBp?: number } | null): boolean;
   /** 캐시를 버린다(시험 · 다른 연결이 쓴 뒤). */
   dropCache(): void;
 }
@@ -101,8 +113,9 @@ export interface ShopStore {
 /** 명령의 주된 대상(events.aggregate_*): 본문의 접수 · 업무 · 차량 · 마감일, 규칙 저장은 매장. */
 function aggregateOf(envelope: AnyCommandEnvelope, shopId: string): { type?: string; id?: string } {
   const p = envelope.payload as Record<string, unknown>;
-  if (envelope.type === 'setting.set') return { type: 'shop', id: shopId };
+  if (envelope.type === 'setting.set' || envelope.type === 'registry.update' || envelope.type === 'staff.set') return { type: 'shop', id: shopId };
   if (envelope.type === 'closing.close' && typeof p.date === 'string') return { type: 'closing', id: p.date };
+  if (envelope.type === 'review.resolve' && typeof p.reviewId === 'string') return { type: 'review', id: p.reviewId };
   if (typeof p.orderId === 'string') return { type: 'order', id: p.orderId };
   if (typeof p.taskId === 'string') return { type: 'task', id: p.taskId };
   if (typeof p.vehicleId === 'string') return { type: 'vehicle', id: p.vehicleId };
@@ -220,9 +233,12 @@ export function openShopStore(db: Db, shopId: string, options: ShopStoreOptions)
         },
         lines,
         orderIds: options.orderIds ?? 'dated',
+        ...(actor.viewer ? { viewer: actor.viewer } : {}),
       };
       const result = execute(before, envelope, ctx);
-      const applied = result.outcome.outcome === 'applied' || result.outcome.outcome === 'partially_applied';
+      // 적은 것이 확인 필요뿐인 명령(이미 매장에 반납된 보냄 대기 수거: 결과는 superseded)도 새 상태를 적는다(features-1 E18).
+      const applied = result.outcome.outcome === 'applied' || result.outcome.outcome === 'partially_applied'
+        || (result.outcome.outcome === 'superseded' && result.state !== before);
       let outcome: CommandOutcome;
       let appliedRev: number | undefined;
       if (applied) {
@@ -358,6 +374,7 @@ export function openShopStore(db: Db, shopId: string, options: ShopStoreOptions)
         after.pins.push(...day.pins);
         after.deposits.push(...day.deposits);
         after.paymentGroups.push(...day.paymentGroups);
+        if (day.reviews?.length) after.reviews = [...(after.reviews ?? []), ...day.reviews];
         const rev = nextRev();
         ensureBusinessDay(db, shopId, day.date, isoOf(now));
         const wctx = { db, shopId, now, rev, actor: { key: actor.key, name: actor.name }, requestId, before, after, touched: [] };
@@ -404,6 +421,8 @@ export function openShopStore(db: Db, shopId: string, options: ShopStoreOptions)
     isTest: () => num(one(db, 'SELECT is_test FROM shops WHERE id = ?', shopId)?.is_test) === 1,
     staff: () => listStaff(db, shopId),
     permissions: (roleKey) => rolePermissions(db, shopId, roleKey),
+    roleLimits: (roleKey) => roleLimits(db, shopId, roleKey),
+    setRoleLimits: (roleKey, limits) => inWriteTransaction(db, () => setRoleLimits(db, shopId, roleKey, limits)),
     dropCache: () => {
       cache = undefined;
     },

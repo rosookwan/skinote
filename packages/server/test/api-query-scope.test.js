@@ -38,6 +38,15 @@ const PARAMS = {
   returnSheet: { orderId: 'o1v1' },
   closingSheet: {},
   shopRules: {},
+  shopSettings: { tab: 'fleet' },
+  discountSheet: { orderId: 'o21' },
+  cancelSheet: { orderId: 'o21', scope: 'order' },
+  exchangeSheet: { orderId: 'o21' },
+  ticketBoard: {},
+  ticketLossSheet: { orderId: 'o21', direction: 'loss' },
+  spareSheet: { vehicleId: 'v1', direction: 'load' },
+  phoneReveal: { orderId: 'o1v1' },
+  refundSheet: { orderId: 'o21' },
 };
 
 /** @param {string} key */

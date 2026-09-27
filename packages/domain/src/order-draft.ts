@@ -9,13 +9,14 @@
 //   - 수령보다 이른 반납 타임 · 날은 누를 수 없다(점선 · 회색, 까닭 없음 — plan §8 D34).
 // order.create(5단계)는 resolveSchedule · quoteOf로 같은 일정 · 견적을 쓴다.
 import {
-  ORDER_DRAFT_KEYS as K, type ChoiceOption, type DraftLineView, type DraftTotal, type KindTile, type OrderDraftInput, type OrderDraftParams,
+  DomainError, ORDER_DRAFT_KEYS as K, type ChoiceOption, type DraftLineView, type DraftTotal, type KindTile, type OrderDraftInput, type OrderDraftParams,
   type OrderDraftView, type OrderPicker, type PickupWindow, type PlaceArea, type PlacePick,
 } from '@skinote/contract';
 import { cleanItems, kindOf, moreLabelOf, quoteOf, variantOf, type FxKind, type Quote } from './catalog.ts';
 import type { FxReturnSlot, ShopRegistry, ShopState } from './model.ts';
-import { addDays, dateOf, knownPlace, slotTime, timeReason, timeText } from './promise-sheet.ts';
-import { placeLabel, slotAt } from './rules.ts';
+import { addDays, dateOf, slotTime, timeReason, timeText } from './promise-sheet.ts';
+import { CANCEL_WORDS } from './cancel-words.ts';
+import { activeAreas, activeSlots, activeVehicles, findOrder, isCancelledOrder, placeLabel, slotAt, usablePlace } from './rules.ts';
 import { MINUTE, businessDateOf, dayWord, hm, iso, kstAt, shopCutoff } from './time.ts';
 import type { ViewContext } from './views.ts';
 
@@ -35,6 +36,17 @@ const MAX_PARTY = 30;
 // ── 대표자 ──────────────────────────────────────────────────────────
 
 /** 연락처 숫자 → '010-0000-0042'(3 · 4 · 4, 10자리는 3 · 3 · 4). 숫자만 받는다. */
+/**
+ * 가린 전화번호(deployment 10-4 · 10-5): 앞 세 자리 · 끝 4자리만(`010-****-0025`). 가운데는 별표다: 말줄임표(`…`)는 잘린 글로 읽혀 화면 규칙이 막는다
+ * (features-1 §15 결정). 목록 · 접수증 · 업무 판 · 알림 · 인쇄는 모두 이것이고, 온전한 번호는 전화 창의 phoneReveal(열람 기록)로만 준다(2026-09-27 점검).
+ */
+export function maskPhone(phone: string): string {
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length === 0) return '';
+  const last4 = digits.slice(-4);
+  return digits.length >= 8 ? digits.slice(0, 3) + '-****-' + last4 : '****-' + last4;
+}
+
 export function phoneText(digits: string): string {
   const d = digits.replace(/\D/g, '').slice(0, 11);
   if (d.length <= 3) return d;
@@ -89,7 +101,7 @@ export interface ResolvedReturn {
 
 function resolvePickup(state: ShopState, now: number, draft: OrderDraftInput): ResolvedPickup {
   const p = draft.pickup;
-  const placeKey = p.mode === 'vehicle' && knownPlace(state.registry, p.placeKey) ? p.placeKey : undefined;
+  const placeKey = p.mode === 'vehicle' && usablePlace(state.registry, p.placeKey) ? p.placeKey : undefined;
   const placed = p.mode === 'store' || placeKey !== undefined;
   if (draft.channel === 'phone') {
     const date = dateOf(state, p.day ?? RESERVE_DEFAULT.day);
@@ -119,7 +131,7 @@ function slotBlock(at: number, now: number, pickupAt: number): { enabled: boolea
 
 /** 반납 시각의 처음 값: 고른 권종의 사용 창 끝(권종이 여럿이면 가장 늦은 것), 권이 없으면 설정의 기본 반납 타임. */
 function defaultSlot(state: ShopState, quote: Quote): FxReturnSlot | undefined {
-  const slots = state.settings.returnSlots;
+  const slots = activeSlots(state.settings);
   const keys = new Set(quote.lines.flatMap((l) => (l.product.returnSlotKey ? [l.product.returnSlotKey] : [])));
   const fromTickets = slots.filter((s) => keys.has(s.key)).sort((a, b) => b.hour * 60 + b.minute - (a.hour * 60 + a.minute))[0];
   return fromTickets ?? slots.find((s) => s.key === state.settings.defaultReturnSlotKey) ?? slots[0];
@@ -130,7 +142,8 @@ export function resolveSchedule(state: ShopState, now: number, draft: OrderDraft
   // 반납 타임의 처음 값은 권종에서(날과 상관없음), 값은 일정이 정해진 뒤 대여 날 수로 다시 센다.
   const oneDay = quoteOf(state.registry, draft.items, state.settings);
   const pickup = resolvePickup(state, now, draft);
-  const slots = state.settings.returnSlots;
+  // 새 접수는 숨긴 반납 타임 · 장소 · 사용 종료한 차량을 고를 수 없다(plan E12).
+  const slots = activeSlots(state.settings);
   const open = (date: string, slot: FxReturnSlot) => slotBlock(slotAt(date, slot), now, pickup.at).enabled;
   let date: string;
   let slot: FxReturnSlot | undefined;
@@ -157,8 +170,8 @@ export function resolveSchedule(state: ShopState, now: number, draft: OrderDraft
   const gb = draft.giveBack;
   const followed: PlacePick = pickup.mode === 'vehicle' && pickup.placeKey ? { mode: 'vehicle', placeKey: pickup.placeKey } : { mode: 'store' };
   const place: PlacePick = draft.returnSet?.place ? (gb.mode === 'vehicle' ? { mode: 'vehicle', placeKey: gb.placeKey ?? '' } : { mode: 'store' }) : followed;
-  const placeKey = place.mode === 'vehicle' && knownPlace(state.registry, place.placeKey) ? place.placeKey : undefined;
-  const vehicles = state.registry.vehicles;
+  const placeKey = place.mode === 'vehicle' && usablePlace(state.registry, place.placeKey) ? place.placeKey : undefined;
+  const vehicles = activeVehicles(state.registry);
   const vehicleId = gb.vehicleId && vehicles.some((v) => v.id === gb.vehicleId) ? gb.vehicleId : vehicles[0]?.id ?? '';
   const giveBack: ResolvedReturn = {
     date, ...(slot ? { slot, at: slotAt(date, slot) } : {}), available, mode: place.mode, ...(placeKey ? { placeKey } : {}), vehicleId,
@@ -303,7 +316,15 @@ export function orderDraft(ctx: ViewContext, params: OrderDraftParams): OrderDra
   const now = ctx.now;
   const draft = params.draft;
   const today = state.businessDate;
-  const { pickup, giveBack, quote } = resolveSchedule(state, now, draft);
+  const resolved = resolveSchedule(state, now, draft);
+  const { pickup, giveBack } = resolved;
+  // 품목 추가(features-1 §5-5): 그 접수의 대여 날 수로 값을 센다(일정 · 대표자는 그 접수의 것).
+  const addOrder = params.addTo !== undefined ? findOrder(state, params.addTo) : undefined;
+  if (params.addTo !== undefined && !addOrder) throw new DomainError('NOT_FOUND', '없는 접수: ' + params.addTo);
+  const cutoff = shopCutoff(state.settings);
+  const quote = addOrder
+    ? quoteOf(state.registry, draft.items, state.settings, dayCount(businessDateOf(addOrder.pickup.at, cutoff), businessDateOf(addOrder.giveBack.at, cutoff)))
+    : resolved.quote;
   const items = cleanItems(state.registry, draft.items);
   const openKind = kindOf(state.registry, params.openKindKey);
 
@@ -339,7 +360,7 @@ export function orderDraft(ctx: ViewContext, params: OrderDraftParams): OrderDra
     { key: K.tomorrow, label: '내일', selected: giveBack.date === tomorrow, enabled: !beforePickup(tomorrow) },
     { key: K.other, label: '다른 날', opens: true, selected: otherDay, enabled: true, ...(otherDay ? { secondLine: dayOfDate(state, giveBack.date) } : {}) },
   ];
-  const returnSlots: ChoiceOption[] = state.settings.returnSlots.map((s) => {
+  const returnSlots: ChoiceOption[] = activeSlots(state.settings).map((s) => {
     const block = slotBlock(slotAt(giveBack.date, s), now, pickup.at);
     return {
       key: s.key, label: s.label + ' ' + slotTime(s), short: slotTime(s), selected: giveBack.slot?.key === s.key && block.enabled, enabled: block.enabled,
@@ -350,7 +371,7 @@ export function orderDraft(ctx: ViewContext, params: OrderDraftParams): OrderDra
     const d = addDays(today, n);
     return { key: d, label: dayOfDate(state, d), selected: d === giveBack.date, enabled: !beforePickup(d) };
   });
-  const areas: PlaceArea[] = state.registry.areas.map((a) => ({ key: a.id, label: a.label, lodging: a.lodging, places: a.places.map((p) => ({ key: p.id, label: p.label })) }));
+  const areas: PlaceArea[] = activeAreas(state.registry).map((a) => ({ key: a.id, label: a.label, lodging: a.lodging, places: a.places.map((p) => ({ key: p.id, label: p.label })) }));
 
   // 작은 창: 전화 예약(수령일 · 수령 시각 · 수령 장소), 차량 배달(배달 시각 · 배달 장소). 아직 그 수령 방법이 아니면 창은 처음 값(예약
   // 내일 09:00 매장 직접, 배달 즉시)을 골라 둔 모양으로만 보인다: 창을 열고 닫기만 하면 초안은 그대로다(화면은 누른 것만 초안에 넣는다).
@@ -406,10 +427,11 @@ export function orderDraft(ctx: ViewContext, params: OrderDraftParams): OrderDra
     ...(quote.lift > 0 ? [{ key: 'lift', title: '리프트권 ' + won(quote.lift), note: liftNote.join(' · '), items: liftNote }] : []),
   ];
 
-  const itemsReady = name !== '' && items.length > 0;
-  // 품목을 골랐는데 이름이 없으면 까닭 한 줄(연락처 · 인원은 적지 않아도 된다).
-  const nameMissing = name === '' && items.length > 0;
-  const footer = ['새 접수', ...(name ? [name + ' 팀'] : []), ...(party > 0 ? [party + '명'] : [])].join(' · ');
+  const itemsReady = addOrder ? items.length > 0 && !isCancelledOrder(addOrder) : name !== '' && items.length > 0;
+  // 품목을 골랐는데 이름이 없으면 까닭 한 줄(연락처 · 인원은 적지 않아도 된다). 품목 추가는 그 접수의 대표자.
+  const nameMissing = !addOrder && name === '' && items.length > 0;
+  const addTitle = addOrder ? CANCEL_WORDS.addItems + ' · ' + addOrder.teamName + ' 팀' : undefined;
+  const footer = addTitle ?? ['새 접수', ...(name ? [name + ' 팀'] : []), ...(party > 0 ? [party + '명'] : [])].join(' · ');
   return {
     basis: { epoch: state.epoch, rev: state.rev },
     serverTime: iso(now),
@@ -426,10 +448,12 @@ export function orderDraft(ctx: ViewContext, params: OrderDraftParams): OrderDra
     },
     summary,
     ready: {
-      items: itemsReady, schedule: itemsReady && pickup.complete && giveBack.complete,
+      // 품목 추가는 ② 일정이 없다(그 접수의 일정): 품목이 있으면 바로 ③ 결제.
+      items: itemsReady, schedule: addOrder ? itemsReady : itemsReady && pickup.complete && giveBack.complete,
       ...(nameMissing ? { itemsReason: NAME_NEEDED, missing: 'name' as const } : {}),
     },
     footer,
     quoteHash: quote.hash,
+    ...(addOrder && addTitle ? { add: { orderId: addOrder.id, title: addTitle } } : {}),
   };
 }

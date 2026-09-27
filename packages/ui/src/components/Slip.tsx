@@ -3,7 +3,7 @@
 // 오른쪽 판(남은 일 + 주 버튼 + 옆 동작)은 화면 틀이 옆에 붙인다. 같은 설정으로 인쇄(receipt_slip)한다.
 // 품목 표의 칸 값은 읽기 모델(SlipLine.cells)이 설정의 칸마다 채운 것만 그린다: 칸을 더해도 여기서 뜻을 짐작하지 않는다.
 // 칸이 한 줄에 들어가지 않으면 장부와 같은 규칙(4-2)으로 두 줄 줄(88px) 또는 '화면을 크게 해 주세요'.
-import type { LedgerRow as LedgerRowModel, OrderSlip, ResolvedLedgerView, SlipLine, StampCell, StampStepRow } from '@skinote/contract';
+import type { LedgerRow as LedgerRowModel, OrderSlip, ResolvedLedgerView, SlipAdjustment, SlipLine, StampCell, StampStepRow } from '@skinote/contract';
 import { columnSpecs, fitColumns, rowsPerPage, type TextPart } from '@skinote/layout';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { isLate, useDeviceProfile, useUi } from '../context.tsx';
@@ -32,8 +32,9 @@ export interface SlipProps {
 }
 
 /** 접수증 품목 줄을 장부 줄 모양으로(같은 LedgerRow로 그린다). 칸 값은 읽기 모델 그대로다. */
-function lineRow(line: SlipLine): LedgerRowModel {
-  return { id: line.id, rank: '', finished: false, cells: line.cells };
+function lineRow(line: SlipLine, cancelled = false): LedgerRowModel {
+  // 모두 취소한 접수의 줄은 장부의 취소 줄처럼 옅은 먹(finished 모양).
+  return { id: line.id, rank: '', finished: cancelled, cells: line.cells };
 }
 
 /**
@@ -56,6 +57,35 @@ export function paymentParts(payments: readonly { amount: number; methodLabel: s
   return [{ text: list.map((g) => t('methodAmount', { method: name(g), amount: formatWon(g.amount) })).join(' · '), drop: 5 }];
 }
 
+/**
+ * 출처 줄 하나(할인 `장비 10% 할인 · −22,500원`, 해제 · 환불은 옅은 먹): 글은 금액 칸 앞의 칸들을 합친 자리, 금액은 금액 칸 자리(청구에 드는 줄만),
+ * 도장 칸 자리는 비운다. 두 줄 줄(stacked)이면 한 칸에 글과 금액.
+ */
+function AdjustmentRow({ adj, columnCount, moneyIndex, stacked }: { adj: SlipAdjustment; columnCount: number; moneyIndex: number; stacked: boolean }) {
+  const amount = adj.amount !== undefined ? formatWon(adj.amount) : null;
+  const className = 'sn-row sn-slip-adjust' + (stacked ? ' is-stacked' : '') + (adj.tone === 'muted' ? ' is-muted' : '');
+  if (moneyIndex < 0) {
+    return (
+      <tr className={className}>
+        <td colSpan={columnCount}>
+          <span className="sn-slip-adjust-line">
+            <TextFit input={{ mode: 'parts', parts: adj.parts }} />
+            {amount ? <span className="sn-slip-adjust-amount">{amount}</span> : null}
+          </span>
+        </td>
+      </tr>
+    );
+  }
+  const after = columnCount - moneyIndex - 1;
+  return (
+    <tr className={className}>
+      {moneyIndex > 0 ? <td colSpan={moneyIndex}><TextFit input={{ mode: 'parts', parts: adj.parts }} /></td> : null}
+      <td className="align-end">{amount ? <span className="sn-slip-adjust-amount">{amount}</span> : null}</td>
+      {after > 0 ? <td colSpan={after} /> : null}
+    </tr>
+  );
+}
+
 export function Slip({ slip, view, steps, nowMs, itemsPage, onItemsPaging, onStampPress, tableSize, onZoomReset }: SlipProps) {
   const profile = useDeviceProfile();
   const { timezone } = useUi();
@@ -70,11 +100,17 @@ export function Slip({ slip, view, steps, nowMs, itemsPage, onItemsPaging, onSta
   );
   // 쪽 나누기는 장부와 같은 계산(layout의 rowsPerPage): 표 머리를 뺀 잰 높이 ÷ 줄 높이(두 줄 줄이면 88px).
   const rowPx = layout.mode === 'stacked' ? profile.stackedRowPx : profile.rowPx;
-  const perPage = box ? Math.max(1, rowsPerPage(box.height - profile.tableHeadPx, rowPx)) : Math.max(1, slip.lines.length);
-  const pageCount = layout.mode === 'too_narrow' ? 1 : Math.max(1, Math.ceil(slip.lines.length / perPage));
+  // 품목 줄 뒤에 출처 줄(할인 · 환불, features-1 §6-2)이 같은 줄 높이로 이어지고 함께 쪽을 넘긴다.
+  const rows: ({ kind: 'line'; line: SlipLine } | { kind: 'adjust'; adj: SlipAdjustment })[] = [
+    ...slip.lines.map((line) => ({ kind: 'line' as const, line })), ...(slip.adjustments ?? []).map((adj) => ({ kind: 'adjust' as const, adj })),
+  ];
+  const perPage = box ? Math.max(1, rowsPerPage(box.height - profile.tableHeadPx, rowPx)) : Math.max(1, rows.length);
+  const pageCount = layout.mode === 'too_narrow' ? 1 : Math.max(1, Math.ceil(rows.length / perPage));
   const page = Math.min(Math.max(0, itemsPage), pageCount - 1);
   useEffect(() => { onItemsPaging?.(pageCount); }, [pageCount, onItemsPaging]);
-  const lines = slip.lines.slice(page * perPage, page * perPage + perPage);
+  const shownRows = rows.slice(page * perPage, page * perPage + perPage);
+  // 출처 줄의 금액 칸: 설정의 금액(money) 칸 자리(없으면 줄 끝).
+  const moneyIndex = layout.mode === 'fit' ? layout.columns.findIndex((c) => columns.get(c.key)?.renderer_key === 'money') : -1;
   const byId = useMemo(() => new Map(slip.lines.map((l) => [l.id, l] as const)), [slip.lines]);
 
   // 칸 한 줄: 넓이가 모자라면 drop이 큰 칸부터 뺀다(대표자 · 연락처는 빠지지 않음).
@@ -135,7 +171,11 @@ export function Slip({ slip, view, steps, nowMs, itemsPage, onItemsPaging, onSta
   const others = money.paidForOthers;
   const moneyParts: TextPart[] = [
     { text: t('charged', { amount: formatWon(money.charged) }), drop: 4 },
+    // 지금 할인(청구에 이미 들어 있다): 할인 출처 줄이 품목 표의 다음 쪽에 있어도 첫 쪽에서 청구가 설명된다.
+    ...(money.discount ? [{ text: t('discountPart', { amount: formatWon(-money.discount) }), drop: 4 }] : []),
     { text: t('paid', { amount: formatWon(money.paid) }), drop: 2 },
+    // 돌려준 돈: `수납 0원 · 환불 145,000원`(수단 조각은 돌려준 몫을 뺀 것).
+    ...(money.refunded ? [{ text: t('refundedPart', { amount: formatWon(money.refunded) }), drop: 2 }] : []),
     // 다른 팀 몫까지 낸 팀: `대납 395,000원 · 카드 485,000원`(한 번에 낸 실제 금액). 아니면 오늘 받은 돈은 수단만, 다른 날 받은 돈(선입금)은
     // 날짜를 붙인다('계좌이체 12/24').
     ...(others
@@ -162,6 +202,7 @@ export function Slip({ slip, view, steps, nowMs, itemsPage, onItemsPaging, onSta
     <article className="sn-slip">
       <header className="sn-slip-head">
         <h1 className="sn-slip-title">{t('slipTitle')}</h1>
+        {slip.cancelled ? <span className="sn-slip-status">{slip.cancelled.label}</span> : null}
         <span className="sn-slip-no">{t('receiptNo', { no: slip.receiptNo })}</span>
       </header>
       <dl ref={fieldsRef} className="sn-slip-fields">
@@ -199,24 +240,26 @@ export function Slip({ slip, view, steps, nowMs, itemsPage, onItemsPaging, onSta
               )}
             </thead>
             <tbody>
-              {lines.map((line) => (
+              {shownRows.map((r) => (r.kind === 'line' ? (
                 <LedgerRow
-                  key={line.id}
-                  row={lineRow(line)}
+                  key={r.line.id}
+                  row={lineRow(r.line, slip.cancelled !== undefined)}
                   layout={layout}
                   columns={columns}
                   steps={steps}
                   nowMs={nowMs}
-                  {...(line.parentLineId ? { extraClass: 'is-component' } : line.isBundle ? { extraClass: 'is-bundle' } : {})}
+                  {...(r.line.parentLineId ? { extraClass: 'is-component' } : r.line.isBundle ? { extraClass: 'is-bundle' } : {})}
                   {...(onStampPress ? { onStampPress: (row: LedgerRowModel, key: string, cell: StampCell) => { const l = byId.get(row.id); if (l) onStampPress(l, key, cell); } } : {})}
                 />
-              ))}
+              ) : (
+                <AdjustmentRow key={r.adj.key} adj={r.adj} columnCount={layout.mode === 'fit' ? layout.columns.length : 1} moneyIndex={moneyIndex} stacked={layout.mode === 'stacked'} />
+              )))}
             </tbody>
           </table>
         )}
       </div>
-      <div className="sn-slip-promise">
-        <TextFit input={{ mode: 'parts', parts: promiseParts }} {...(promiseLate ? { className: 'tone-late' } : {})} />
+      <div className={'sn-slip-promise' + (slip.cancelled ? ' is-cancelled' : '')}>
+        <TextFit input={{ mode: 'parts', parts: promiseParts }} {...(promiseLate && !slip.cancelled ? { className: 'tone-late' } : {})} />
       </div>
       <div className="sn-slip-money">
         <TextFit className="sn-slip-money-text" input={{ mode: 'parts', parts: moneyParts }} />

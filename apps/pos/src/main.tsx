@@ -39,8 +39,11 @@ function startDemo() {
   void import('./fixture/fixture-client.ts').then(({ FIXTURE_STORAGE_KEY, FixtureClient }) => {
     // 뒷이야기(story): 체험 시계를 앞으로 돌리면 그 사이 다른 직원 · 기사가 한 일이 적힌다(fixture/story.ts).
     const shop = demoShop();
+    // ?viewer=counter: 카운터 역할의 권한으로 그린다(매장 설정의 `권한 없음 · 관리자 확인 필요`, 규칙 검사기의 길).
+    const viewer = new URLSearchParams(window.location.search).get('viewer') === 'counter' ? 'counter' as const : undefined;
     const client = new FixtureClient({
       storage: browserStorage(), listenToOtherTabs: true, story: true, shop, ...(shop === 'numbered' ? { storageKey: FIXTURE_STORAGE_KEY + '.numbered' } : {}),
+      ...(viewer ? { viewer } : {}),
     });
     // 체험 시계는 페이지가 닫혀 있는 동안 멈춘다: 떠날 때 지금 시각을 남긴다.
     window.addEventListener('pagehide', () => client.persist());

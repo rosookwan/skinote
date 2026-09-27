@@ -66,6 +66,13 @@ export const API_V2 = /* @__PURE__ */ Object.freeze({
   query: 'api/v2/query',
   command: 'api/v2/command',
   stream: 'api/v2/stream',
+  /**
+   * 비밀번호 재발급(POST, 관리자 세션 · 카운터 기기, plan E15): 본문 { staffId, ownPin } — 요청한 사람의 비밀번호를 먼저 맞춰 본 뒤 새 비밀번호를
+   * 만들어 한 번만 돌려준다(StaffPinResult, cache-control no-store, 기록에 적지 않음).
+   */
+  staffPin: 'api/v2/staff/pin',
+  /** 기기 막기(POST, device.manage): 본문 { deviceId } → 204. 그 기기의 세션 · 알림 연결이 끝난다. */
+  deviceBlock: 'api/v2/devices/block',
 });
 
 /** 기기 공개 열쇠(WebCrypto exportKey('jwk')의 P-256 공개 열쇠). 비밀 열쇠(d)는 기기 밖으로 나오지 않는다. */
@@ -166,6 +173,24 @@ export interface LoginRequest {
   pin: string;
 }
 
+/** 비밀번호 재발급 본문(요청한 관리자의 비밀번호 ownPin을 먼저 본다). */
+export interface StaffPinRequest {
+  staffId: string;
+  ownPin: string;
+}
+
+/** 새 비밀번호(한 번만 보인다: 화면은 창을 닫으면 지운다). */
+export interface StaffPinResult {
+  staffId: string;
+  name: string;
+  pin: string;
+}
+
+/** 기기 막기 본문. */
+export interface DeviceBlockRequest {
+  deviceId: string;
+}
+
 /** 로그인한 세션(쿠키는 HttpOnly라 화면이 읽지 못한다: 이것으로 누가 · 어느 기기인지 안다). */
 export interface SessionInfo {
   shop: { name: string };
@@ -215,6 +240,7 @@ export type ApiErrorCode =
   | 'BAD_TICKET' // 로그인 표가 없거나 지났다(401)
   | 'UNKNOWN_STAFF' // 없는 직원(400)
   | 'BAD_PIN' // 비밀번호 불일치(401)
+  | 'PIN_MISMATCH' // 비밀번호 재발급: 요청한 사람의 비밀번호 불일치(403)
   | 'LOCKED' // 이 기기에서 이 사람의 로그인 잠김(423, lockedUntil)
   | 'SHOP_UNAVAILABLE' // 매장 파일을 쓸 수 없다(503)
   | 'TOO_MANY_STREAMS' // 알림 연결이 많다(429)

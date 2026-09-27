@@ -8,7 +8,15 @@ import {
   addTicketSheet, checkoutSheet, closingSheet, fieldPaySheet, groupPaySheet, orderDraft, partialPaySheet, promiseSheet, returnSheet, shopRules,
   taskSheet,
 } from './sheets.ts';
-import { collectionList, confirmDraft, dayLedger, deliveryList, findLast4, orderSlip, reviewList, type ViewContext } from './views.ts';
+import {
+  collectionList, confirmDraft, dayLedger, deliveryList, findLast4, orderSlip, phoneReveal, type StaffDevice, type ViewContext, type Viewer,
+} from './views.ts';
+import { refundSheet, reviewList } from './reviews.ts';
+import { shopSettings } from './settings-view.ts';
+import { discountSheet } from './discounts.ts';
+import { addCheckoutSheet, cancelSheet } from './order-edit.ts';
+import { exchangeSheet } from './exchange.ts';
+import { spareSheet, ticketBoard, ticketLossSheet } from './tickets.ts';
 
 /** 읽기 문맥: 화면 설정, 지금 시각, 기사 기기의 보냄 대기 겹치기(점선 도장), 거절 · 알림 문구. */
 export interface ReadContext {
@@ -16,6 +24,10 @@ export interface ReadContext {
   now: number;
   pendingTasks?: ReadonlySet<string>;
   lines?: DomainLines;
+  /** 보는 사람(서버: 세션의 역할 권한). 없으면 모두 허락(메모리 어댑터). */
+  viewer?: Viewer;
+  /** 직원이 쓴 기기(서버, 매장 설정 `차량 · 직원`). */
+  staffDevices?: Readonly<Record<string, readonly StaffDevice[]>>;
 }
 
 const viewContext = (state: ShopState, ctx: ReadContext): ViewContext => ({ ...ctx, state });
@@ -52,7 +64,11 @@ export function runQuery<Q extends QueryName>(state: ShopState, name: Q, params:
     case 'returnSheet': return answer(returnSheet(view, params as QueryParams['returnSheet']));
     case 'promiseSheet': return answer(promiseSheet(view, params as QueryParams['promiseSheet']));
     case 'orderDraft': return answer(orderDraft(view, params as QueryParams['orderDraft']));
-    case 'checkoutSheet': return answer(checkoutSheet(view, params as QueryParams['checkoutSheet']));
+    case 'checkoutSheet': {
+      const p = params as QueryParams['checkoutSheet'];
+      // 품목 추가의 확정 창(features-1 §5-5): 이 접수에 더한다.
+      return answer(p.addTo ? addCheckoutSheet(view, p) : checkoutSheet(view, p));
+    }
     case 'groupPaySheet': return answer(groupPaySheet(view, params as QueryParams['groupPaySheet']));
     case 'partialPaySheet': return answer(partialPaySheet(view, params as QueryParams['partialPaySheet']));
     case 'closingSheet': return answer(closingSheet(view, params as QueryParams['closingSheet']));
@@ -60,6 +76,15 @@ export function runQuery<Q extends QueryName>(state: ShopState, name: Q, params:
     case 'fieldPaySheet': return answer(fieldPaySheet(view, params as QueryParams['fieldPaySheet']));
     case 'addTicketSheet': return answer(addTicketSheet(view, params as QueryParams['addTicketSheet']));
     case 'shopRules': return answer(shopRules(view, params as QueryParams['shopRules']));
+    case 'shopSettings': return answer(shopSettings(view, params as QueryParams['shopSettings']));
+    case 'discountSheet': return answer(discountSheet(view, params as QueryParams['discountSheet']));
+    case 'cancelSheet': return answer(cancelSheet(view, params as QueryParams['cancelSheet']));
+    case 'exchangeSheet': return answer(exchangeSheet(view, params as QueryParams['exchangeSheet']));
+    case 'ticketBoard': return answer(ticketBoard(view, params as QueryParams['ticketBoard']));
+    case 'ticketLossSheet': return answer(ticketLossSheet(view, params as QueryParams['ticketLossSheet']));
+    case 'spareSheet': return answer(spareSheet(view, params as QueryParams['spareSheet']));
+    case 'phoneReveal': return answer(phoneReveal(view, (params as QueryParams['phoneReveal']).orderId));
+    case 'refundSheet': return answer(refundSheet(view, params as QueryParams['refundSheet']));
     default: throw new DomainError('UNKNOWN_VIEW', '없는 조회: ' + String(name));
   }
 }

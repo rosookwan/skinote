@@ -7,20 +7,26 @@ import {
 import { backNumbers, issueNumbers, loadNumbers, numbered, plannedLeft, quantityOf, type NumberPick } from './assets.ts';
 import { payMethodOf } from './catalog.ts';
 import { createOrder } from './checkout.ts';
+import { applyDiscount, refundPayments, type DiscountViewer } from './discounts.ts';
 import { closeDay, confirmTransfer, transferCash } from './closing.ts';
 import { takeGroupPayment } from './group-pay.ts';
 import { returnDeposit, takeDeposit } from './deposits.ts';
 import { addTicket, fieldCollect, fieldDepositReturn, findDeliverTask, onVanToDeliver, setPaymentPromise } from './driver.ts';
+import { addItems, cancelOrder } from './order-edit.ts';
+import { exchangeSwap } from './exchange.ts';
+import { foundTickets, lostNow, moveSpares, writeOffTickets } from './tickets.ts';
+import { cancelledTaskReview, collectReviews, resolveReview } from './reviews.ts';
 import type { DomainLines, FxLine, FxMethodKey, FxOrder, ShopState } from './model.ts';
 import { PRODUCTION_LINES } from './lines.ts';
 import { changePromise } from './promise-sheet.ts';
 import { applySettings } from './shop-rules.ts';
+import { applyRegistryUpdate, applyStaffSet } from './settings.ts';
 import { attributeReturn, bucketOnVan, bucketOut, findTask, splitRow, taskBucket, taskOrder, type FxTask } from './promises.ts';
 import { done, nothing, rejected, unsupported, type Result } from './result.ts';
 import { floorMinute } from './time.ts';
 import {
-  backCount, collectDone, fillLines, findOrder, isDeliverTaskId, openPins, orderIdOfTask, ownDue, pendingIssue, pinTaskId, routeTasks,
-  isVisitOutcome, selfDue, selfLines, slotKey, sortTasks,
+  backCount, collectDone, fillLines, findOrder, isDeliverTaskId, leftover, liveQty, openPins, orderIdOfTask, ownDue, pendingIssue, pinTaskId, routeTasks,
+  isVisitOutcome, selfDue, selfLines, slotKey, sortTasks, vanLoaded,
 } from './rules.ts';
 
 const KEEP_OUTCOMES = 300;
@@ -73,7 +79,7 @@ function run(state: ShopState, envelope: AnyCommandEnvelope, now: number, lines:
       const p = envelope.payload;
       const o = findOrder(state, p.orderId);
       if (!o) return rejected('접수 없음');
-      const plan = planStock(o, p.lines, (l) => l.qty - l.issued, (l, qty, requested, taken) => issueNumbers(state, l, qty, requested, taken));
+      const plan = planStock(o, p.lines, (l) => Math.max(0, liveQty(l) - l.issued), (l, qty, requested, taken) => issueNumbers(state, l, qty, requested, taken));
       if ('error' in plan) return rejected(plan.error);
       if (plan.length === 0) return nothing('지급 완료');
       // 차량 배달 접수를 카운터에서 지급해도 적재 수는 그대로다: '실을 것 없음'은 모든 곳이 max(loaded, issued)로 센다(plan §3-3 1).
@@ -90,8 +96,10 @@ function run(state: ShopState, envelope: AnyCommandEnvelope, now: number, lines:
       const task = findDeliverTask(state, p.taskId);
       if (!task) return rejected('업무 없음');
       const o = task.order;
-      if (!o.lines.some((l) => onVanToDeliver(l) > 0)) return pendingIssue(o) ? rejected('배달 불가 · 적재 대기') : nothing('배달 완료');
-      const plan = planStock(o, p.lines, onVanToDeliver, (l, qty, requested, taken) => issueNumbers(state, l, qty, requested, taken));
+      // 보냄 대기로 온 배달(기기에서 이미 건넨 사실, sync 8-12 · features-1 E23): 그사이 취소했어도 차에 실린 것까지 적는다(돌려받을 것이 된다).
+      const deliverable = envelope.deviceSeq !== undefined ? vanLoaded : onVanToDeliver;
+      if (!o.lines.some((l) => deliverable(l) > 0)) return pendingIssue(o) ? rejected('배달 불가 · 적재 대기') : nothing('배달 완료');
+      const plan = planStock(o, p.lines, deliverable, (l, qty, requested, taken) => issueNumbers(state, l, qty, requested, taken));
       if ('error' in plan) return rejected(plan.error);
       if (plan.length === 0) return nothing('배달 완료');
       for (const { l, qty, ids } of plan) {
@@ -120,9 +128,11 @@ function run(state: ShopState, envelope: AnyCommandEnvelope, now: number, lines:
     case 'stock.load': {
       // 적재: 실은 번호는 그 줄의 준비 번호 맨 앞이 된다(차량이 배달할 때 그 번호를 지급한다).
       const p = envelope.payload;
+      // 카운터가 차량에 싣는 예비권(features-1 E21, 수량 권만).
+      if ('spares' in p) return moveSpares(state, p.vehicleId, p.spares, 'load') ?? done;
       const o = findOrder(state, orderIdOfTask(p.taskId));
       if (!o) return rejected('업무 없음');
-      const plan = planStock(o, p.lines, (l) => l.qty - Math.max(l.loaded, l.issued), (l, qty, requested, taken) => loadNumbers(state, l, qty, requested, taken));
+      const plan = planStock(o, p.lines, (l) => Math.max(0, liveQty(l) - Math.max(l.loaded, l.issued)), (l, qty, requested, taken) => loadNumbers(state, l, qty, requested, taken));
       if ('error' in plan) return rejected(plan.error);
       if (plan.length === 0) return nothing('적재 완료');
       for (const { l, qty, ids } of plan) {
@@ -146,10 +156,25 @@ function run(state: ShopState, envelope: AnyCommandEnvelope, now: number, lines:
       const task = findTask(state, p.taskId);
       if (!task) return rejected('업무 없음');
       const o = task.order;
-      const plan = planStock(o, p.lines, (l) => { const b = l.returnable ? taskBucket(task, l) : undefined; return b ? bucketOut(b) : 0; }, backNumbers);
+      // 보냄 대기로 온 수거(기기에서 이미 받은 사실, features-1 E20): 그사이 분실 처리한 권을 받아 왔으면 그 몫의 분실 처리를 먼저 되돌린다.
+      const queuedFact = envelope.deviceSeq !== undefined;
+      const outOf = (l: FxLine) => { const b = l.returnable ? taskBucket(task, l) : undefined; return b ? bucketOut(b) : 0; };
+      const reversible = (l: FxLine) => { const b = l.returnable ? taskBucket(task, l) : undefined; return b && queuedFact ? Math.min(b.lost, lostNow(l)) : 0; };
+      const plan = planStock(o, p.lines, (l) => outOf(l) + reversible(l), backNumbers);
       if ('error' in plan) return rejected(plan.error);
+      // 보냄 대기로 온 수거가 남은 것보다 많이 받았다고 하면(그사이 매장 반납 · 다른 기록) 확인 필요로 적는다(features-1 E18). 움직임은 남은 것만.
+      if (queuedFact) {
+        const asked = new Map<string, number>();
+        for (const x of p.lines) {
+          const l = o.lines.find((y) => y.id === x.lineId);
+          if (l) asked.set(l.id, (asked.get(l.id) ?? 0) + quantityOf(l, x.quantity, x.assetIds ? [...new Set(x.assetIds)] : undefined));
+        }
+        collectReviews(state, envelope, task, asked, plan, now, options.actor);
+      }
       if (plan.length === 0) return nothing('수거 완료');
       for (const { l, qty, ids } of plan) {
+        const reverse = Math.max(0, qty - outOf(l));
+        if (reverse > 0) l.lost = Math.max(0, (l.lost ?? 0) - reverse);
         l.collected += qty;
         l.collectedAt = now;
         if (ids.length) l.backAssetIds = [...(l.backAssetIds ?? []), ...ids];
@@ -199,11 +224,32 @@ function run(state: ShopState, envelope: AnyCommandEnvelope, now: number, lines:
     case 'stock.receive': {
       // 매장 입고: 차에 있는 것(받은 것 − 내려놓은 것)을 매장으로. 업무(반납 일정)마다 그 몫만. 줄(lines)을 주면 그 줄 · 수만(부분 입고:
       // 내려놓지 않은 것은 차에 남고, 마감의 확인 필요 `헬멧 1개 미입고`가 된다). 입고한 때는 차량마다 남긴다(vanReceipts).
+      // 차량 예비권을 내림(spares, 카운터 `예비권 입고`, features-1 E21): 먼저 확인하고 내린다(매장 입고 기록은 아니다).
       const p = envelope.payload;
+      const spareMove = p.spares?.length ? moveSpares(state, p.vehicleId, p.spares, 'unload') : null;
+      if (spareMove) return spareMove;
       const budget = p.lines ? new Map<string, number>() : null;
       for (const x of p.lines ?? []) budget?.set(x.lineId, (budget.get(x.lineId) ?? 0) + Math.max(0, Math.floor(x.quantity)));
       let moved = false;
+      let unloaded = false;
       for (const taskId of p.taskIds) {
+        // 취소한 배달의 차에 남은 것(features-1 E7): 배달 업무 id면 그 접수의 차에 남은 것을 매장으로(unloaded).
+        if (isDeliverTaskId(taskId)) {
+          const o = findOrder(state, orderIdOfTask(taskId));
+          if (!o || o.pickup.vehicleId !== p.vehicleId) continue;
+          for (const l of o.lines) {
+            let take = leftover(l);
+            if (budget) {
+              const left = budget.get(l.id) ?? 0;
+              take = Math.min(take, left);
+              budget.set(l.id, left - Math.max(0, take));
+            }
+            if (take <= 0) continue;
+            l.unloaded = (l.unloaded ?? 0) + take;
+            unloaded = true;
+          }
+          continue;
+        }
         const task = findTask(state, taskId);
         if (!task || task.promise.vehicleId !== p.vehicleId) continue;
         for (const l of task.order.lines) {
@@ -222,8 +268,9 @@ function run(state: ShopState, envelope: AnyCommandEnvelope, now: number, lines:
           moved = true;
         }
       }
-      if (!moved) return nothing('입고 대상 없음');
-      state.vanReceipts = [...(state.vanReceipts ?? []), { vehicleId: p.vehicleId, at: now }];
+      if (!moved && !unloaded) return p.spares?.length ? done : nothing('입고 대상 없음');
+      // 매장 입고 기록(미입고의 기준)은 수거한 것을 내려놓았을 때만(차에 남은 취소 품목만 내려놓은 것은 입고 기록이 아니다).
+      if (moved) state.vanReceipts = [...(state.vanReceipts ?? []), { vehicleId: p.vehicleId, at: now }];
       return done;
     }
     case 'route.move': {
@@ -311,7 +358,7 @@ function run(state: ShopState, envelope: AnyCommandEnvelope, now: number, lines:
       return returnDeposit(state, envelope, now);
     case 'order.create':
       // 새 접수 확정(V4): 접수 · 품목 줄 · 일정 · 칸별 수납 · 보증금 입금 · 결제 팀이 한 명령(checkout.ts).
-      return createOrder(state, envelope, now, lines, options.orderIds ?? 'sequence');
+      return createOrder(state, envelope, now, lines, options.orderIds ?? 'sequence', options.viewer);
     case 'field.collect':
       // 기사 현장 수납(V7, 차량 지갑 · 오프라인 허용, driver.ts).
       return fieldCollect(state, envelope, now);
@@ -336,6 +383,38 @@ function run(state: ShopState, envelope: AnyCommandEnvelope, now: number, lines:
     case 'setting.set':
       // 운영 규칙 저장(V8, 다음 기록부터, shop-rules.ts).
       return applySettings(state, envelope, now, lines);
+    case 'registry.update':
+      // 매장 목록 바꿈(매장 정보 · 장소 · 반납 타임 · 요금 · 할인 · 차량, 다음 기록부터, settings.ts).
+      return applyRegistryUpdate(state, envelope, lines);
+    case 'staff.set':
+      // 직원 바꿈(더하기 · 역할 · 차량 배정 · 사용 종료, settings.ts). 본인 막힘은 명령을 한 사람(options.actor)으로.
+      return applyStaffSet(state, envelope, lines, options.actor);
+    case 'discount.apply':
+      // 할인 적용 · 변경 · 해제(접수증 옆 동작, discounts.ts). 권한 · 한도는 명령을 한 사람(options.viewer)으로.
+      return applyDiscount(state, envelope, now, lines, options.viewer);
+    case 'payment.refund':
+      // 환불(할인 변경 · 접수 취소 · 초과 수납의 까닭, discounts.ts).
+      // 받은 수단과 다른 수단의 환불은 명령을 한 사람의 cash.entry로(options.viewer).
+      return refundPayments(state, envelope, now, lines, options.viewer);
+    case 'order.cancel':
+      // 접수 취소 · 품목 취소(접수증 옆 동작, order-edit.ts).
+      return cancelOrder(state, envelope, now, lines, options.viewer);
+    case 'order.add':
+      // 품목 추가(접수증 옆 동작, order-edit.ts).
+      // 품목 추가: 칸의 할인을 새 줄에 이어받을 때 그 할인의 권한 · 한도를 명령을 한 사람(options.viewer)으로 다시 본다.
+      return addItems(state, envelope, now, lines, options.viewer);
+    case 'exchange.swap':
+      // 즉시 교환(접수증 옆 동작, exchange.ts). 누가는 명령을 한 사람(options.actor).
+      return exchangeSwap(state, envelope, now, lines, options.actor);
+    case 'stock.write_off':
+      // 분실 처리(리프트권 화면 · 접수증 옆 동작, tickets.ts): 청구 없이 닫는다.
+      return writeOffTickets(state, envelope, now);
+    case 'asset.found':
+      // 분실 회수(리프트권 화면 분실 탭, tickets.ts).
+      return foundTickets(state, envelope, now);
+    case 'review.resolve':
+      // 확인 필요의 `확인`(확인 필요 화면, reviews.ts). 누가는 명령을 한 사람(options.actor).
+      return resolveReview(state, envelope, now, options.actor);
     default:
       return unsupported(lines);
   }
@@ -362,6 +441,16 @@ function unmetDependency(state: ShopState, dependsOn: readonly string[] | undefi
  */
 export interface ApplyOptions {
   orderIds?: 'sequence' | 'dated';
+  /**
+   * 명령을 한 사람(서버는 세션의 직원, 봉투에서 오지 않는다). 직원 바꿈의 `사용 종료 불가 · 본인`이 staffId를, 즉시 교환의 기록(누가)이 name을 본다.
+   * 없으면(메모리 어댑터) 보지 않는다.
+   */
+  actor?: { staffId?: string; name?: string; deviceId?: string };
+  /**
+   * 명령을 한 사람의 권한 · 한도(서버: 세션의 역할, 메모리 어댑터: 보는 사람). 할인의 권한(직접 입력 · 매장 할인의 권한)과 직접 입력 한도를 본다
+   * (features-1 E10). 없으면 모두 허락.
+   */
+  viewer?: DiscountViewer;
 }
 
 /**
@@ -382,10 +471,14 @@ export function applyCommand(state: ShopState, envelope: AnyCommandEnvelope, now
   }
   // 이어진 명령(sync 2절 4): 먼저 적용되어야 할 명령(dependsOn)이 적용되지 않았으면(받지 못함 · 거절 · 충돌 · 멈춤) 돈이 아닌
   // 명령은 멈춘다(blocked). 돈 명령은 멈추지 않는다(받은 돈은 사실이고, 바탕 expect가 지킨다, 8-3). 이미 된 일(superseded)은 된 것으로 본다.
+  const reviewsBefore = state.reviews?.length ?? 0;
   const result: Result = !MONEY_COMMANDS.has(envelope.type) && unmetDependency(state, envelope.dependsOn)
     ? { outcome: 'blocked', error: { code: 'DEPENDENCY_NOT_APPLIED', message: '처리 불가 · 이전 단계 대기' } }
     : run(state, envelope, now, lines, options);
-  if (result.outcome === 'applied') state.rev += 1;
+  // 취소한 접수에 온 보냄 대기 기사 기록(features-1 E23): 사실은 적고 확인 필요 `취소된 업무`를 남긴다.
+  if (result.outcome === 'applied') cancelledTaskReview(state, envelope, now, options.actor);
+  // 적은 것이 확인 필요뿐이어도(이미 매장에 반납된 보냄 대기 수거: 결과는 `처리 완료`) 상태가 바뀌었으므로 rev가 오른다.
+  if (result.outcome === 'applied' || (state.reviews?.length ?? 0) > reviewsBefore) state.rev += 1;
   const outcome: CommandOutcome = {
     ...base,
     outcome: result.outcome,

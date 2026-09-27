@@ -20,8 +20,9 @@
 import {
   API_V2, CSRF_HEADER, DomainError, isDriverDevice,
   type AnyCommandEnvelope, type CommandOutcome, type ConnectionState, type DomainClient, type HeadInfo, type LedgerViewResult, type PendingCommand,
-  type QueryName, type QueryParams, type QueryResult, type SessionInfo, type SyncHead, type UiConfig, type ViewParams,
+  type QueryName, type QueryParams, type QueryResult, type SessionInfo, type StaffPinResult, type SyncHead, type UiConfig, type ViewParams,
 } from '@skinote/contract';
+import { ServerRefusal } from './server-refusal.ts';
 import { say } from './strings.ts';
 
 /** EventSource에서 쓰는 만큼(시험은 가짜를 넣는다). */
@@ -271,6 +272,40 @@ export class HttpClient implements DomainClient {
       return answer.body as HeadInfo;
     }
     throw this.readFailure(answer);
+  }
+
+  /**
+   * 비밀번호 재발급(매장 설정 `차량 · 직원`, features-1 E15): 요청한 관리자의 비밀번호 ownPin을 먼저 서버가 본다. 새 비밀번호는 답에 한 번만
+   * 온다(화면은 창을 닫으면 버린다). 실패는 코드로(PIN_MISMATCH · LOCKED · FORBIDDEN · NETWORK …) 던진다.
+   */
+  async staffPin(staffId: string, ownPin: string): Promise<StaffPinResult> {
+    const answer = await this.serverOnly(API_V2.staffPin, { staffId, ownPin });
+    const body = answer.body as Partial<StaffPinResult> | undefined;
+    if (answer.status === 200 && body && typeof body.pin === 'string' && typeof body.name === 'string' && typeof body.staffId === 'string') {
+      return { staffId: body.staffId, name: body.name, pin: body.pin };
+    }
+    throw new ServerRefusal(codeOf(answer.body) ?? 'INTERNAL', (answer.body as { lockedUntil?: string } | undefined)?.lockedUntil);
+  }
+
+  /** 기기 막기(device.manage): 204면 끝. 실패는 코드로 던진다. */
+  async blockDevice(deviceId: string): Promise<void> {
+    const answer = await this.serverOnly(API_V2.deviceBlock, { deviceId });
+    if (answer.status === 204) return;
+    throw new ServerRefusal(codeOf(answer.body) ?? 'INTERNAL');
+  }
+
+  /** 명령이 아닌 서버 길 하나(POST, 다시 보내지 않는다: 비밀번호 재발급은 두 번 보내면 두 번 바뀐다). */
+  private async serverOnly(path: string, body: unknown): Promise<Answer> {
+    let answer: Answer;
+    try {
+      answer = await this.send('POST', path, JSON.stringify(body));
+    } catch {
+      this.noteFailure();
+      throw new ServerRefusal('NETWORK');
+    }
+    this.noteSuccess();
+    if (answer.status === 401 || codeOf(answer.body) === 'BAD_CSRF') this.sessionLost(codeOf(answer.body) ?? 'SIGNED_OUT');
+    return answer;
   }
 
   /** 로그아웃: 세션을 끝낸다(연결이 없어도 이 기기에서는 끝낸다). */

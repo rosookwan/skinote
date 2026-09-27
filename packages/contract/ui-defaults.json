@@ -1,5 +1,5 @@
 {
-  "rev": 5,
+  "rev": 7,
   "stamp_steps": [
     { "key": "load", "label": "적재", "short_label": null, "stamp_text": "적재", "checklist_label": "차량 적재", "rule_key": "qty_loaded", "action_key": "stamp.load", "required_permission_key": null, "urgency_out": 10, "urgency_back": 0, "tone_key": "seal", "shows_time": 0, "feature_key": "vehicles", "sort": 10 },
     { "key": "ticket_secure", "label": "발권", "short_label": null, "stamp_text": "발권", "checklist_label": "리프트권 발권", "rule_key": "ticket_secured", "action_key": "stamp.ticket_secure", "required_permission_key": null, "urgency_out": 15, "urgency_back": 0, "tone_key": "seal", "shows_time": 0, "feature_key": "lift_tickets", "sort": 15 },
@@ -65,10 +65,14 @@
       ],
       "actions": [
         { "action_key": "pay", "condition_key": "has_due", "seq": 10, "priority": 90, "overflow_key": "more_sheet", "required_permission_key": null, "feature_key": null, "feature_on": 1 },
-        { "action_key": "change_promise", "condition_key": "always", "seq": 20, "priority": 80, "overflow_key": "more_sheet", "required_permission_key": null, "feature_key": null, "feature_on": 1 },
-        { "action_key": "exchange", "condition_key": "exchangeable", "seq": 30, "priority": 60, "overflow_key": "more_sheet", "required_permission_key": null, "feature_key": "exchange", "feature_on": 1 },
+        { "action_key": "change_promise", "condition_key": "order_open", "seq": 20, "priority": 80, "overflow_key": "more_sheet", "required_permission_key": null, "feature_key": null, "feature_on": 1 },
+        { "action_key": "exchange_swap", "condition_key": "exchangeable", "seq": 30, "priority": 60, "overflow_key": "more_sheet", "required_permission_key": "exchange.manage", "feature_key": "exchange", "feature_on": 1 },
         { "action_key": "extend", "condition_key": "extendable", "seq": 40, "priority": 50, "overflow_key": "more_sheet", "required_permission_key": null, "feature_key": null, "feature_on": 1 },
-        { "action_key": "cancel", "condition_key": "partial_cancel_allowed", "seq": 50, "priority": 40, "overflow_key": "more_sheet", "required_permission_key": null, "feature_key": null, "feature_on": 1 },
+        { "action_key": "add_items", "condition_key": "order_open", "seq": 45, "priority": 75, "overflow_key": "more_sheet", "required_permission_key": "order.add", "feature_key": null, "feature_on": 1 },
+        { "action_key": "cancel", "condition_key": "cancellable", "seq": 50, "priority": 40, "overflow_key": "more_sheet", "required_permission_key": "order.cancel", "feature_key": null, "feature_on": 1 },
+        { "action_key": "remove_items", "condition_key": "partial_cancel_allowed", "seq": 52, "priority": 38, "overflow_key": "more_sheet", "required_permission_key": "order.cancel", "feature_key": null, "feature_on": 1 },
+        { "action_key": "apply_discount", "condition_key": "order_open", "seq": 55, "priority": 55, "overflow_key": "more_sheet", "required_permission_key": "discount.apply", "feature_key": null, "feature_on": 1 },
+        { "action_key": "ticket_loss", "condition_key": "tickets_out", "seq": 57, "priority": 35, "overflow_key": "more_sheet", "required_permission_key": "stock.correct", "feature_key": null, "feature_on": 1 },
         { "action_key": "early_return", "condition_key": "has_items_out", "seq": 60, "priority": 30, "overflow_key": "more_sheet", "required_permission_key": null, "feature_key": null, "feature_on": 1 },
         { "action_key": "print", "condition_key": "always", "seq": 70, "priority": 70, "overflow_key": "more_sheet", "required_permission_key": null, "feature_key": null, "feature_on": 1 },
         { "action_key": "pin", "condition_key": "has_open_tasks", "seq": 75, "priority": 88, "overflow_key": "more_sheet", "required_permission_key": null, "feature_key": "vehicles", "feature_on": 1 },
@@ -169,6 +173,40 @@
         { "action_key": "call", "condition_key": "always", "seq": 60, "priority": 90, "overflow_key": "more_sheet", "required_permission_key": null, "feature_key": null, "feature_on": 1 },
         { "action_key": "route_reset", "condition_key": "always", "seq": 70, "priority": 10, "overflow_key": "more_sheet", "required_permission_key": null, "feature_key": null, "feature_on": 1 }
       ]
+    },
+    {
+      "key": "collection_list", "device_class_key": "print", "label": "{date} 수거 목록", "screen_key": "collection_list", "template_key": "collection_list",
+      "base_view": null, "row_grain_key": "task", "group_by_key": "return_slot", "subgroup_by_key": "place", "sort_key": "manual_route",
+      "now_line_field": null, "reorderable": 0, "pin_urgent": 0, "feature_key": "vehicles", "feature_on": 1, "sort": 33,
+      "columns": [
+        { "column_key": "team", "seq": 10, "header_label": "팀", "short_header_label": null, "renderer_key": "team", "step_keys": null, "stamp_rollup_key": null, "attribute_key": null, "action_key": null, "min_width_em": 7, "preferred_width_em": 9, "weight": 1, "drop_priority": 0, "fold_into_column_key": null, "fold_mode_key": "prefix", "fold_min_share_em": 0, "collapse_group_key": null, "fit_mode_key": "parts", "align_key": "start", "feature_key": null, "feature_on": 1 },
+        { "column_key": "action:call", "seq": 20, "header_label": "전화", "short_header_label": null, "renderer_key": "action", "step_keys": null, "stamp_rollup_key": null, "attribute_key": null, "action_key": "call", "min_width_em": 8.5, "preferred_width_em": 8.5, "weight": 0, "drop_priority": 0, "fold_into_column_key": null, "fold_mode_key": "prefix", "fold_min_share_em": 0, "collapse_group_key": null, "fit_mode_key": "alts", "align_key": "start", "feature_key": null, "feature_on": 1 },
+        { "column_key": "items", "seq": 30, "header_label": "품목", "short_header_label": null, "renderer_key": "items", "step_keys": null, "stamp_rollup_key": null, "attribute_key": null, "action_key": null, "min_width_em": 9.5, "preferred_width_em": 14, "weight": 3, "drop_priority": 0, "fold_into_column_key": null, "fold_mode_key": "prefix", "fold_min_share_em": 0, "collapse_group_key": null, "fit_mode_key": "items", "align_key": "start", "feature_key": null, "feature_on": 1 },
+        { "column_key": "promise", "seq": 40, "header_label": "반납", "short_header_label": null, "renderer_key": "promise", "step_keys": null, "stamp_rollup_key": null, "attribute_key": null, "action_key": null, "min_width_em": 9, "preferred_width_em": 12, "weight": 2, "drop_priority": 0, "fold_into_column_key": null, "fold_mode_key": "prefix", "fold_min_share_em": 0, "collapse_group_key": null, "fit_mode_key": "parts", "align_key": "start", "feature_key": null, "feature_on": 1 },
+        { "column_key": "vehicle", "seq": 50, "header_label": "차량", "short_header_label": null, "renderer_key": "vehicle", "step_keys": null, "stamp_rollup_key": null, "attribute_key": null, "action_key": null, "min_width_em": 5, "preferred_width_em": 5.5, "weight": 0, "drop_priority": 0, "fold_into_column_key": null, "fold_mode_key": "prefix", "fold_min_share_em": 0, "collapse_group_key": null, "fit_mode_key": "parts", "align_key": "start", "feature_key": null, "feature_on": 1 }
+      ],
+      "tabs": [],
+      "metrics": [],
+      "primary_actions": [
+        { "seq": 1, "action_key": "print", "condition_key": "always" }
+      ],
+      "actions": []
+    },
+    {
+      "key": "order_slip", "device_class_key": "print", "label": "대여 접수증", "screen_key": "order_slip", "template_key": "slip",
+      "base_view": null, "row_grain_key": "order_line", "group_by_key": null, "subgroup_by_key": null, "sort_key": null,
+      "now_line_field": null, "reorderable": 0, "pin_urgent": 0, "feature_key": null, "feature_on": 1, "sort": 21,
+      "columns": [
+        { "column_key": "items", "seq": 10, "header_label": "품목", "short_header_label": null, "renderer_key": "items", "step_keys": null, "stamp_rollup_key": null, "attribute_key": null, "action_key": null, "min_width_em": 9.5, "preferred_width_em": 20, "weight": 1, "drop_priority": 0, "fold_into_column_key": null, "fold_mode_key": "prefix", "fold_min_share_em": 0, "collapse_group_key": null, "fit_mode_key": "words", "align_key": "start", "feature_key": null, "feature_on": 1 },
+        { "column_key": "qty", "seq": 20, "header_label": "수량", "short_header_label": null, "renderer_key": "text", "step_keys": null, "stamp_rollup_key": null, "attribute_key": null, "action_key": null, "min_width_em": 4, "preferred_width_em": 5, "weight": 0, "drop_priority": 0, "fold_into_column_key": null, "fold_mode_key": "prefix", "fold_min_share_em": 0, "collapse_group_key": null, "fit_mode_key": "parts", "align_key": "end", "feature_key": null, "feature_on": 1 },
+        { "column_key": "amount", "seq": 30, "header_label": "금액", "short_header_label": null, "renderer_key": "money", "step_keys": null, "stamp_rollup_key": null, "attribute_key": null, "action_key": null, "min_width_em": 7, "preferred_width_em": 8, "weight": 0, "drop_priority": 0, "fold_into_column_key": null, "fold_mode_key": "prefix", "fold_min_share_em": 0, "collapse_group_key": null, "fit_mode_key": "alts", "align_key": "end", "feature_key": null, "feature_on": 1 }
+      ],
+      "tabs": [],
+      "metrics": [],
+      "primary_actions": [
+        { "seq": 1, "action_key": "print", "condition_key": "always" }
+      ],
+      "actions": []
     }
   ],
   "menu_entries": [

@@ -20,9 +20,14 @@ export interface DialogFrameProps {
   primary?: ReactNode;
   requestId?: string;
   className?: string;
+  /**
+   * false면 `닫기`가 없고 Esc로 닫히지 않는다(주 버튼만): 한 번만 보이는 새 비밀번호처럼 잘못 누르면 잃는 창(2026-09-27 점검: `닫기`와 `확인`이 같은
+   * 일을 했다). 없으면 true.
+   */
+  closable?: boolean;
 }
 
-export function DialogFrame({ title, onClose, children, pager, primary, requestId, className }: DialogFrameProps) {
+export function DialogFrame({ title, onClose, children, pager, primary, requestId, className, closable = true }: DialogFrameProps) {
   const { profile, viewport } = useUi();
   const titleId = useId();
   const ref = useRef<HTMLDivElement>(null);
@@ -38,10 +43,10 @@ export function DialogFrame({ title, onClose, children, pager, primary, requestI
   });
   useEffect(() => {
     primaryRef.current?.querySelector('button')?.focus();
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape' && closable) onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, closable]);
   return (
     <div className="sn-overlay">
       <div
@@ -58,10 +63,12 @@ export function DialogFrame({ title, onClose, children, pager, primary, requestI
         </header>
         <div className="sn-dialog-body">{children}</div>
         <footer className="sn-dialog-foot">
-          <button type="button" className="sn-button" onClick={onClose}>
-            <Icon name="left" />
-            <span>{t('close')}</span>
-          </button>
+          {closable ? (
+            <button type="button" className="sn-button" onClick={onClose}>
+              <Icon name="left" />
+              <span>{t('close')}</span>
+            </button>
+          ) : null}
           {pager ? <div className="sn-dialog-pager">{pager}</div> : null}
           <div ref={primaryRef} className="sn-dialog-primary">{primary}</div>
         </footer>

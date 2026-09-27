@@ -10,6 +10,8 @@ import type { FxDiscount, FxKind, FxPayMethod, FxPaySection, FxProduct, FxVarian
 import type { FxArea, FxVehicle, FxVisitOutcome, ShopRegistry } from '../model.ts';
 
 export const SHOP_NAME = '우리 스키샵';
+/** 매장 전화(견본 값: 예시 번호는 010-0000-xxxx만, AGENTS). */
+export const SHOP_PHONE = '01000000000';
 
 /**
  * 견본 매장의 모양: first = 첫 매장(번호 없음 · 보증금 없음, 체험판과 서버의 시험 매장), numbered = 번호 스티커 · 권 번호와 권 보증금을
@@ -87,7 +89,8 @@ export const SAMPLE_PAY_METHODS: readonly FxPayMethod[] = [
   { key: 'cash', label: '현금', quick: true, driver: true },
   { key: 'transfer', label: '계좌이체', quick: true, driver: true },
   { key: 'easy_pay', label: '간편결제', quick: false, driver: false },
-  { key: 'voucher', label: '상품권', quick: false, driver: false },
+  // 상품권은 환불하지 않는다(payment_methods.refundable 0, features-1 E4): 환불 창에 `상품권 10,000원 · 환불 불가`.
+  { key: 'voucher', label: '상품권', quick: false, driver: false, refundable: false },
 ];
 
 /** 결제 칸(payment_sections): 칸 이름과 기본 수단(장비 카드 · 리프트권 현금, spec 2-3). 보증금 칸은 보증금 규칙에서 온다. */
@@ -96,9 +99,14 @@ export const PAY_SECTIONS: readonly FxPaySection[] = [
   { key: 'lift', label: '리프트권', defaultMethod: 'cash' },
 ];
 
-/** 할인(discount_rules): 체험 값은 두 묶음의 10% 하나(impl-v2 plan §8 D39). */
+/**
+ * 할인(discount_rules): 체험 값은 두 묶음의 10%(impl-v2 plan §8 D39)와, 매장 설정 `요금 · 할인` · 확정 창의 고르기가 한 장이 아니게 리프트권 20% ·
+ * 장비 5,000원(features-1 plan §3-2).
+ */
 export const DISCOUNTS: readonly FxDiscount[] = [
-  { key: 'ten_percent', label: '10% 할인', percent: 10, sections: ['gear', 'lift'] },
+  { key: 'ten_percent', label: '10% 할인', kind: 'percent', value: 10, sections: ['gear', 'lift'] },
+  { key: 'lift_twenty', label: '리프트권 20% 할인', kind: 'percent', value: 20, sections: ['lift'] },
+  { key: 'gear_5000', label: '장비 5,000원 할인', kind: 'amount', value: 5_000, sections: ['gear'] },
 ];
 
 export const AREAS: readonly FxArea[] = [
@@ -117,7 +125,7 @@ export const AREAS: readonly FxArea[] = [
   },
 ];
 
-/** 차량(첫 매장 2대). 붐비는 날 개인 차까지 쓰는 3호 · 4호는 매장 설정의 `차량 · 직원`이 생기면 그때 더한다. */
+/** 차량(첫 매장 2대). 붐비는 날 개인 차까지 쓰는 3호 · 4호는 매장 설정 `차량 · 직원`의 `차량 추가`로 더한다(features-1 plan E13). */
 export const VEHICLES: readonly FxVehicle[] = [
   { id: 'v1', label: '1호 차량' },
   { id: 'v2', label: '2호 차량' },
@@ -144,6 +152,7 @@ const copy = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 export function sampleRegistry(shop: SampleShop = 'first'): ShopRegistry {
   return copy({
     shopName: SHOP_NAME,
+    shopPhone: SHOP_PHONE,
     timezone: 'Asia/Seoul',
     products: productsOf(shop),
     kinds: KINDS,

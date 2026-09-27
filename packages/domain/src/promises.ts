@@ -10,6 +10,17 @@
 // 이 파일은 model · time만 가져온다(rules.ts가 이 파일을 쓴다).
 import type { FxLine, FxOrder, FxPromise, FxPromiseSplit, ShopState } from './model.ts';
 
+/**
+ * 살아 있는 수(features-1 E6): 줄의 수 − 취소한 수. 지급 · 적재 · 배달 · 품목 요약 · 도장의 '할 수'가 이것이다(얼린 줄의 qty는 그대로).
+ */
+export const liveQty = (l: Pick<FxLine, 'qty' | 'cancelled'>) => Math.max(0, l.qty - (l.cancelled ?? 0));
+
+/**
+ * 반납 쪽의 수: 살아 있는 수와 내준 수 중 큰 것. 돌려받을 것 · 수거 · 반납 일정 몫은 이 수로 센다 — 내준 뒤 돌아와 취소한 것, 취소 뒤에 온 기사의
+ * 배달 기록도 돌려받을 것에 남는다(E6 · E23: 반납 · 수거는 살아 있는 수로 줄이지 않는다).
+ */
+export const returnQty = (l: Pick<FxLine, 'qty' | 'cancelled' | 'issued'>) => Math.max(liveQty(l), l.issued);
+
 /** 줄 하나의 일정 몫. key null = 원래 일정(giveBack), 아니면 나눈 일정의 id. */
 export interface FxBucket {
   key: string | null;
@@ -20,12 +31,14 @@ export interface FxBucket {
   returned: number;
   collected: number;
   received: number;
+  /** 이 일정 몫에서 분실 처리한 수(features-1 E20: 나눈 일정 먼저, 그다음 원래 일정). 수거 · 반납할 수에서 빠진다. */
+  lost: number;
 }
 
 /** 아직 돌아오지 않은 수(지급 전 포함): 일정 변경으로 옮길 수 있는 수. */
-export const bucketLeft = (b: FxBucket) => Math.max(0, b.planned - b.returned - b.collected);
-/** 손님에게 나가 있는 수(차량이 받을 수). */
-export const bucketOut = (b: FxBucket) => Math.max(0, b.issued - b.returned - b.collected);
+export const bucketLeft = (b: FxBucket) => Math.max(0, b.planned - b.returned - b.collected - b.lost);
+/** 손님에게 나가 있는 수(차량이 받을 수). 분실 처리한 것은 빠진다. */
+export const bucketOut = (b: FxBucket) => Math.max(0, b.issued - b.returned - b.collected - b.lost);
 /** 차에 있는 수(수거했지만 매장 입고 전). */
 export const bucketOnVan = (b: FxBucket) => Math.max(0, b.collected - b.received);
 
@@ -42,13 +55,13 @@ const sum = (list: readonly FxPromiseSplit[], pick: (s: FxPromiseSplit) => numbe
 export function lineBuckets(o: FxOrder, l: FxLine): FxBucket[] {
   const splits = splitsOf(o, l);
   const main: FxBucket = {
-    key: null, promise: o.giveBack, planned: Math.max(0, l.qty - sum(splits, (s) => s.quantity)), issued: 0, returned: 0,
+    key: null, promise: o.giveBack, planned: Math.max(0, returnQty(l) - sum(splits, (s) => s.quantity)), issued: 0, returned: 0,
     collected: Math.max(0, l.collected - sum(splits, (s) => s.collected ?? 0)),
-    received: Math.max(0, (l.received ?? 0) - sum(splits, (s) => s.received ?? 0)),
+    received: Math.max(0, (l.received ?? 0) - sum(splits, (s) => s.received ?? 0)), lost: 0,
   };
   const list: FxBucket[] = [
     main,
-    ...splits.map((s) => ({ key: s.id, promise: s.promise, planned: s.quantity, issued: 0, returned: 0, collected: s.collected ?? 0, received: s.received ?? 0 })),
+    ...splits.map((s) => ({ key: s.id, promise: s.promise, planned: s.quantity, issued: 0, returned: 0, collected: s.collected ?? 0, received: s.received ?? 0, lost: 0 })),
   ];
   // 지급은 원래 일정부터(수거한 수보다 적게 나눠 주지 않는다).
   let issued = l.issued;
@@ -63,6 +76,13 @@ export function lineBuckets(o: FxOrder, l: FxLine): FxBucket[] {
     const take = Math.min(returned, Math.max(0, b.issued - b.collected - b.returned));
     b.returned += take;
     returned -= take;
+  }
+  // 분실 처리(features-1 E20): 손님에게 남은 몫에서, 나눈 일정 먼저(차례대로) 그다음 원래 일정. 줄의 수(lost)에서 늘 같은 차례로 센다.
+  let lost = l.lost ?? 0;
+  for (const b of [...list.slice(1), main]) {
+    const take = Math.min(lost, Math.max(0, b.issued - b.collected - b.returned));
+    b.lost = take;
+    lost -= take;
   }
   return list;
 }
@@ -179,14 +199,17 @@ export function taskOrder(task: FxTask): FxOrder {
   const lines = o.lines.flatMap((l): FxLine[] => {
     const b = l.returnable ? taskBucket(task, l) : undefined;
     if (!b) return [];
+    // 비춘 줄의 수는 그 일정 몫(이미 살아 있는 수로 셈)이라 취소한 수 · 내려놓은 수는 빼고 그린다.
+    const { cancelled: _cancelled, unloaded: _unloaded, lost: _lost, found: _found, ...line } = l;
     return [{
-      ...l,
+      ...line,
       qty: b.planned,
       amount: l.qty > 0 ? Math.round((l.amount * b.planned) / l.qty) : 0,
       issued: b.issued,
       returned: b.returned,
       collected: b.collected,
       received: b.received,
+      ...(b.lost > 0 ? { lost: b.lost } : {}),
     }];
   });
   const { splits: _splits, ...rest } = o;

@@ -104,7 +104,8 @@ describe('V6 읽기 모델(closingSheet) — 27일 00:40 시안의 순간(spec 2
     ]);
     const reds = view.carry.flatMap((c) => c.title.filter((r) => r.tone === 'red').map((r) => r.text));
     expect(reds).toEqual(['지연']);
-    expect(view.carry.map((c) => c.orderId ?? c.tabKey)).toEqual(['o28', 'return', 'o26', 'o25']);
+    // 안 돌아온 리프트권은 리프트권 화면의 미반납 탭(features-1 §8-2).
+    expect(view.carry.map((c) => c.orderId ?? c.tabKey ?? c.ticketTab)).toEqual(['o28', 'return', 'unreturned', 'o25']);
     expect(JSON.stringify(view)).not.toContain('보증금');
   });
 
@@ -355,18 +356,19 @@ describe('차량 현금 인계 · 부분 매장 입고(8단계 명령)', () => {
   it('부분 입고(stock.receive lines): 내려놓지 않은 것은 차에 남고 확인 필요 `김민수 팀 헬멧 1개 미입고`, 다시 입고하면 사라진다', async () => {
     const { client, state } = at(480);
     // 23:40: 22:00 · 22:10 수거 뒤, 23:48 입고 전.
-    expect((await client.query('reviewList', {})).some((r) => r.kindKey === 'not_received')).toBe(false);
+    expect((await client.query('reviewList', {})).items.some((r) => r.kindKey === 'not_received')).toBe(false);
     client.advanceClock(10);
     expect(state().storyApplied).toContain('van-2348');
     const helmet = state().orders.find((o) => o.id === 'o25')!.lines.find((l) => l.id === 'o25-l2')!;
     expect([helmet.collected, helmet.received]).toEqual([2, 1]);
     expect(state().vanReceipts).toEqual([{ vehicleId: 'v1', at: ms(23, 48) }]);
     const reviews = await client.query('reviewList', {});
-    expect(reviews.filter((r) => r.kindKey === 'not_received').map((r) => r.message)).toEqual(['김민수 팀 헬멧 1개 미입고']);
+    expect(reviews.items.filter((r) => r.kindKey === 'not_received').map((r) => r.message)).toEqual(['김민수 팀 헬멧 1개 미입고']);
+    expect(reviews.items.find((r) => r.kindKey === 'not_received')!.choices!.map((c) => c.label)).toEqual(['수거 목록', '접수증']);
     const draft = await client.query('confirmDraft', { actionKey: 'receive_to_shop', vehicleId: 'v1' });
     expect(draft.confirmLabel).toBe('매장 입고 · 1개');
     expect(await send(client, draft, draft.command, draft.expect)).toMatchObject({ outcome: 'applied' });
-    expect((await client.query('reviewList', {})).some((r) => r.kindKey === 'not_received')).toBe(false);
+    expect((await client.query('reviewList', {})).items.some((r) => r.kindKey === 'not_received')).toBe(false);
     expect((await client.query('closingSheet', {})).carry.some((c) => text(c.title).startsWith('확인 필요'))).toBe(false);
   });
 
@@ -413,7 +415,7 @@ describe('V6 권 보증금을 켠 매장(numbered): 돈통 예상의 보증금 �
     const reds = view.carry.flatMap((c) => c.title.filter((r) => r.tone === 'red').map((r) => r.text));
     expect(reds).toEqual(['지연']);
     // 누르면: 한 팀이면 그 접수증.
-    expect(view.carry.map((c) => c.orderId ?? c.tabKey)).toEqual(['o28', 'return', 'o26', 'o26', 'o25']);
+    expect(view.carry.map((c) => c.orderId ?? c.tabKey ?? c.ticketTab)).toEqual(['o28', 'return', 'unreturned', 'o26', 'o25']);
   });
 
   it('돈의 검산: 1호 차량 지갑 00:32 뒤 0원(23:48 인계 35,000원), 보증금 보관은 최하은 1매 5,000원뿐, 미수는 윤서준 120,000원뿐', () => {

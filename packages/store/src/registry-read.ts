@@ -2,7 +2,8 @@
 // (load(write(x)) ≡ x). 차례는 sort 열, sort가 없는 표(차량 · 돈통)는 넣은 차례(rowid)다. 시스템 행(보증금 결제 수단 · 보증금 칸)은
 // 매장 목록에 넣지 않는다.
 import type {
-  FxArea, FxDepositRule, FxDrawer, FxKind, FxMethodKey, FxPayMethod, FxPaySection, FxProduct, FxReturnSlot, FxSection, FxShopRules, FxVisitOutcome, ShopRegistry,
+  FxArea, FxDepositRule, FxDiscount, FxDrawer, FxKind, FxMethodKey, FxPayMethod, FxPaySection, FxProduct, FxReturnSlot, FxSection, FxShopRules, FxStaff, FxVehicle,
+  FxVisitOutcome, ShopRegistry,
 } from '@skinote/domain';
 import type { ConditionKey } from '@skinote/contract';
 import { StoreError } from './errors.ts';
@@ -34,15 +35,17 @@ export interface LoadedRegistry {
 
 /** 매장 목록 값 · 운영 규칙 · 돈통. nowIso를 주면 그때 적용된 설정 판을 읽는다. */
 export function loadRegistry(db: Db, shopId: string, nowIso?: string): LoadedRegistry {
-  const shop = one(db, 'SELECT name, timezone FROM shops WHERE id = ?', shopId);
+  const shop = one(db, 'SELECT name, phone, timezone FROM shops WHERE id = ?', shopId);
   if (!shop) throw new StoreError('SHOP_NOT_PROVISIONED', '매장 행이 없다: ' + shopId);
   if (shop.timezone !== 'Asia/Seoul') throw new StoreError('TIMEZONE_UNSUPPORTED', '매장 시간대: ' + String(shop.timezone));
 
-  // 반납 타임(권의 반납 시각 처음 값을 시각으로 찾는다)
-  const slotRows = all(db, 'SELECT id, label, local_time, day_offset FROM return_slots WHERE shop_id = ? AND active = 1 ORDER BY sort, rowid', shopId);
+  // 반납 타임(권의 반납 시각 처음 값을 시각으로 찾는다). 숨긴 타임(active 0)도 읽는다: 지난 접수 · 늦음이 그 타임을 본다(features-1 E12).
+  const slotRows = all(db, 'SELECT id, label, local_time, day_offset, is_night, active FROM return_slots WHERE shop_id = ? ORDER BY sort, rowid', shopId);
   const returnSlots: FxReturnSlot[] = slotRows.map((r) => {
     const [, m = 0] = str(r.local_time).split(':').map(Number);
-    return { key: str(r.id), label: str(r.label), hour: slotHour(r), minute: m };
+    const slot: FxReturnSlot = { key: str(r.id), label: str(r.label), hour: slotHour(r), minute: m, night: bool(r.is_night) };
+    const earliest = slotEarliest(db, shopId, slot);
+    return { ...slot, ...(bool(r.active) ? {} : { hidden: true as const }), ...(earliest ? { earliest } : {}) };
   });
 
   const kindRows = all(db, `SELECT id, label, fulfillment_mode_key, tracking_key, return_policy_key, payment_section_id, exchangeable, extendable, picker_placement_key, unit_label
@@ -114,32 +117,49 @@ export function loadRegistry(db: Db, shopId: string, nowIso?: string): LoadedReg
     };
   });
 
-  const payMethods: FxPayMethod[] = all(db, 'SELECT key, label, quick, driver_allowed FROM payment_methods WHERE shop_id = ? AND active = 1 AND is_system = 0 ORDER BY sort, rowid', shopId)
-    .map((r) => ({ key: str(r.key) as FxMethodKey, label: str(r.label), quick: bool(r.quick), driver: bool(r.driver_allowed) }));
+  // 환불할 수 없는 수단(refundable 0, 상품권)만 표시한다(features-1 E4).
+  const payMethods: FxPayMethod[] = all(db, 'SELECT key, label, quick, driver_allowed, refundable FROM payment_methods WHERE shop_id = ? AND active = 1 AND is_system = 0 ORDER BY sort, rowid', shopId)
+    .map((r) => ({
+      key: str(r.key) as FxMethodKey, label: str(r.label), quick: bool(r.quick), driver: bool(r.driver_allowed), ...(bool(r.refundable) ? {} : { refundable: false as const }),
+    }));
   const paySections: FxPaySection[] = all(db, 'SELECT key, label, default_method_id FROM payment_sections WHERE shop_id = ? AND active = 1 AND is_system = 0 ORDER BY sort, rowid', shopId)
     .map((r) => ({ key: str(r.key) as FxSection, label: str(r.label), defaultMethod: str(r.default_method_id) as FxMethodKey }));
   const sectionOfKind = new Map(kindRows.map((k) => [str(k.id), str(k.payment_section_id)]));
-  const discounts = all(db, 'SELECT id, label, percent_bp FROM discount_rules WHERE shop_id = ? AND active = 1 ORDER BY sort, rowid', shopId).map((d) => {
+  // 할인: 미사용(active 0)도 읽는다(hidden). 비율은 percent_bp, 금액은 amount(features-1 E9).
+  const discounts: FxDiscount[] = all(db, 'SELECT id, label, discount_kind_key, percent_bp, amount, active, required_permission_key FROM discount_rules WHERE shop_id = ? ORDER BY sort, rowid', shopId).map((d) => {
     const sections: FxSection[] = [];
     for (const t of all(db, 'SELECT item_kind_id FROM discount_rule_targets WHERE shop_id = ? AND discount_rule_id = ? ORDER BY seq', shopId, str(d.id))) {
       const s = sectionOfKind.get(str(t.item_kind_id)) as FxSection | undefined;
       if (s && !sections.includes(s)) sections.push(s);
     }
-    return { key: str(d.id), label: str(d.label), percent: num(d.percent_bp) / 100, sections };
+    const kind = str(d.discount_kind_key);
+    if (kind !== 'percent' && kind !== 'amount') throw new StoreError('BAD_SPEC', '읽지 못하는 할인 종류: ' + kind);
+    return {
+      key: str(d.id), label: str(d.label), kind, value: kind === 'percent' ? num(d.percent_bp) / 100 : num(d.amount), sections,
+      ...(bool(d.active) ? {} : { hidden: true as const }),
+      ...(text(d.required_permission_key) !== undefined ? { requiredPermission: str(d.required_permission_key) } : {}),
+    };
   });
 
+  // 구역 · 장소 · 차량: 숨긴(active 0) · 사용 종료한 행도 읽는다(지난 접수 · 마감이 이름을 읽는다, features-1 E12 · E13).
   const lodging = new Set(all(db, "SELECT place_id FROM place_uses WHERE shop_id = ? AND use_key = 'lodging'", shopId).map((r) => str(r.place_id)));
-  const areas: FxArea[] = all(db, 'SELECT id, name FROM areas WHERE shop_id = ? AND active = 1 ORDER BY sort, rowid', shopId).map((a) => {
-    const places = all(db, 'SELECT id, name FROM places WHERE shop_id = ? AND area_id = ? AND active = 1 ORDER BY sort, rowid', shopId, str(a.id)).map((p) => ({ id: str(p.id), label: str(p.name) }));
-    return { id: str(a.id), label: str(a.name), lodging: places.length > 0 && places.every((p) => lodging.has(p.id)), places };
+  const areas: FxArea[] = all(db, 'SELECT id, name, active FROM areas WHERE shop_id = ? ORDER BY sort, rowid', shopId).map((a) => {
+    const places = all(db, 'SELECT id, name, active FROM places WHERE shop_id = ? AND area_id = ? ORDER BY sort, rowid', shopId, str(a.id))
+      .map((p) => ({ id: str(p.id), label: str(p.name), ...(bool(p.active) ? {} : { hidden: true as const }) }));
+    return {
+      id: str(a.id), label: str(a.name), lodging: places.length > 0 && places.every((p) => lodging.has(p.id)), places,
+      ...(bool(a.active) ? {} : { hidden: true as const }),
+    };
   });
-  const vehicles = all(db, 'SELECT id, name FROM vehicles WHERE shop_id = ? AND active = 1 ORDER BY rowid', shopId).map((v) => ({ id: str(v.id), label: str(v.name) }));
+  const vehicles: FxVehicle[] = all(db, 'SELECT id, name, active FROM vehicles WHERE shop_id = ? ORDER BY rowid', shopId)
+    .map((v) => ({ id: str(v.id), label: str(v.name), ...(bool(v.active) ? {} : { ended: true as const }) }));
   const reasons = (domain: string) => all(db, 'SELECT key, label FROM reason_codes WHERE shop_id = ? AND domain_key = ? AND active = 1 ORDER BY sort, rowid', shopId, domain)
     .map((r) => ({ key: str(r.key), label: str(r.label) }));
 
   const max = currentSetting<{ max?: number }>(db, shopId, SETTING.maxLineQuantity, nowIso);
   const registry: ShopRegistry = {
     shopName: str(shop.name),
+    ...(text(shop.phone) !== undefined ? { shopPhone: str(shop.phone) } : {}),
     timezone: 'Asia/Seoul',
     products,
     kinds,
@@ -203,6 +223,22 @@ export function loadRegistry(db: Db, shopId: string, nowIso?: string): LoadedReg
   return { registry, settings, drawers };
 }
 
+/**
+ * 반납 타임이 가졌던 가장 이른 시각(시각을 바꾼 기록 config_changes의 앞 값): 지금 시각보다 이르면 그 시각, 아니면 없음(도메인 settings.ts와 같은
+ * 셈 — 야간이 시작하는 시각이 이미 잡은 접수의 늦음을 옮기지 않게, features-1 E12).
+ */
+function slotEarliest(db: Db, shopId: string, slot: FxReturnSlot): { hour: number; minute: number } | undefined {
+  let earliest = Infinity;
+  for (const r of all(db, "SELECT before_json FROM config_changes WHERE shop_id = ? AND entity_type = 'return_slots' AND entity_id = ?", shopId, slot.key)) {
+    const before = r.before_json === null ? undefined : (JSON.parse(str(r.before_json)) as { local_time?: string; day_offset?: number });
+    if (!before?.local_time) continue;
+    const [h = 0, m = 0] = before.local_time.split(':').map(Number);
+    earliest = Math.min(earliest, (h + 24 * (before.day_offset ?? 0)) * 60 + m);
+  }
+  const now = slot.hour * 60 + slot.minute;
+  return earliest < now ? { hour: Math.floor(earliest / 60), minute: earliest % 60 } : undefined;
+}
+
 /** 반납 타임의 표 시각(권의 window_end와 맞춰 본다). 24:00은 00:00. */
 function slotRowTime(slot: FxReturnSlot): string {
   const hour = slot.hour % 24;
@@ -218,17 +254,61 @@ export interface StaffRow {
   accountId?: string;
 }
 
+/**
+ * 직원의 지금 차량: 끝나지 않은 배정(vehicle_assignments, ended_at 없음 · 시작한 날이 오늘 이전) 중 가장 새것. 배정 행이 하나도 없는 옛 직원만
+ * default_vehicle_id(읽기 대신 값, features-1 E13). 배정은 직원 바꿈(staff.set)만 쓴다.
+ */
+function currentVehicle(db: Db, shopId: string, staffId: string, fallback: string | undefined): string | undefined {
+  const open = one(db, `SELECT vehicle_id FROM vehicle_assignments WHERE shop_id = ? AND staff_member_id = ? AND ended_at IS NULL
+    ORDER BY valid_from DESC, rowid DESC LIMIT 1`, shopId, staffId);
+  if (open) return str(open.vehicle_id);
+  const any = one(db, 'SELECT 1 AS x FROM vehicle_assignments WHERE shop_id = ? AND staff_member_id = ? LIMIT 1', shopId, staffId);
+  return any ? undefined : fallback;
+}
+
 export function listStaff(db: Db, shopId: string): StaffRow[] {
   return all(db, `SELECT s.id, s.display_name, s.account_id, s.default_vehicle_id, r.key AS role_key FROM staff_members s
-    JOIN roles r ON r.shop_id = s.shop_id AND r.id = s.role_id WHERE s.shop_id = ? AND s.status_key = 'active' ORDER BY s.rowid`, shopId).map((r) => ({
-    id: str(r.id), name: str(r.display_name), roleKey: str(r.role_key),
-    ...(text(r.default_vehicle_id) !== undefined ? { vehicleId: str(r.default_vehicle_id) } : {}),
-    ...(text(r.account_id) !== undefined ? { accountId: str(r.account_id) } : {}),
-  }));
+    JOIN roles r ON r.shop_id = s.shop_id AND r.id = s.role_id WHERE s.shop_id = ? AND s.status_key = 'active' ORDER BY s.rowid`, shopId).map((r) => {
+    const vehicleId = currentVehicle(db, shopId, str(r.id), text(r.default_vehicle_id));
+    return {
+      id: str(r.id), name: str(r.display_name), roleKey: str(r.role_key),
+      ...(vehicleId !== undefined ? { vehicleId } : {}),
+      ...(text(r.account_id) !== undefined ? { accountId: str(r.account_id) } : {}),
+    };
+  });
+}
+
+/** 직원(매장 설정 `차량 · 직원`, ShopState.staff): 쓰는 사람과 사용 종료(suspended)한 사람. 끝난(ended) · 옛 행위자(legacy)는 빼고. */
+export function loadStaff(db: Db, shopId: string): FxStaff[] {
+  return all(db, `SELECT s.id, s.display_name, s.default_vehicle_id, s.status_key, r.key AS role_key FROM staff_members s
+    JOIN roles r ON r.shop_id = s.shop_id AND r.id = s.role_id WHERE s.shop_id = ? AND s.status_key IN ('active', 'suspended') ORDER BY s.rowid`, shopId).map((r) => {
+    const roleKey = str(r.role_key);
+    if (roleKey !== 'manager' && roleKey !== 'counter' && roleKey !== 'driver') throw new StoreError('BAD_SPEC', '읽지 못하는 역할: ' + roleKey);
+    const vehicleId = currentVehicle(db, shopId, str(r.id), text(r.default_vehicle_id));
+    return {
+      id: str(r.id), name: str(r.display_name), roleKey, ...(vehicleId !== undefined ? { vehicleId } : {}),
+      status: str(r.status_key) === 'active' ? 'active' as const : 'suspended' as const,
+    };
+  });
 }
 
 /** 역할의 권한(권한 key → 범위). 서버의 권한 표(permissions.js)가 세션마다 읽는다. */
 export function rolePermissions(db: Db, shopId: string, roleKey: string): Map<string, string> {
   return new Map(all(db, `SELECT p.permission_key, p.scope_key FROM role_permissions p JOIN roles r ON r.shop_id = p.shop_id AND r.id = p.role_id
     WHERE p.shop_id = ? AND r.key = ?`, shopId, roleKey).map((r) => [str(r.permission_key), str(r.scope_key)]));
+}
+
+/**
+ * 역할의 한도(role_permissions.limits_json: `{"max_discount_amount": 10000, "max_discount_percent_bp": 1000}`, 보통 discount.manual 줄). 여러 줄에
+ * 있으면 가장 작은 값. 없으면 빈 객체(한도 없음, features-1 E10 · 열린 질문 plan §14 Q3).
+ */
+export function roleLimits(db: Db, shopId: string, roleKey: string): { maxDiscountAmount?: number; maxDiscountPercentBp?: number } {
+  const out: { maxDiscountAmount?: number; maxDiscountPercentBp?: number } = {};
+  for (const r of all(db, `SELECT p.limits_json FROM role_permissions p JOIN roles r ON r.shop_id = p.shop_id AND r.id = p.role_id
+    WHERE p.shop_id = ? AND r.key = ? AND p.limits_json IS NOT NULL`, shopId, roleKey)) {
+    const parsed = JSON.parse(str(r.limits_json)) as { max_discount_amount?: unknown; max_discount_percent_bp?: unknown };
+    if (typeof parsed.max_discount_amount === 'number') out.maxDiscountAmount = Math.min(out.maxDiscountAmount ?? Infinity, parsed.max_discount_amount);
+    if (typeof parsed.max_discount_percent_bp === 'number') out.maxDiscountPercentBp = Math.min(out.maxDiscountPercentBp ?? Infinity, parsed.max_discount_percent_bp);
+  }
+  return out;
 }

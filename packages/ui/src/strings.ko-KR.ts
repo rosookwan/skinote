@@ -10,6 +10,7 @@ export const STRINGS_KO = {
   more: '더 보기',
   alerts: '알림',
   alertsCount: '알림 {n}건',
+  menuCount: '{label} {n}건',
   manage: '관리',
   exit: '나가기',
   offline: '연결 끊김',
@@ -58,6 +59,12 @@ export const STRINGS_KO = {
   giveBack: '반납',
   charged: '청구 {amount}',
   paid: '수납 {amount}',
+  /** 돈 줄의 지금 할인(`할인 −12,000원`, 금액은 음수로 온다). */
+  discountPart: '할인 {amount}',
+  /** 돈 줄의 돌려준 돈(`환불 145,000원`). */
+  refundedPart: '환불 {amount}',
+  /** 바닥줄 팀 수 뒤의 취소한 접수(`합계 17팀 · 취소 1`). */
+  cancelledCount: '취소 {n}',
   due: '미수 {amount}',
   dueWord: '미수',
   toCollect: '받을 금액 {amount}',
@@ -66,6 +73,9 @@ export const STRINGS_KO = {
   /** 접수증 돈 줄: 다른 팀 몫까지 한 번에 낸 결제의 수단 · 실제 금액('카드 485,000원'). */
   methodAmount: '{method} {amount}',
   won: '{n}원',
+  /** 숫자판의 분 · 비율 표시(매장 설정, 문구 표 3-20). */
+  minutes: '{n}분',
+  percent: '{n}%',
   team: '{n}팀',
   count: '{n}개',
   today: '오늘',

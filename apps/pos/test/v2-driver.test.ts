@@ -72,7 +72,8 @@ describe('설정: 배달 목록(delivery_list)과 기사 메뉴(plan §8 D4)', (
     expect(phone.columns.map((c) => c.column_key)).toEqual(['stamp:deliver', 'team', 'items', 'action:call']);
     expect(phone.columns.find((c) => c.column_key === 'team')?.min_width_em).toBe(11.5);
     expect(phone.tabs).toEqual(view.tabs);
-    expect(uiDefaults.rev).toBe(5);
+    // 판 7: 접수증 옆 동작 `일정 변경`은 진행 중 접수만(order_open, 2026-09-27 점검: 모두 취소한 접수에 일정 변경이 남았다).
+    expect(uiDefaults.rev).toBe(7);
   });
 
   it('기사 메뉴: 배달 목록 · 수거 목록(화면 driver_list) · 차량 재고, 목록 행은 메뉴 키로 경로를 고른다', () => {
@@ -119,7 +120,7 @@ describe('V7 업무 판(taskSheet) — 16:55 최하은 팀', () => {
     const view = await client.query('taskSheet', { taskId: 'deliver:o26', deviceClass: 'driver_tablet' });
     expect(view).toMatchObject({
       taskId: 'deliver:o26', orderId: 'o26', kind: 'deliver', title: '배달 · 17:00 만선 광장', team: '최하은 · 0026', teamName: '최하은', last4: '0026',
-      contact: '010-0000-0026 · 3명', phone: '010-0000-0026', progress: '완료 0 · 잔여 1', vehicle: { id: 'v1', label: '1호 차량' },
+      contact: '010-****-0026 · 3명', phone: '010-****-0026', progress: '완료 0 · 잔여 1', vehicle: { id: 'v1', label: '1호 차량' },
       returnPlan: ['오늘 22:10 · 만선 티롤 앞 · 1호 차량'],
       primary: { label: '배달 처리 · 6개', alts: ['배달 처리 · 6개', '배달 처리'], enabled: true, actionKey: 'stamp.issue' },
     });
@@ -454,7 +455,7 @@ describe('배달 실패(task.visit)', () => {
     const collect = await client.ledgerView('collection_list', {});
     expect(collect.rows.find((r) => r.orderId === 'o26')?.reviewNote).toBeUndefined();
     const review = await client.query('reviewList', {});
-    expect(review.find((r) => r.orderId === 'o26')?.message).toBe('최하은 팀 기타 · 재방문 18:00');
+    expect(review.notices.find((r) => r.orderId === 'o26')?.message).toBe('최하은 팀 기타 · 재방문 18:00');
   });
 });
 

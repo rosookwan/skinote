@@ -68,7 +68,19 @@ export function prepareImport(day: ShopState, options: ImportOptions): ShopState
         ...(p.lines ? { lines: p.lines.map((x) => ({ ...x, lineId: swapPrefix(x.lineId, from, to) })) } : {}),
       })),
       ...(o.splits ? { splits: o.splits.map((s) => ({ ...s, lineId: swapPrefix(s.lineId, from, to) })) } : {}),
-      ...(o.charges ? { charges: o.charges.map((c) => ({ ...c, lineId: swapPrefix(c.lineId, from, to) })) } : {}),
+      ...(o.discounts ? {
+        discounts: o.discounts.map((d) => ({ ...d, id: swapPrefix(d.id, from, to), ...(d.supersedes !== undefined ? { supersedes: swapPrefix(d.supersedes, from, to) } : {}) })),
+      } : {}),
+      ...(o.refunds ? {
+        refunds: o.refunds.map((r) => ({
+          ...r, refundOf: swapPrefix(r.refundOf, from, to), ...(r.lines ? { lines: r.lines.map((x) => ({ ...x, lineId: swapPrefix(x.lineId, from, to) })) } : {}),
+        })),
+      } : {}),
+      ...(o.charges ? {
+        charges: o.charges.map((c) => (c.kind === 'discount_change'
+          ? { ...c, lines: c.lines.map((x) => ({ ...x, lineId: swapPrefix(x.lineId, from, to) })) }
+          : { ...c, lineId: swapPrefix(c.lineId, from, to) })),
+      } : {}),
     };
   };
   out.orders = out.orders.map(renameOrder);
@@ -86,6 +98,11 @@ export function prepareImport(day: ShopState, options: ImportOptions): ShopState
     };
   });
   out.paymentGroups = out.paymentGroups.map((g) => ({ ...g, ...(g.payerOrderId !== undefined ? { payerOrderId: orderId(g.payerOrderId)! } : {}) }));
+  // 견본 확인 필요(features-1 §9-6): id에 앞글자, 접수 · 업무는 바뀐 접수 id로.
+  out.reviews = (out.reviews ?? []).map((r) => ({
+    ...r, id: prefix + r.id, ...(r.orderId !== undefined ? { orderId: orderId(r.orderId)! } : {}),
+    ...(r.taskId !== undefined && r.orderId !== undefined ? { taskId: r.taskId.replace(':' + r.orderId, ':' + orderId(r.orderId)) } : {}),
+  }));
   out.routeRanks = Object.fromEntries(Object.entries(out.routeRanks).map(([taskId, rank]) => [taskId.replace(/^(\w+):([^:]+)/, (_, kind: string, id: string) => kind + ':' + (orderId(id) ?? id)), rank]));
   out.nextReceiptSeq = options.startSeq + out.orders.length;
   return out;

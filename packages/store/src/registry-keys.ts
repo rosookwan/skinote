@@ -22,11 +22,18 @@ export const EXTERNAL_LOCATION = 'external';
 export const SHOP_LOCATION = 'shop';
 export const vehicleLocation = (vehicleId: string) => 'vehicle:' + vehicleId;
 export const customerLocation = (orderId: string) => 'cust:' + orderId;
+/** 폐기·분실(sys_location_kinds void, 매장마다 하나): 분실 처리한 권이 가는 곳(features-1 E20). */
+export const VOID_LOCATION = 'void';
 /** 실물 상태 하나(정상). */
 export const OK_CONDITION = 'ok';
 /** 청구 조정 종류: 연장(+)과 연장 취소(−, plan §3-3 7). */
 export const EXTENSION = 'extension';
 export const EXTENSION_UNDO = 'extension_undo';
+/** 청구 조정 종류: 할인 변경(부호 0, features-1 E9). */
+export const DISCOUNT_CHANGE = 'discount_change';
+/** 청구 조정 종류: 취소(−, 취소한 수의 값)와 환불 없음으로 남긴 돈(+, cancellation_fee, features-1 E5). */
+export const CANCELLATION = 'cancellation';
+export const CANCELLATION_FEE = 'cancellation_fee';
 
 export const axisAttribute = (kindKey: string) => 'axis:' + kindKey;
 export const axisOption = (kindKey: string, variantKey: string) => 'axis:' + kindKey + ':' + variantKey;
@@ -44,6 +51,8 @@ export const kindTargetSeq = (index: number) => index + 1;
 
 /** 사유 영역(sys_reason_domains). 현금 차액 사유는 마감 차액 · 인계 두 영역에 같은 목록을 둔다. */
 export const VISIT_RESULT = 'visit_result';
+/** 취소의 구분(reason_codes cancellation: 취소 요청 · 연락 없음, features-1 E8). */
+export const CANCELLATION_REASON = 'cancellation';
 export const CLOSING_DIFFERENCE = 'closing_difference';
 export const HANDOVER = 'handover';
 
@@ -72,7 +81,19 @@ export const ROLES = [
  * 역할의 권한(plan §4-6): 관리자는 모두, 카운터는 매장 설정 · 직원 · 기기 · 마감 해제 밖 모두, 기사는 자기 차량의 일만(own_vehicle).
  * 권한 key는 sys_permissions에 있다(FK). 범위는 그 권한이 허락하는 것 중에서 고른다(scopes_json).
  */
-export const COUNTER_EXCLUDED: readonly string[] = ['settings.manage', 'staff.manage', 'device.manage', 'closing.reopen'];
+export const COUNTER_EXCLUDED: readonly string[] = [
+  'settings.manage', 'staff.manage', 'device.manage', 'closing.reopen',
+  // 현금 출납: 받은 수단과 다른 수단(카드 · 계좌이체를 현금으로)의 환불이 이 권한이다(domain discounts.ts PERM_CROSS_REFUND, 2026-09-27 점검).
+  'cash.entry',
+];
+
+/**
+ * 역할 · 권한마다의 시작 한도(role_permissions.limits_json): 카운터의 직접 입력 할인 10,000원(체험판 카운터와 같은 값, 사장님 답 §14 Q3 전까지의
+ * 보수적인 값). 관리자는 한도 없음. 명령줄 `shop set-limit`이 바꾼다.
+ */
+export const ROLE_START_LIMITS: Readonly<Record<string, Readonly<Record<string, { max_discount_amount?: number; max_discount_percent_bp?: number }>>>> = {
+  counter: { 'discount.manual': { max_discount_amount: 10_000 } },
+};
 export const DRIVER_PERMISSIONS: readonly string[] = [
   'stock.move', 'stock.receive', 'task.visit', 'route.reorder', 'payment.collect_field', 'deposit.return_field', 'cash.transfer', 'order.add',
 ];

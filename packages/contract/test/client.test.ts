@@ -107,9 +107,17 @@ describe('실패의 약속', () => {
 
   it('돈 명령은 종류마다 정해진 바탕(expect)이 있어야 한다', () => {
     expect([...MONEY_COMMANDS].sort()).toEqual([
-      'cash.transfer_confirm', 'closing.close', 'deposit.return', 'deposit.take', 'field.add_ticket', 'field.collect', 'field.deposit_return',
-      'order.create', 'payment.take',
+      'cash.transfer_confirm', 'closing.close', 'deposit.return', 'deposit.take', 'discount.apply', 'field.add_ticket', 'field.collect', 'field.deposit_return',
+      'order.add', 'order.cancel', 'order.create', 'payment.refund', 'payment.take',
     ]);
+    // 접수 취소는 창이 본 받을 금액, 품목 추가는 창이 본 가격(features-1 §3-5).
+    expect(hasRequiredExpect('order.cancel', { dueAmount: 0 })).toBe(true);
+    expect(hasRequiredExpect('order.cancel', {})).toBe(false);
+    expect(hasRequiredExpect('order.add', { quoteHash: 'add:x' })).toBe(true);
+    // 할인 적용은 창이 본 받을 금액, 환불은 창이 본 환불 금액(features-1 §3-5).
+    expect(hasRequiredExpect('discount.apply', { dueAmount: 0 })).toBe(true);
+    expect(hasRequiredExpect('payment.refund', { dueAmount: 5_000 })).toBe(false);
+    expect(hasRequiredExpect('payment.refund', { refundAmount: 5_000 })).toBe(true);
     expect(hasRequiredExpect('payment.take', { dueAmount: 120_000 })).toBe(true);
     expect(hasRequiredExpect('payment.take', {})).toBe(false);
     expect(hasRequiredExpect('deposit.return', { dueAmount: 10_000 })).toBe(false);
@@ -125,7 +133,7 @@ describe('새 접수 확정(order.create)의 결과', () => {
     expect(createdOrder({ ...base, result: { orderId: 19 } })).toBeNull();
     expect(createdOrder(base)).toBeNull();
     expect(createdOrder({ ...base, outcome: 'conflict', result: { orderId: 'n19', receiptNo: '261226-019' } })).toBeNull();
-    expect(CHECKOUT_KEYS).toEqual({ later: 'later', other: 'other', otherTeam: 'other_team', noDiscount: 'none', self: 'self' });
+    expect(CHECKOUT_KEYS).toEqual({ later: 'later', other: 'other', otherTeam: 'other_team', noDiscount: 'none', self: 'self', manual: 'manual' });
     expect(hasRequiredExpect('order.create', {})).toBe(false);
     expect(hasRequiredExpect('order.create', { quoteHash: 'quote:x' })).toBe(true);
   });

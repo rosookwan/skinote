@@ -150,6 +150,8 @@ export interface FxPayMethod {
   label: string;
   quick: boolean;
   driver: boolean;
+  /** 환불할 수 없는 수단(payment_methods.refundable 0, 상품권): 환불 창이 `{수단} {금액} · 환불 불가`로 남긴다(features-1 E4). 없으면 환불 가능. */
+  refundable?: false;
 }
 
 export const payMethodOf = (reg: Pick<ShopRegistry, 'payMethods'>, key: string | undefined): FxPayMethod | undefined => reg.payMethods.find((m) => m.key === key);
@@ -164,20 +166,39 @@ export interface FxPaySection {
   defaultMethod: FxMethodKey;
 }
 
-/** 할인 하나(discount_rules): 묶음(결제 칸)마다 하나만 고른다(catalog 9). */
+/**
+ * 할인 하나(discount_rules): 묶음(결제 칸)마다 하나만 고른다(catalog 9). 종류는 비율(percent, value = %)과 금액(amount, value = 원, 칸 합계에서
+ * 뺌). 리프트권 칸은 비율만(plan E9). 미사용(hidden)은 확정 창에서 빠지고 지난 접수의 기록은 그대로다.
+ */
 export interface FxDiscount {
   key: string;
   label: string;
-  percent: number;
+  kind: 'percent' | 'amount';
+  value: number;
   sections: readonly FxSection[];
+  hidden?: true;
+  /** 이 할인을 쓰는 데 필요한 권한(discount_rules.required_permission_key, features-1 E10). 없으면 할인 적용 권한이면 된다. */
+  requiredPermission?: string;
 }
 
-export const discountOf = (reg: Pick<ShopRegistry, 'discounts'>, key: string | undefined, section: FxSection): FxDiscount | undefined =>
-  reg.discounts.find((d) => d.key === key && d.sections.includes(section));
+/** 쓰는 할인(미사용 뺌). */
+export const activeDiscounts = (reg: Pick<ShopRegistry, 'discounts'>): FxDiscount[] => reg.discounts.filter((d) => !d.hidden);
 
-/** 할인 금액: 칸 합계의 비율, 10원 단위로 내림(catalog 9). */
-export const discountAmount = (gross: number, discount: FxDiscount | undefined): number =>
-  discount ? Math.floor((gross * discount.percent) / 100 / 10) * 10 : 0;
+export const discountOf = (reg: Pick<ShopRegistry, 'discounts'>, key: string | undefined, section: FxSection): FxDiscount | undefined =>
+  activeDiscounts(reg).find((d) => d.key === key && d.sections.includes(section));
+
+/** 할인 금액: 비율은 칸 합계의 %, 금액은 그 금액(칸 합계까지), 모두 10원 단위로 내림(catalog 9). */
+export const discountAmount = (gross: number, discount: FxDiscount | undefined): number => (discount ? cutOf(gross, discount.kind, discount.value) : 0);
+
+/** 할인 금액의 셈(비율 · 금액, 10원 단위로 내림, 칸 합계까지). */
+function cutOf(gross: number, kind: 'amount' | 'percent', value: number): number {
+  if (gross <= 0 || value <= 0) return 0;
+  const raw = kind === 'amount' ? Math.min(gross, value) : (gross * Math.min(100, value)) / 100;
+  return Math.floor(raw / 10) * 10;
+}
+
+/** 직접 입력 할인(catalog 9, features-1 E10)의 금액: 금액은 그 값(칸 합계까지), 비율은 칸 합계의 %, 10원 단위로 내림. */
+export const manualDiscountAmount = (gross: number, manual: { kind: 'amount' | 'percent'; value: number }): number => cutOf(gross, manual.kind, manual.value);
 
 /**
  * 할인을 칸 안 줄들에 나눈다(catalog 9: 총액 비율, 줄마다 10원 단위로 내리고 남은 끝전은 큰 줄부터 10원씩). 줄 값 − 몫을 돌려준다.
@@ -185,13 +206,23 @@ export const discountAmount = (gross: number, discount: FxDiscount | undefined):
 export function discountedAmounts(amounts: readonly number[], discount: number): number[] {
   const gross = amounts.reduce((sum, a) => sum + a, 0);
   if (discount <= 0 || gross <= 0) return [...amounts];
-  const shares = amounts.map((a) => Math.floor((discount * a) / gross / 10) * 10);
-  let rest = discount - shares.reduce((sum, s) => sum + s, 0);
+  // 몫은 줄 값을 넘지 않는다(100%에 가까운 할인 · 10원 단위가 아닌 옛 값에서 줄이 음수가 되지 않게, 2026-09-27 점검).
+  const cut = Math.min(discount, gross);
+  const shares = amounts.map((a) => Math.min(Math.max(0, a), Math.floor((cut * a) / gross / 10) * 10));
+  let rest = cut - shares.reduce((sum, s) => sum + s, 0);
   const order = amounts.map((a, i) => ({ a, i })).sort((x, y) => y.a - x.a || x.i - y.i);
-  for (let k = 0; rest > 0 && k < order.length * 1000; k += 1) {
-    const { i } = order[k % order.length]!;
+  // 끝전은 큰 줄부터 10원씩(자리가 10원 이상 남은 줄만), 그래도 남으면 남은 자리만큼.
+  for (let k = 0; rest >= 10 && k < order.length * 1000; k += 1) {
+    const { a, i } = order[k % order.length]!;
+    if (a - (shares[i] ?? 0) < 10) { if (order.every((x) => x.a - (shares[x.i] ?? 0) < 10)) break; continue; }
     shares[i] = (shares[i] ?? 0) + 10;
     rest -= 10;
+  }
+  for (const { a, i } of order) {
+    if (rest <= 0) break;
+    const take = Math.min(rest, Math.max(0, a - (shares[i] ?? 0)));
+    shares[i] = (shares[i] ?? 0) + take;
+    rest -= take;
   }
   return amounts.map((a, i) => a - (shares[i] ?? 0));
 }

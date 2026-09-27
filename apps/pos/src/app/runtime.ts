@@ -6,7 +6,7 @@
 //     등록 · 로그인 화면, 그 밖(404 = API 끔 · 옛 판, 5xx, JSON 아님, 시간 초과, 연결 없음)은 `연결 끊김` 화면이고 저절로 다시 묻는다.
 //     우리 호스트에서는 절대 체험판으로 가지 않는다.
 // 순수 모듈이다(문서 · fetch는 부르는 쪽이 넘긴다): 시험이 표를 그대로 본다.
-import type { SessionInfo } from '@skinote/contract';
+import type { DeviceClassKey, SessionInfo } from '@skinote/contract';
 
 export const RUNTIME_META = 'skinote-runtime';
 export const RUNTIME_SERVER = 'server';
@@ -86,4 +86,18 @@ export async function probeSession(fetchImpl: typeof fetch, url: string, timeout
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * 이 기기가 전화를 걸 수 있는지(features-1 E17, 기기 능력이지 화면 규칙이 아님): 기사 휴대폰 · 태블릿은 `tel:` 링크로 걸고, 카운터 PC(포스 · 좁은
+ * 포스)는 번호를 크게 보여 줄 뿐이다(PC의 `tel:`은 엉뚱한 앱을 연다).
+ */
+export function canDial(deviceClass: DeviceClassKey): boolean {
+  return deviceClass === 'driver_phone' || deviceClass === 'driver_tablet';
+}
+
+/** `tel:` 주소(숫자만). 번호가 없으면 null. */
+export function telHref(number: string): string | null {
+  const digits = number.replace(/\D/g, '');
+  return digits ? 'tel:' + digits : null;
 }

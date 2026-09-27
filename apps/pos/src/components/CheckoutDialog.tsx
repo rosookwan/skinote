@@ -4,15 +4,17 @@
 // 물어 칸 글 · 결제 팀 줄 · 받을 금액 줄 · 주 버튼 · 명령을 받는다. 화면은 계산하지 않는다: 확정하면 받은 명령의 본문과 그때 본 가격
 // (expect.quoteHash)을 연 때의 초안에 덮어 같은 요청번호로 보낸다. 적용되면 새 접수의 접수증으로 간다(부르는 쪽, 주소 바꿈).
 // 창 높이는 흔들리지 않는다(spec 2-1 다): 결제 팀 줄은 `후불`인 칸이 없어도 자리를 지키고(visibility hidden), 받을 금액 줄은 알림이 와도
-// 같은 한 줄이다. 작은 창: `할인 적용 ›`(그 칸 할인 묶음), `기타`(간편결제 · 상품권 · `다른 팀 결제`), `다른 팀 찾기 · 끝 4자리`(숫자판).
+// 같은 한 줄이다. 작은 창: `할인 적용 ›`(그 칸 할인 묶음 + `직접 입력`: 종류 판 → 숫자판 → 사유 키보드, features-1 §6-5), `기타`(간편결제 ·
+// 상품권 · `다른 팀 결제`), `다른 팀 찾기 · 끝 4자리`(숫자판).
 import {
-  CHECKOUT_KEYS, createdOrder, envelopeFor, type AnyCommandDraft, type AnyCommandEnvelope, type Basis, type CheckoutChoice,
-  type CheckoutSheetParams, type CheckoutSheetView, type ConfirmCommand, type FindResult, type OrderDraftInput,
+  CHECKOUT_KEYS, createdOrder, envelopeFor, isAccepted, type AnyCommandDraft, type AnyCommandEnvelope, type Basis, type CheckoutChoice,
+  type CheckoutSheetParams, type CheckoutSheetView, type ConfirmCommand, type FindResult, type ManualDiscount, type OrderDraftInput,
 } from '@skinote/contract';
 import { ChoiceRow, DialogFrame, Icon, Keypad, MethodRow, PrimaryButton, RichLine, t, useCommandDraft } from '@skinote/ui';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useClient } from '../app/client.tsx';
 import { say } from '../app/strings.ts';
+import { ManualDiscountFlow } from './ManualDiscountFlow.tsx';
 import { ChoiceSheet } from './NoticeDialog.tsx';
 
 const NO_BASIS: Basis = { epoch: '', rev: 0 };
@@ -31,23 +33,34 @@ const replace = (params: CheckoutSheetParams, view: CheckoutSheetView, sectionKe
   choices: choicesOf(params, view).map((c) => (c.sectionKey === sectionKey ? make(c) : c)),
 });
 
+/** 고른 할인(매장 할인 · 직접 입력)만 남긴 조각. */
+const discountOf = (c: CheckoutChoice) => ({ ...(c.discountKey ? { discountKey: c.discountKey } : {}), ...(c.manual ? { manual: c.manual } : {}) });
+
 /** 수단(빠른 수단 · `후불` · 기타 판의 수단). 할인은 그대로, 이 칸만의 결제 팀은 지운다. */
 export function withMethod(params: CheckoutSheetParams, view: CheckoutSheetView, sectionKey: string, methodKey: string): CheckoutSheetParams {
-  return replace(params, view, sectionKey, (c) => ({ sectionKey, methodKey, ...(c.discountKey ? { discountKey: c.discountKey } : {}) }));
+  return replace(params, view, sectionKey, (c) => ({ sectionKey, methodKey, ...discountOf(c) }));
 }
 
-/** 할인(`할인 없음`이면 뺀다). 수단 · 결제 팀은 그대로. */
+/** 할인(`할인 없음`이면 뺀다, 직접 입력 값도 지운다). 수단 · 결제 팀은 그대로. */
 export function withDiscount(params: CheckoutSheetParams, view: CheckoutSheetView, sectionKey: string, discountKey: string): CheckoutSheetParams {
-  return replace(params, view, sectionKey, ({ discountKey: _drop, ...rest }) => ({ ...rest, ...(discountKey !== CHECKOUT_KEYS.noDiscount ? { discountKey } : {}) }));
+  return replace(params, view, sectionKey, ({ discountKey: _drop, manual: _manual, ...rest }) => ({ ...rest, ...(discountKey !== CHECKOUT_KEYS.noDiscount ? { discountKey } : {}) }));
+}
+
+/** 직접 입력 할인(금액 · 비율 · 사유, features-1 §6-2): key `manual`과 그 값. 수단 · 결제 팀은 그대로. */
+export function withManualDiscount(params: CheckoutSheetParams, view: CheckoutSheetView, sectionKey: string, manual: ManualDiscount): CheckoutSheetParams {
+  return replace(params, view, sectionKey, ({ discountKey: _drop, manual: _manual, ...rest }) => ({ ...rest, discountKey: CHECKOUT_KEYS.manual, manual }));
 }
 
 /** `기타` 판의 `다른 팀 결제`: 이 칸만 찾은 팀이 낸다(후불). */
 export function withSectionPayer(params: CheckoutSheetParams, view: CheckoutSheetView, sectionKey: string, orderId: string): CheckoutSheetParams {
-  return replace(params, view, sectionKey, (c) => ({ sectionKey, methodKey: CHECKOUT_KEYS.later, ...(c.discountKey ? { discountKey: c.discountKey } : {}), payerOrderId: orderId }));
+  return replace(params, view, sectionKey, (c) => ({ sectionKey, methodKey: CHECKOUT_KEYS.later, ...discountOf(c), payerOrderId: orderId }));
 }
 
-/** 결제 팀 줄(이 팀 = self, 아니면 그 팀의 접수 id): `후불`인 칸 모두에 건다. */
+/**
+ * 결제 팀 줄(이 팀 = self, 아니면 그 팀의 접수 id): `후불`인 칸 모두에 건다. 품목 추가(addTo)는 접수의 결제 팀(order) · 이 팀(self) 중 하나(E22).
+ */
 export function withPayer(params: CheckoutSheetParams, key: string): CheckoutSheetParams {
+  if (params.addTo !== undefined) return { ...params, payer: key === 'self' ? 'self' : 'order' };
   return { ...params, payerOrderId: key === CHECKOUT_KEYS.self ? null : key };
 }
 
@@ -61,8 +74,10 @@ export function checkoutEnvelope(draft: AnyCommandDraft, view: CheckoutSheetView
   return envelopeFor(draft, view.command, view.expect);
 }
 
-/** 연 때의 초안 모양(본문 · 가격은 확정할 때 서버가 준 것으로 바뀐다: 요청번호 · basis만 이것으로 정한다). */
-const draftShape = (draft: OrderDraftInput): ConfirmCommand => ({ type: 'order.create', payload: { draft, choices: [], payerOrderId: null } });
+/** 연 때의 초안 모양(본문 · 가격은 확정할 때 서버가 준 것으로 바뀐다: 요청번호 · basis만 이것으로 정한다). 품목 추가는 order.add. */
+const draftShape = (draft: OrderDraftInput, addTo?: string): ConfirmCommand => (addTo !== undefined
+  ? { type: 'order.add', payload: { orderId: addTo, items: draft.items, choices: [], payer: 'order' } }
+  : { type: 'order.create', payload: { draft, choices: [], payerOrderId: null } });
 
 // ── 창 ───────────────────────────────────────────────────────────
 
@@ -71,20 +86,23 @@ type FindTarget = { kind: 'row' } | { kind: 'section'; sectionKey: string };
 
 type Sheet =
   | { kind: 'discount'; sectionKey: string }
+  | { kind: 'manual'; sectionKey: string }
   | { kind: 'other'; sectionKey: string }
   | { kind: 'find'; target: FindTarget }
   | { kind: 'pick'; target: FindTarget; found: FindResult };
 
 export interface CheckoutDialogProps {
   draft: OrderDraftInput;
+  /** 품목 추가(features-1 §5-5): 이 접수에 더하는 확정 창(order.add, 할인 고르기 없음, 결제 팀 줄은 접수의 결제 팀 · 이 팀). */
+  addTo?: string;
   onClose: () => void;
-  /** 접수 확정이 적용됨: 새 접수(부르는 쪽이 초안을 지우고 접수증으로 간다). */
+  /** 접수 확정이 적용됨: 새 접수(부르는 쪽이 초안을 지우고 접수증으로 간다). 품목 추가는 그 접수. */
   onDone: (orderId: string) => void;
 }
 
-export function CheckoutDialog({ draft: orderDraft, onClose, onDone }: CheckoutDialogProps) {
+export function CheckoutDialog({ draft: orderDraft, addTo, onClose, onDone }: CheckoutDialogProps) {
   const client = useClient();
-  const [params, setParams] = useState<CheckoutSheetParams>({ draft: orderDraft });
+  const [params, setParams] = useState<CheckoutSheetParams>({ draft: orderDraft, ...(addTo !== undefined ? { addTo } : {}) });
   const [loaded, setLoaded] = useState<{ key: string; view: CheckoutSheetView } | null>(null);
   const [tick, setTick] = useState(0);
   const [sheet, setSheet] = useState<Sheet | null>(null);
@@ -115,8 +133,8 @@ export function CheckoutDialog({ draft: orderDraft, onClose, onDone }: CheckoutD
     return () => { alive = false; };
   }, [client, paramsKey, tick]);
 
-  const shape = useMemo(() => (view ? draftShape(orderDraft) : null), [view !== null]);
-  const { draft, markSent } = useCommandDraft(view ? 'checkout:new' : null, shape, view?.basis ?? NO_BASIS);
+  const shape = useMemo(() => (view ? draftShape(orderDraft, addTo) : null), [view !== null]);
+  const { draft, markSent } = useCommandDraft(view ? (addTo !== undefined ? 'checkout:add:' + addTo : 'checkout:new') : null, shape, view?.basis ?? NO_BASIS);
 
   if (!view) return null;
 
@@ -129,6 +147,7 @@ export function CheckoutDialog({ draft: orderDraft, onClose, onDone }: CheckoutD
     client.command(envelope).then((outcome) => {
       const created = createdOrder(outcome);
       if (created) { onDone(created.orderId); return; }
+      if (addTo !== undefined && isAccepted(outcome)) { onDone(addTo); return; }
       setBusy(false);
       setSpent(true);
       setError(outcome.error?.message ?? say('commandFailed'));
@@ -189,10 +208,12 @@ export function CheckoutDialog({ draft: orderDraft, onClose, onDone }: CheckoutD
         <div className={'pos-checkout-payer' + (view.payer.visible ? '' : ' is-blank')} {...(view.payer.visible ? {} : { 'aria-hidden': true })}>
           <span className="pos-checkout-payer-label">{view.payer.label}</span>
           <ChoiceRow options={view.payer.options} label={say('payerGroup')} onPress={(key) => change(withPayer(params, key))} />
-          <button type="button" className="sn-button sn-choice pos-checkout-find" onClick={() => openFind({ kind: 'row' })}>
-            <Icon name="keypad" />
-            <span>{say('findOtherTeam')}</span>
-          </button>
+          {view.payer.find === false ? null : (
+            <button type="button" className="sn-button sn-choice pos-checkout-find" onClick={() => openFind({ kind: 'row' })}>
+              <Icon name="keypad" />
+              <span>{say('findOtherTeam')}</span>
+            </button>
+          )}
         </div>
         <p className={'pos-checkout-due' + (alert ? ' is-alert' : '')} {...(alert ? { role: 'alert' } : {})}>
           <RichLine runs={alert ? [{ text: alert, strong: true }] : view.due} />
@@ -201,9 +222,21 @@ export function CheckoutDialog({ draft: orderDraft, onClose, onDone }: CheckoutD
       {sheet?.kind === 'discount' && section(sheet.sectionKey) ? (
         <ChoiceSheet
           title={t('discountApplyFor', { section: section(sheet.sectionKey)!.label })}
-          choices={(section(sheet.sectionKey)!.discounts ?? []).map((o) => ({ key: o.key, label: o.label }))}
-          onPick={(key) => { setSheet(null); change(withDiscount(params, view, sheet.sectionKey, key)); }}
+          choices={(section(sheet.sectionKey)!.discounts ?? []).map((o) => ({
+            key: o.key, label: o.label, ...(o.secondLine ? { note: o.secondLine } : o.reason ? { note: o.reason } : {}), ...(o.enabled ? {} : { disabled: true }),
+          }))}
+          onPick={(key) => {
+            if (key === CHECKOUT_KEYS.manual) setSheet({ kind: 'manual', sectionKey: sheet.sectionKey });
+            else { setSheet(null); change(withDiscount(params, view, sheet.sectionKey, key)); }
+          }}
           onClose={() => setSheet(null)}
+        />
+      ) : null}
+      {sheet?.kind === 'manual' && section(sheet.sectionKey)?.manual ? (
+        <ManualDiscountFlow
+          spec={section(sheet.sectionKey)!.manual!}
+          onDone={(manual) => { setSheet(null); change(withManualDiscount(params, view, sheet.sectionKey, manual)); }}
+          onClose={() => setSheet({ kind: 'discount', sectionKey: sheet.sectionKey })}
         />
       ) : null}
       {sheet?.kind === 'other' && section(sheet.sectionKey) ? (

@@ -6,7 +6,7 @@ import type { ReactElement } from 'react';
 import { describe, expect, it } from 'vitest';
 import {
   AppHeader, Checklist, ConfirmDialog, ConnectionStrip, DeviceProfileProvider, FooterBar, IndexTabs, Keypad, Ledger, Pager, PinBar,
-  PrimaryButton, RowActionBar, Slip, Stamp, confirmLabelAlts, paymentParts, fillTitle, fitLines, keypadKeyAction, rowBarSteps, typingIn, type RowAction,
+  PrimaryButton, ReviewStepButtons, ReviewStepLine, RowActionBar, Slip, Stamp, confirmLabelAlts, paymentParts, fillTitle, fitLines, keypadKeyAction, rowBarSteps, typingIn, type RowAction,
 } from '../src/index.ts';
 import type { DeviceRole, Size } from '../src/device-profile.ts';
 import { collectionList, dayLedger, NOW_MS, kst, orderSlip } from './fixtures.ts';
@@ -456,5 +456,20 @@ describe('접수증 돈 줄의 수단(paymentParts)', () => {
       { amount: 135_000, methodLabel: '계좌이체', date: '2026-12-25' }, { amount: 35_000, methodLabel: '계좌이체', date: '2026-12-26' },
     ], '2026-12-26')).toEqual([{ text: '계좌이체', drop: 5 }]);
     expect(paymentParts([], '2026-12-26')).toEqual([]);
+  });
+});
+
+describe('ReviewStep(막는 단계, features-1 §9-3)', () => {
+  const step = {
+    kindKey: 'van_unsynced', message: '1호 차량 기록 2건 전송 대기 · 마감 전 전송 필요',
+    parts: [{ text: '1호 차량 기록 2건 전송 대기', drop: 0 }, { text: '마감 전 전송 필요', drop: 1 }],
+    choices: [{ key: 'recheck' as const, label: '재확인' }, { key: 'close' as const, label: '닫기' }],
+  };
+  it('한 줄은 알림 칸(읽는 이름 = 온전한 문장), 버튼은 `닫기` 보통 버튼 + `재확인` 주 버튼 하나', () => {
+    const line = render(<ReviewStepLine step={step} />);
+    expect(line).toContain('class="sn-review-step" role="alert" aria-label="1호 차량 기록 2건 전송 대기 · 마감 전 전송 필요"');
+    const buttons = render(<ReviewStepButtons step={step} onChoice={noop} />);
+    expect(buttons.match(/data-primary="true"/g)).toHaveLength(1);
+    expect(buttons.indexOf('닫기')).toBeLessThan(buttons.indexOf('재확인'));
   });
 });

@@ -20,7 +20,8 @@ import { useClient, useConfig, useConnection, useLive, usePointerDown } from '..
 import { back, go, navState, type DeviceShape } from '../app/router.ts';
 import { say } from '../app/strings.ts';
 import { pressStamp, useConfirmFlow } from '../components/ConfirmFlow.tsx';
-import { ChoiceSheet, NoticeDialog } from '../components/NoticeDialog.tsx';
+import { ChoiceSheet } from '../components/NoticeDialog.tsx';
+import { CallDialog } from '../components/CallDialog.tsx';
 import { AddTicketPanel, FieldPayPanel } from '../components/TaskPanels.tsx';
 import { VanStockDialog } from '../components/VanStockDialog.tsx';
 import { VisitResultDialog } from '../components/VisitResultDialog.tsx';
@@ -392,11 +393,7 @@ export function TaskSheetScreen({ taskId, device }: { taskId: string; device: De
         />
       ) : null}
       {panel?.kind === 'call' ? (
-        <NoticeDialog
-          title={say('noticeTitle', { label: ACTION_LABELS.call, name: view.teamName })}
-          lines={[view.phone ?? '', say('demoNoCall')]}
-          onClose={() => setPanel(null)}
-        />
+        <CallDialog orderId={view.orderId} fallbackTitle={say('noticeTitle', { label: ACTION_LABELS.call, name: view.teamName })} onClose={() => setPanel(null)} />
       ) : null}
       {panel?.kind === 'find' ? (
         <Keypad

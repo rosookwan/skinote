@@ -2,7 +2,10 @@
 // 새 rev 알림(subscribe)이 오면 다시 읽는데, 손가락이 화면에 닿아 있거나 창이 열려 있는 동안(hold)은 미뤘다가 끝난 뒤 한 번 읽는다(ui 6-1).
 // 다시 읽기가 실패하면 가진 읽기 모델을 그대로 두고(화면이 비지 않게) 실패의 코드만 알리고, 잠시 뒤 다시 읽는다.
 // 설정은 config_rev가 오르면(ui 2절) 다시 받는다.
-import { domainErrorCode, type ConnectionState, type DomainClient, type DomainErrorCode, type UiConfig } from '@skinote/contract';
+import {
+  domainErrorCode, type ConnectionState, type DomainClient, type DomainErrorCode, type SettingsOp, type SettingsTabKey, type ShopSettingsView, type StaffPinResult,
+  type UiConfig,
+} from '@skinote/contract';
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 
 /** 체험판 전용 조작(시계 · 처음으로 · 기사 기기 연결). 운영 클라이언트에는 없다. */
@@ -19,9 +22,22 @@ export interface DemoControls {
   previewStaff(): string[];
   /** 미리 보기(#/preview/choose)의 차량 타일(체험 매장의 차량: id와 이름). */
   previewVehicles(): { id: string; name: string }[];
+  /**
+   * 미리 보기(#/preview/settings-many): 권종이 많고(10) 장소가 많은(12) 체험 매장으로 그린 매장 설정 탭(긴 카드의 `(계속)`, features-1 E26).
+   * 체험 자료는 바꾸지 않는다.
+   */
+  previewSettings(tab: SettingsTabKey, changes: SettingsOp[]): Promise<ShopSettingsView>;
 }
 
-export type AppClient = DomainClient & Partial<DemoControls>;
+/**
+ * 서버 모드에만 있는 길(매장 설정 `차량 · 직원`): 비밀번호 재발급 · 기기 막기. 체험판에는 없다(화면은 `체험판 미지원`).
+ */
+export interface ServerControls {
+  staffPin(staffId: string, ownPin: string): Promise<StaffPinResult>;
+  blockDevice(deviceId: string): Promise<void>;
+}
+
+export type AppClient = DomainClient & Partial<DemoControls> & Partial<ServerControls>;
 
 /** 실패한 읽기를 다시 해 보기까지(연결이 돌아오면 곧 다시 그린다). */
 const RETRY_AFTER_MS = 5_000;

@@ -3,10 +3,10 @@
 // 차량 칸을 더하면 여기를 고치지 않아도 나온다. 상태에 없는 값(매장 속성 attribute, 뜻을 모르는 글 칸 text)은 칸 값을
 // 만들지 않고, 화면은 빈칸으로 그린다(다른 칸의 값을 짐작해 넣지 않는다).
 import {
-  ACTION_LABELS, STAMP_RULE_SCOPE, resolveLedgerView, stampStepMap, statusTerm, visibleView,
+  ACTION_LABELS, DomainError, STAMP_RULE_SCOPE, resolveLedgerView, stampStepMap, statusTerm, visibleView, type PhoneRevealView,
   type ConfirmDraftParams, type ConfirmDraftView, type ConfirmStep, type DeviceClassKey, type DisabledAction, type FindResult, type FitPart, type LedgerCell,
   type LedgerColumnRow, type LedgerRow, type LedgerTabRow, type LedgerViewResult, type MetricValue, type OrderSlip, type PinRow,
-  type ResolvedLedgerView, type ReviewItem, type SlipLine, type StampCell, type StampStepRow, type UiConfig, type ViewParams,
+  type ResolvedLedgerView, type SlipLine, type StampCell, type StampStepRow, type UiConfig, type ViewParams,
 } from '@skinote/contract';
 import type { DomainLines, FxLine, FxOrder, ShopRegistry, ShopState } from './model.ts';
 import { linesOf } from './lines.ts';
@@ -14,11 +14,16 @@ import { notReceived, notReceivedText } from './closing.ts';
 import { backHeldRefund, depositDueAtIssue, depositDueForIssued, orderDepositHeld } from './deposits.ts';
 import { collectDepositStep, deliverDone, deliverTasks, figureWords, findDeliverTask, onVanToDeliver, spareTickets, type FxDeliverTask } from './driver.ts';
 import { lineNames, payMethodOf, productOf } from './catalog.ts';
+import { lineGross, sectionDiscountNow, slipAdjustments } from './discounts.ts';
+import { CANCEL_WORDS } from './cancel-words.ts';
+import { editAdjustments } from './order-edit.ts';
+import { maskPhone, phoneText } from './order-draft.ts';
+import { backOf, hasSwaps, lineVariants, namesNow, swappedLabel, variantRange, type SizePhase } from './variants.ts';
 import { currentReturn, findTask, openReturns, orderTasks, taskOrder, type FxTask } from './promises.ts';
 import {
-  anyIssued, backCount, bizDay, collectDone, collectLeft, coveredOrders, deliverTaskId, findOrder, isDeliverTaskId, isFinished, isVehiclePickup,
-  isVehicleReturn, lastReturnSlotAt, lateAtOf, moneyLateAt, nextDue, nightNoticeBefore, nightPrepSlotAt, onVan, openPins, orderConditions,
-  listTasks, orderIdOfTask, othersDue, ownDue, dueFor, paidTotal, pendingIssue, pendingReturn, pinTask, pinTaskId, placeLabel, placeShortLabel, promisedPayer, routeTasks,
+  anyIssued, backCount, bizDay, collectDone, collectLeft, coveredOrders, deliverTaskId, findOrder, isCancelledOrder, isDeliverTaskId, isFinished, isVehiclePickup,
+  isVehicleReturn, lastReturnSlotAt, lateAtOf, leftover, liveQty, moneyLateAt, nextDue, nightNoticeBefore, nightPrepSlotAt, onVan, openPins, orderConditions,
+  listTasks, orderIdOfTask, othersDue, ownDue, dueFor, paidTotal, pendingIssue, pendingReturn, pinTask, pinTaskId, placeLabel, placeShortLabel, promisedPayer, refunded, routeTasks,
   selfDue, slotKey,
   sortTasks, unitCount, vehicleLabel, visitOutcomeLabel, visitReasons, charged, type DueKind,
 } from './rules.ts';
@@ -40,6 +45,32 @@ export interface ViewContext {
   pendingTasks?: ReadonlySet<string>;
   /** 거절 · 알림 문구(없으면 운영 문구 PRODUCTION_LINES). */
   lines?: DomainLines;
+  /** 보는 사람의 역할 권한(서버: 세션의 역할). 없으면 모두 허락(메모리 어댑터). 읽기 모델은 막힌 것을 회색으로 · 까닭과 함께 그린다(plan E11). */
+  viewer?: Viewer;
+  /** 매장 설정 `차량 · 직원`의 직원 항목 판에 둘 그 사람이 쓴 기기(서버가 채움, 메모리 어댑터는 없음). */
+  staffDevices?: Readonly<Record<string, readonly StaffDevice[]>>;
+}
+
+/** 보는 사람(역할과 권한 key). */
+export interface Viewer {
+  roleKey: string;
+  permissions: readonly string[];
+  /** 보는 사람의 직원 id(자기 자신의 `사용 종료`를 막는다). */
+  staffId?: string;
+  /** 역할의 한도(role_permissions.limits_json, features-1 E10): 직접 입력 할인의 금액 · 비율. 없으면 한도 없음. */
+  limits?: RoleLimits;
+}
+
+/** 역할의 한도(role_permissions.limits_json의 max_discount_amount · max_discount_percent_bp). */
+export interface RoleLimits {
+  maxDiscountAmount?: number;
+  maxDiscountPercentBp?: number;
+}
+
+/** 직원이 쓴 기기(기기 막기). */
+export interface StaffDevice {
+  id: string;
+  label: string;
 }
 
 const head = (ctx: ViewContext) => ({
@@ -69,20 +100,25 @@ function timeCell(ctx: ViewContext, o: FxOrder): LedgerCell {
   const at = due?.at ?? currentReturn(o).at;
   const day = bizDay(ctx.state);
   const otherDay = !onBizDay(at, day);
+  // 모두 취소한 접수는 윗줄이 `취소`(흐린 줄, 빨강 아님: features-1 §5-4). 좁으면 날짜 말보다 늦게 빠진다.
+  const word = isCancelledOrder(o) ? CANCEL_WORDS.status : due ? DUE_WORD[due.kind] : '반납';
   return {
     renderer: 'time',
     at: iso(at),
     parts: [
-      ...(otherDay ? [{ text: dayWord(at, day.date, day.cutoff), drop: 1 }] : []),
-      { text: due ? DUE_WORD[due.kind] : '반납', drop: 2 },
+      ...(otherDay ? [{ text: dayWord(at, day.date, day.cutoff), drop: isCancelledOrder(o) ? 2 : 1 }] : []),
+      { text: word, drop: isCancelledOrder(o) ? 1 : 2 },
       { text: bizHm(at, day.cutoff), drop: 0 },
     ],
   };
 }
 
-/** 장부 품목 칸: 같은 품목(짧은 이름)은 한 칸으로 센다(새 접수의 의류 95 × 2 · 100 × 1 → 의류 3). */
+/**
+ * 장부 품목 칸: 같은 품목(짧은 이름)은 한 칸으로 센다(새 접수의 의류 95 × 2 · 100 × 1 → 의류 3). 살아 있는 수로 센다(취소한 수는 빠진다). 모두 취소한
+ * 접수는 취소한 품목 그대로(`취소` 줄에 무엇이었는지 보이게).
+ */
 function itemsOf(lines: readonly FxLine[]) {
-  return itemCounts(lines, (l) => l.qty);
+  return lines.some((l) => liveQty(l) > 0 || l.issued > 0) ? itemCounts(lines, (l) => Math.max(liveQty(l), l.issued - backCount(l))) : itemCounts(lines, (l) => l.qty);
 }
 
 /** 반납 일정: '22:00 설천 주차장 · 차량', '16:30 매장', '내일 09:00 솔마을 한솔동 · 차량'. 일정이 나뉘었으면 아직 남은 가장 이른 일정. */
@@ -156,7 +192,8 @@ function cellFor(ctx: ViewContext, o: FxOrder, column: LedgerColumnRow): LedgerC
     case 'vehicle': return vehicleCell(ctx, o);
     case 'money': return moneyCell(ctx, o);
     case 'stamp': return { renderer: 'stamp', stamp: columnStamp(ctx.state, o, column.step_keys ?? [], steps(ctx)) };
-    case 'action': return column.action_key === 'call' ? { renderer: 'action', actionKey: 'call', enabled: o.phone !== '', phone: o.phone } : null;
+    // 전화 칸은 가린 번호만(누를 수 있는지의 표시): 온전한 번호는 전화 창의 phoneReveal(열람 기록)로만 준다(2026-09-27 점검, deployment 10-4).
+    case 'action': return column.action_key === 'call' ? { renderer: 'action', actionKey: 'call', enabled: o.phone !== '', ...(o.phone ? { phone: maskPhone(o.phone) } : {}) } : null;
     // 매장 속성 칸 · 뜻을 모르는 글 칸: 상태에 값이 없다(빈칸).
     case 'attribute':
     case 'text':
@@ -177,9 +214,15 @@ const FILTERS: Partial<Record<LedgerTabRow['filter_key'], OrderFilter>> = {
   lessons: () => false,
 };
 
-function metricValue(ctx: ViewContext, orders: readonly FxOrder[], key: MetricValue['metricKey']): MetricValue | null {
+function metricValue(ctx: ViewContext, all: readonly FxOrder[], key: MetricValue['metricKey']): MetricValue | null {
+  // 모두 취소한 접수는 팀 수 · 지급 · 반납 수에 넣지 않는다(features-1 §5-1).
+  const orders = all.filter((o) => !isCancelledOrder(o));
   switch (key) {
-    case 'team_count': return { metricKey: key, unit: 'team', value: orders.length };
+    case 'team_count': {
+      // 뺀 취소 접수는 따로 말한다(탭의 `전체`는 취소한 줄도 센다).
+      const cancelled = all.length - orders.length;
+      return { metricKey: key, unit: 'team', value: orders.length, ...(cancelled > 0 ? { cancelled } : {}) };
+    }
     case 'issued_count': return { metricKey: key, unit: 'count', value: orders.filter((o) => o.lines.length > 0 && !pendingIssue(o)).length };
     case 'returned_count': return { metricKey: key, unit: 'count', value: orders.filter((o) => o.lines.some((l) => l.returnable) && !pendingReturn(o)).length };
     case 'due_total': return { metricKey: key, unit: 'won', value: orders.reduce((sum, o) => sum + ownDue(o), 0) };
@@ -246,6 +289,7 @@ export function dayLedger(ctx: ViewContext, params: ViewParams): LedgerViewResul
       ...(due ? { dueAt: iso(due.at) } : {}),
       ...(due?.lateAt !== undefined ? { lateAt: iso(due.lateAt) } : {}),
       finished,
+      ...(isCancelledOrder(o) ? { statusWord: CANCEL_WORDS.status } : {}),
       cells,
       conditions: orderConditions(ctx.state, o),
       ...(next?.renderer === 'stamp' ? { nextStepKey: next.stamp.stepKey } : {}),
@@ -313,19 +357,6 @@ function listStamp(ctx: ViewContext, o: FxOrder, column: LedgerColumnRow, counte
   return cell;
 }
 
-/** 차량 재고: 품목별 합(수거했지만 매장에 아직 입고하지 않은 것). 권은 단위('매')와 함께. */
-function loadItems(orders: readonly FxOrder[], qty: (l: FxLine) => number) {
-  const byLabel = new Map<string, { qty: number; unit?: string }>();
-  for (const o of orders) {
-    for (const l of o.lines) {
-      if (qty(l) <= 0) continue;
-      const seen = byLabel.get(l.shortLabel);
-      byLabel.set(l.shortLabel, { qty: (seen?.qty ?? 0) + qty(l), ...(l.unit ? { unit: l.unit } : {}) });
-    }
-  }
-  return [...byLabel.entries()].map(([label, x]) => ({ label, qty: x.qty, ...(x.unit ? { unit: x.unit } : {}) }));
-}
-
 /**
  * 줄마다 지금 누를 수 없는 동작(회색)과 까닭. 순서 동작(▲ · ▼ · 맨 위로)은 보이는 목록의 같은 반납 타임 안에서, 빨리 확인으로
  * 고정된 줄은 옮길 수 없다(맨 위에 있다).
@@ -348,6 +379,7 @@ export function collectionList(ctx: ViewContext, params: ViewParams): LedgerView
   const v = view(ctx, 'collection_list', deviceClass);
   if (!v) throw new Error('화면 설정이 없다: collection_list');
   const counter = deviceClass === 'pos' || deviceClass === 'pos_narrow';
+  const printed = deviceClass === 'print';
   const vehicleId = params.vehicleId ?? 'v1';
   const date = params.date ?? ctx.state.businessDate;
   const pending = ctx.pendingTasks ?? new Set<string>();
@@ -378,10 +410,12 @@ export function collectionList(ctx: ViewContext, params: ViewParams): LedgerView
       if (column.renderer_key === 'stamp') cells[column.column_key] = { renderer: 'stamp', stamp: listStamp(ctx, o, column, counter, pending.has(taskId)) };
       // 수거 목록의 품목은 차량이 받을 것만: 이 업무 몫에서 내준 것 중 매장에 직접 돌아온 것을 뺀 수(받은 것 + 아직 받을 것). 손님이 일부를
       // 카운터에 가져왔으면 줄의 품목이 수거 창과 같은 것만 남는다(박준호 보드 · 헬멧 매장 반납 → `야간권 1매`).
-      else if (column.renderer_key === 'items') cells[column.column_key] = { renderer: 'items', items: itemCounts(o.lines.filter((l) => l.returnable), (l) => l.issued - l.returned) };
+      else if (column.renderer_key === 'items') cells[column.column_key] = { renderer: 'items', items: itemCounts(o.lines.filter((l) => l.returnable), (l) => l.issued - l.returned - (l.lost ?? 0)) };
       else {
         const cell = cellFor(ctx, o, column);
-        if (cell) cells[column.column_key] = cell;
+        // 인쇄 판(A4, features-1 E16)의 전화 칸은 가린 번호(`010-****-0025`, deployment 10-5): 종이에는 온전한 번호를 적지 않는다.
+        if (cell?.renderer === 'action' && printed) cells[column.column_key] = { ...cell, phone: maskPhone(o.phone) };
+        else if (cell) cells[column.column_key] = cell;
       }
     }
     // 보이는 목록에서 같은 반납 타임 · 고정되지 않은 줄 사이의 자리(▲ · ▼ · 맨 위로의 가능 여부).
@@ -422,7 +456,7 @@ export function collectionList(ctx: ViewContext, params: ViewParams): LedgerView
     const o = task.order;
     // 장소는 기사에게 가장 중요하다: 메모가 먼저 빠지고(시각은 화면이 그 다음에 뺀다), 장소는 짧은 이름('들국화')으로 줄었다가 마지막에 빠진다.
     return [{
-      pinId: p.id, taskId: task.id, orderId: o.id, at: iso(p.at), phone: o.phone, status: p.status,
+      pinId: p.id, taskId: task.id, orderId: o.id, at: iso(p.at), ...(o.phone ? { phone: maskPhone(o.phone) } : {}), status: p.status,
       parts: [
         { text: placeLabel(ctx.state.registry, task.promise.placeId), short: placeShortLabel(ctx.state.registry, task.promise.placeId), drop: 1 },
         { text: o.teamName + ' · ' + o.last4, drop: 0 },
@@ -443,12 +477,17 @@ export function collectionList(ctx: ViewContext, params: ViewParams): LedgerView
     metrics,
     activeConditions: [],
     primaryFigure: van.figure,
-    pins,
+    // 인쇄 판은 긴급 줄이 없다(종이에 온전한 번호를 적지 않는다).
+    pins: printed ? [] : pins,
     vehicle,
     vehicleLoad: van.load,
     visitReasons: visitReasons(ctx.state.registry, 'collect'),
+    ...(printed ? { printHead: printHead(ctx.state.registry) } : {}),
   };
 }
+
+/** A4 인쇄 머리(매장 이름 · 매장 전화, features-1 E16). */
+const printHead = (reg: ShopRegistry) => ({ shopName: reg.shopName, shopPhone: reg.shopPhone ? phoneText(reg.shopPhone) : '' });
 
 /**
  * 차량 재고(문구 표: 지금 차량에 있는 장비 · 권, ui 6-5): 실었지만 아직 건네지 않은 배달 품목(그 배달 팀 아래), 수거했지만 매장에 아직 입고하지
@@ -467,27 +506,37 @@ function vanStock(ctx: ViewContext, vehicleId: string, date: string) {
   });
   const spareTotal = spareItems.reduce((n, x) => n + x.qty, 0);
   const loaded = (l: FxLine) => onVanToDeliver(l);
+  // 취소한 배달의 차에 남은 것(features-1 E7): 그 팀 아래 `접수 취소`, 매장 입고로 내려놓는다.
+  const left = today ? leftovers(ctx.state, vehicleId) : [];
+  const counted = (lines: readonly FxLine[], qty: (l: FxLine) => number) => itemCounts(lines.filter((l) => qty(l) > 0).map((l) => ({ ...l, qty: qty(l) })), (l) => l.qty);
   const items = [
     ...itemCounts([...deliveries.flatMap((d) => d.order.lines.filter((l) => loaded(l) > 0).map((l) => ({ ...l, qty: loaded(l) }))),
-      ...views.flatMap((o) => o.lines.filter((l) => onVan(l) > 0).map((l) => ({ ...l, qty: onVan(l) })))], (l) => l.qty),
+      ...views.flatMap((o) => o.lines.filter((l) => onVan(l) > 0).map((l) => ({ ...l, qty: onVan(l) }))),
+      ...left.flatMap((o) => o.lines.filter((l) => leftover(l) > 0).map((l) => ({ ...l, qty: leftover(l) })))], (l) => l.qty),
     ...(spareTotal > 0 ? [{ label: '예비권', qty: spareTotal, unit: spareItems[0]?.unit ?? '매' }] : []),
   ];
   const byTask = [
     ...deliveries.flatMap((d) => {
-      const list = itemsOf(d.order.lines.filter((l) => loaded(l) > 0).map((l) => ({ ...l, qty: loaded(l) })));
+      const list = counted(d.order.lines, loaded);
       return list.length ? [{ taskId: d.id, teamName: d.order.teamName, last4: d.order.last4, items: list }] : [];
     }),
     ...tasks.flatMap((t, i) => {
       const o = views[i]!;
-      const list = itemsOf(o.lines.filter((l) => onVan(l) > 0).map((l) => ({ ...l, qty: onVan(l) })));
+      const list = counted(o.lines, onVan);
       return list.length ? [{ taskId: t.id, teamName: o.teamName, last4: o.last4, items: list }] : [];
     }),
+    ...left.map((o) => ({ taskId: deliverTaskId(o) + ':left', teamName: o.teamName, last4: o.last4, items: counted(o.lines, leftover), note: CANCEL_WORDS.orderCancel })),
   ];
   return {
     items,
-    figure: figureOf(views.flatMap((o) => o.lines), onVan) ?? { count: 0 },
+    figure: figureOf([...views.flatMap((o) => o.lines.map((l) => ({ ...l, qty: onVan(l) }))), ...left.flatMap((o) => o.lines.map((l) => ({ ...l, qty: leftover(l) })))], (l) => l.qty) ?? { count: 0 },
     load: { vehicleId, vehicleLabel: vehicleLabel(ctx.state.registry, vehicleId), items, spareTickets: spareItems, byTask },
   };
+}
+
+/** 이 차량에 취소한 배달의 남은 것이 있는 접수(features-1 E7, 모든 날: 차에 있는 동안). */
+export function leftovers(state: ShopState, vehicleId: string): FxOrder[] {
+  return state.orders.filter((o) => isVehiclePickup(o) && o.pickup.vehicleId === vehicleId && o.lines.some((l) => leftover(l) > 0));
 }
 
 // ── 배달 목록(delivery_list: 기사 태블릿 · 휴대폰, ui 6-5) ─────────────────────────────
@@ -603,13 +652,16 @@ const methodLabel = (reg: { readonly payMethods: ShopRegistry['payMethods'] }, k
 function slipLine(ctx: ViewContext, o: FxOrder, l: FxLine, columns: readonly LedgerColumnRow[]): SlipLine {
   const all = steps(ctx);
   const cells: SlipLine['cells'] = {};
+  // 즉시 교환한 줄은 지금 사이즈(`헬멧 대 사이즈` · `헬멧 중 사이즈 1 · 대 사이즈 1`, features-1 §7-1). 교환하지 않은 줄은 줄 이름 그대로.
+  const label = swappedLabel(ctx.state.registry, l, lineVariants(l)) ?? l.label;
   for (const column of columns) {
     switch (column.renderer_key) {
       case 'items':
-        cells[column.column_key] = { renderer: 'text', parts: [{ text: l.label, drop: 0, words: true }] };
+        cells[column.column_key] = { renderer: 'text', parts: [{ text: label, drop: 0, words: true }] };
         break;
       case 'money':
-        cells[column.column_key] = { renderer: 'money', alts: [won(l.amount)], tone: 'ink' };
+        // 할인 앞 값(할인은 품목 표 아래 출처 줄, features-1 §6-2).
+        cells[column.column_key] = { renderer: 'money', alts: [won(lineGross(l))], tone: 'ink' };
         break;
       case 'text':
         // 아는 글 칸은 수량뿐이다(매장이 더한 글 칸은 값이 없어 빈칸).
@@ -633,10 +685,10 @@ function slipLine(ctx: ViewContext, o: FxOrder, l: FxLine, columns: readonly Led
   return {
     id: l.id,
     isBundle: false,
-    label: l.label,
+    label,
     qty: l.qty,
     qtyText: l.qty + (l.unit ?? ''),
-    amount: l.amount,
+    amount: lineGross(l),
     cells,
     capabilities: l.issued > backCount(l) ? l.capabilities : [],
   };
@@ -678,11 +730,19 @@ export function orderSlip(ctx: ViewContext, orderId: string, deviceClass: Device
     };
   };
   const orderStamps = [...all.values()].filter((s) => STAMP_RULE_SCOPE[s.rule_key] === 'order').map((s) => stepStamp(ctx.state, o, s, all)).filter((c) => c.state !== 'na');
-  // 이 팀이 결제 팀으로 낸 돈 중 다른 팀 몫(일괄 수납 · 대납 수납): 돈 한 건의 실제 금액과 수단(가장 최근 결제).
+  // 이 팀이 결제 팀으로 낸 돈 중 다른 팀 몫(일괄 수납 · 대납 수납): 돈 한 건의 실제 금액과 수단(가장 최근 결제). 그 몫에서 돌려준 돈(환불)은 뺀다.
   const paidGroups = ctx.state.paymentGroups.filter((g) => g.payerOrderId === o.id).sort((a, b) => a.at - b.at);
   const paidForOthers = paidGroups.reduce((sum, g) => sum + ctx.state.orders
     .filter((x) => x.id !== o.id)
-    .reduce((n, x) => n + x.payments.filter((p) => p.groupId === g.id).reduce((m, p) => m + p.amount, 0), 0), 0);
+    .reduce((n, x) => n + x.payments.filter((p) => p.groupId === g.id)
+      .reduce((m, p) => m + p.amount - (x.refunds ?? []).filter((r) => r.refundOf === p.id).reduce((k, r) => k + r.amount, 0), 0), 0), 0);
+  const adjustments = slipAdjustments(ctx.state.registry, o, editAdjustments(ctx.state.registry, o));
+  const back = refunded(o);
+  const discountNow = ctx.state.registry.paySections.reduce((sum, s) => sum + Math.max(0, sectionDiscountNow(o, s.key)), 0);
+  const cancelled = isCancelledOrder(o);
+  // 보는 사람에게 없는 권한(이 화면 옆 동작 줄이 요구하는 것 중): availableActions가 그 줄을 뺀다(features-1 E11).
+  const viewer = ctx.viewer;
+  const denied = viewer ? [...new Set(v.actions.flatMap((a) => (a.required_permission_key && !viewer.permissions.includes(a.required_permission_key) ? [a.required_permission_key] : [])))] : [];
   const lastGroup = paidGroups.at(-1);
   return {
     ...head(ctx),
@@ -696,16 +756,25 @@ export function orderSlip(ctx: ViewContext, orderId: string, deviceClass: Device
       { key: 'channel', label: '구분', value: CHANNEL_LABEL[o.channel], drop: 3 },
       { key: 'name', label: '대표자', value: o.teamName, drop: 0 },
       // 적지 않은 연락처 · 인원(현장 접수는 대표자만 적기도 한다)은 빈 칸 대신 칸째 뺀다.
-      ...(o.phone ? [{ key: 'phone', label: '연락처', value: o.phone, drop: 0 }] : []),
+      // 가린 번호(화면 · 인쇄 모두): 온전한 번호는 옆 동작 `전화`의 창(phoneReveal, 열람 기록)으로만(2026-09-27 점검).
+      ...(o.phone ? [{ key: 'phone', label: '연락처', value: maskPhone(o.phone), drop: 0 }] : []),
       ...(o.party > 0 ? [{ key: 'party', label: '인원', value: o.party + '명', drop: 1 }] : []),
     ],
     lines: o.lines.map((l) => slipLine(ctx, o, l, v.columns)),
+    // 모두 취소한 접수: 머리의 `취소`, 품목 줄 · 일정 줄은 옅은 먹(장부의 취소 줄과 같은 모양, 2026-09-27 점검).
+    ...(cancelled ? { cancelled: { label: CANCEL_WORDS.status } } : {}),
     promises: { distinct: Math.max(1, returns), lines: [promiseLine('pickup'), promiseLine('return')] },
     money: {
       charged: charged(o),
       paid: paidTotal(o),
       due,
-      payments: o.payments.map((p) => ({ amount: p.amount, methodLabel: methodLabel(ctx.state.registry, p.methodKey), date: businessDateOf(p.at, shopCutoff(ctx.state.settings)) })),
+      // 수단마다의 조각은 돌려준 돈을 뺀 몫(모두 돌려준 수납은 빠진다): `수납 0원 · 현금 5,000원 …`이 아직 가진 돈으로 읽히지 않게(2026-09-27 점검).
+      payments: o.payments
+        .map((p) => ({ p, net: p.amount - (o.refunds ?? []).filter((r) => r.refundOf === p.id).reduce((sum, r) => sum + r.amount, 0) }))
+        .filter((x) => x.net > 0)
+        .map(({ p, net }) => ({ amount: net, methodLabel: methodLabel(ctx.state.registry, p.methodKey), date: businessDateOf(p.at, shopCutoff(ctx.state.settings)) })),
+      // 지금 할인(칸마다 합): 돈 줄의 `할인 −12,000원`(할인 출처 줄이 품목 표의 다음 쪽에 있어도 첫 쪽에서 청구가 설명되게).
+      ...(discountNow > 0 ? { discount: discountNow } : {}),
       ...(payer && due > 0 ? { promisedBy: { teamName: payer.teamName + ' 팀', amount: due } } : {}),
       ...(others > 0 ? { collectForOthers: others, collectTotal: due + others } : {}),
       // 맡은 보증금(청구 · 미수와 따로, data-model 4-12). 없으면 조각이 없다.
@@ -714,6 +783,7 @@ export function orderSlip(ctx: ViewContext, orderId: string, deviceClass: Device
         ? { paidForOthers: { amount: paidForOthers, methodLabel: methodLabel(ctx.state.registry, lastGroup.methodKey), total: paidGroups.filter((g) => g.methodKey === lastGroup.methodKey).reduce((n, g) => n + g.amount, 0) } }
         : {}),
       ...(late !== undefined ? { lateAt: iso(late) } : {}),
+      ...(back > 0 ? { refunded: back } : {}),
     },
     orderStamps,
     // 다른 팀 몫까지 받을 팀(결제 예정 팀이 딸림): 수납은 보통 수납 창이 아니라 일괄 수납 화면(V5, ui 6-7). 팀 수는 이 팀(제 몫이 있으면) 포함.
@@ -721,75 +791,29 @@ export function orderSlip(ctx: ViewContext, orderId: string, deviceClass: Device
     checklist: items,
     nextStep: next,
     activeConditions: orderConditions(ctx.state, o),
+    ...(adjustments.length ? { adjustments } : {}),
+    ...(denied.length ? { deniedPermissions: denied } : {}),
+    ...(deviceClass === 'print' ? { printHead: printHead(ctx.state.registry) } : {}),
   };
 }
 
-// ── 끝 4자리 찾기 · 확인 필요 ──────────────────────────────────────────
+/**
+ * 전화 창의 온전한 번호(features-1 §8-4, E17): 제목 `전화 · 최하은 팀`과 번호. 서버는 이 조회마다 개인정보 열람 기록(pii_access_log phone_reveal)을
+ * 남긴다. 번호가 없으면 빈 글.
+ */
+export function phoneReveal(ctx: ViewContext, orderId: string): PhoneRevealView {
+  const o = findOrder(ctx.state, orderId);
+  if (!o) throw new DomainError('NOT_FOUND', '없는 접수: ' + orderId);
+  return { title: ACTION_LABELS.call + ' · ' + o.teamName + ' 팀', number: o.phone };
+}
+
+// ── 끝 4자리 찾기(확인 필요는 reviews.ts) ──────────────────────────────────────────
 
 export function findLast4(ctx: ViewContext, last4: string): FindResult {
   const matches = ctx.state.orders
     .filter((o) => o.last4 === last4)
     .map((o) => ({ orderId: o.id, teamName: o.teamName, last4: o.last4, parts: promiseParts(ctx, o) }));
   return { last4, matches };
-}
-
-export function reviewList(ctx: ViewContext): ReviewItem[] {
-  const out: ReviewItem[] = [];
-  for (const o of ctx.state.orders) {
-    const due = nextDue(ctx.state, o);
-    if (due?.kind === 'return' && due.lateAt !== undefined && due.lateAt <= ctx.now) {
-      out.push({
-        id: 'late:' + o.id, kindKey: 'late_return', severity: 'action', createdAt: iso(due.lateAt), orderId: o.id,
-        message: o.teamName + ' 팀 반납 지연 · ' + whenIn(ctx, due.at) + ' ' + (currentReturn(o).mode === 'store' ? '매장' : placeLabel(ctx.state.registry, currentReturn(o).placeId)),
-      });
-    }
-  }
-  for (const p of openPins(ctx.state)) {
-    const o = findOrder(ctx.state, p.orderId);
-    if (!o || p.status === 'acknowledged') continue;
-    const place = pinTask(ctx.state, p)?.promise.placeId ?? o.giveBack.placeId;
-    out.push({
-      id: 'pin:' + p.id, kindKey: 'pin', severity: 'info', createdAt: iso(p.at), orderId: o.id,
-      message: o.teamName + ' 팀 ' + (p.note ? p.note + ' · ' : '') + hm(p.at) + ' ' + placeLabel(ctx.state.registry, place) + ' · 긴급 요청',
-    });
-  }
-  // 매장 입고 뒤에도 차에 남은 것(부분 입고, closing.ts): 마감의 이월 항목 `확인 필요`와 같은 것.
-  for (const x of notReceived(ctx.state, ctx.state.businessDate)) {
-    out.push({
-      id: 'unreceived:' + x.l.id, kindKey: 'not_received', severity: 'action', createdAt: iso(x.at), orderId: x.o.id,
-      message: x.o.teamName + ' 팀 ' + notReceivedText(x.l, x.qty),
-    });
-  }
-  // 초과 수납(sys_review_kinds overpaid): 보냄 대기로 온 현장 수납은 기기에서 이미 받은 돈이라 받을 돈보다 많아도 적는다(driver.ts).
-  for (const o of ctx.state.orders) {
-    const over = paidTotal(o) - charged(o);
-    if (over <= 0) continue;
-    const last = o.payments.reduce((max, p) => Math.max(max, p.at), 0);
-    out.push({
-      id: 'overpaid:' + o.id, kindKey: 'overpaid', severity: 'action', createdAt: iso(last), orderId: o.id,
-      message: o.teamName + ' 팀 초과 수납 ' + won(over) + ' · 환불 또는 다른 팀 이동',
-    });
-  }
-  // 차량 예비권 기록 부족(sys_review_kinds ticket_unavailable 자리): 끊긴 기사 기기가 기록된 차량 재고보다 많이 건넨 권(driver.ts addTicket).
-  // 건넨 사실은 적었고 기록이 모자란 것이라 사람이 차량 재고를 센다. 문구는 wording.md 3-18(확인 대기).
-  for (const x of ctx.state.vanSpares ?? []) {
-    if (x.quantity >= 0) continue;
-    const product = ctx.state.registry.products[x.productKey];
-    out.push({
-      id: 'van_spare:' + x.vehicleId + ':' + x.productKey, kindKey: 'ticket_unavailable', severity: 'action', createdAt: iso(ctx.now),
-      message: vehicleLabel(ctx.state.registry, x.vehicleId) + ' ' + (product?.shortLabel ?? product?.label ?? x.productKey) + ' 재고 기록 부족 ' + -x.quantity + (product?.unit ?? '매') + ' · 차량 재고 확인',
-    });
-  }
-  for (const o of ctx.state.orders) {
-    const visit = o.visits?.at(-1);
-    // 배달 실패는 건넬 때까지, 수거 실패는 받을 때까지 남는다.
-    if (!visit || (visit.kind === 'deliver' ? deliverDone(o) : collectDone(o))) continue;
-    out.push({
-      id: 'visit:' + o.id + ':' + visit.at, kindKey: 'visit_result', severity: 'info', createdAt: iso(visit.at), orderId: o.id,
-      message: o.teamName + ' 팀 ' + visitOutcomeLabel(ctx.state.registry, visit.outcomeKey) + (visit.retryAt !== undefined ? ' · 재방문 ' + whenIn(ctx, visit.retryAt) : ''),
-    });
-  }
-  return out;
 }
 
 // ── 확인 창 초안 ─────────────────────────────────────────────────────
@@ -800,13 +824,21 @@ const unitWord = (l: FxLine) => l.unit ?? '개';
  * 창의 품목 한 조각: '스키 4', '야간권 성인 1매'. 규격이 있는 줄(새 접수에서 고른 상품 · 규격)은 상품 · 규격 이름 뒤에 세는 말까지
  * ('의류 95 2벌', '헬멧 중 1개'): 규격 이름과 수가 붙어 `의류 사이즈 95 2`로 읽히지 않게.
  */
-function itemText(reg: ShopRegistry, l: FxLine, qty: number): string {
+function itemText(reg: ShopRegistry, l: FxLine, qty: number, phase: SizePhase = 'pending'): string {
+  // 즉시 교환한 줄은 그 수의 지금 사이즈(자리 셈: 지급 · 적재 · 배달은 지급한 수부터, 반납 · 수거는 돌아온 수부터). 한 사이즈면 `헬멧 대 사이즈 2개`,
+  // 섞이면 `헬멧 대 사이즈 1 · 중 사이즈 1`(수가 조각에 있다).
+  if (hasSwaps(l)) {
+    const parts = variantRange(l, phase === 'held' ? backOf(l) : l.issued, qty);
+    const swapped = swappedLabel(reg, l, parts);
+    if (swapped) return parts.length === 1 ? swapped + ' ' + qty + (l.countWord ?? l.unit ?? '개') : swapped;
+  }
   const product = productOf(reg, l.productKey);
   const variant = product ? reg.kinds.find((k) => k.key === product.kindKey)?.variants?.find((v) => v.key === l.variantKey) : undefined;
   if (product && variant) return product.label + ' ' + variant.label + ' ' + qty + (l.countWord ?? l.unit ?? '개');
   return l.label + ' ' + qty + (l.unit ?? '');
 }
-const itemLine = (reg: ShopRegistry, lines: readonly { l: FxLine; qty: number }[]) => lines.map(({ l, qty }) => itemText(reg, l, qty)).join(' · ');
+const itemLine = (reg: ShopRegistry, lines: readonly { l: FxLine; qty: number }[], phase: SizePhase = 'pending') =>
+  lines.map(({ l, qty }) => itemText(reg, l, qty, phase)).join(' · ');
 
 /** '6개', '6개 · 3매'(주 버튼의 수와 같은 셈). */
 function countWords(lines: readonly { l: FxLine; qty: number }[]): string {
@@ -822,6 +854,7 @@ function notice(ctx: ViewContext, title: string, message: string): ConfirmDraftV
 
 type Pick = { l: FxLine; qty: number };
 
+
 function stockDraft(
   ctx: ViewContext,
   o: FxOrder,
@@ -831,6 +864,7 @@ function stockDraft(
   emptyMessage: string,
   build: (picks: Pick[]) => ConfirmDraftView['command'],
   more?: (picks: Pick[]) => { summary: string; label: string; then: ConfirmStep[] } | null,
+  phase: SizePhase = 'pending',
 ): ConfirmDraftView {
   const scope = params.lineIds?.length ? o.lines.filter((l) => params.lineIds!.includes(l.id)) : o.lines;
   const picks = scope.map((l) => ({ l, qty: left(l) })).filter((x) => x.qty > 0);
@@ -841,7 +875,7 @@ function stockDraft(
   // 이어서 보낼 명령(지급 뒤의 보증금 입금)이 있으면 수량 −/+ 없이 잔여 수 그대로: 이어진 명령의 매수 · 금액이 창을 연 때 정해진다.
   const extra = more?.(picks) ?? null;
   if (extra) {
-    return { ...base, summary: [itemLine(reg, picks), extra.summary], confirmLabel: actionLabel + ' · ' + countWords(picks) + ' · ' + extra.label, then: extra.then };
+    return { ...base, summary: [itemLine(reg, picks, phase), extra.summary], confirmLabel: actionLabel + ' · ' + countWords(picks) + ' · ' + extra.label, then: extra.then };
   }
   const single = params.lineIds?.length === 1 && picks.length === 1 ? picks[0]! : null;
   if (single) {
@@ -862,7 +896,7 @@ function stockDraft(
     const taken = chosen.filter((x) => x.qty > 0);
     const rest = chosen.filter((x) => x.qty < x.max).map((x) => ({ l: x.l, qty: x.max - x.qty }));
     const counts = chosen.map((x) => {
-      const names = lineNames(reg, x.l);
+      const names = namesNow(reg, x.l, phase);
       return {
         lineId: x.l.id, label: names.name, note: names.variant ?? '', mode: 'count' as const,
         quantity: { value: x.qty, min: 0, max: x.max, unit: x.l.countWord ?? unitWord(x.l) },
@@ -871,12 +905,12 @@ function stockDraft(
     });
     return {
       basis: base.basis, title, counts,
-      summary: [...(taken.length ? [itemLine(reg, taken)] : []), ...(rest.length ? ['잔여 · ' + itemLine(reg, rest)] : [])],
+      summary: [...(taken.length ? [itemLine(reg, taken, phase)] : []), ...(rest.length ? ['잔여 · ' + itemLine(reg, rest, phase)] : [])],
       confirmLabel: taken.length ? actionLabel + ' · ' + countWords(taken) : actionLabel,
       ...(taken.length ? { command: build(taken) } : {}),
     };
   }
-  return { ...base, summary: [itemLine(reg, picks)], confirmLabel: actionLabel + ' · ' + countWords(picks) };
+  return { ...base, summary: [itemLine(reg, picks, phase)], confirmLabel: actionLabel + ' · ' + countWords(picks) };
 }
 
 /**
@@ -917,20 +951,29 @@ function issuedDepositDraft(ctx: ViewContext, o: FxOrder): ConfirmDraftView | nu
 
 /** 매장 입고(차량 단위): 차량 재고를 모두 매장으로. 연결이 있어야 한다(sync 8-4). */
 function receiveDraft(ctx: ViewContext, vehicleId: string): ConfirmDraftView {
-  // 업무(반납 일정)마다 차에 있는 몫. 팀 수는 접수 수(일정이 나뉜 팀도 한 팀).
+  // 업무(반납 일정)마다 차에 있는 몫. 팀 수는 접수 수(일정이 나뉜 팀도 한 팀). 취소한 배달의 차에 남은 것도(배달 업무로, features-1 E7).
   const tasks = routeTasks(ctx.state, vehicleId, ctx.state.businessDate).filter((t) => taskOrder(t).lines.some((l) => onVan(l) > 0));
+  const left = leftovers(ctx.state, vehicleId);
   const title = ACTION_LABELS.receive_to_shop + ' · ' + vehicleLabel(ctx.state.registry, vehicleId);
-  if (tasks.length === 0) return notice(ctx, title, '입고 대상 없음');
+  if (tasks.length === 0 && left.length === 0) return notice(ctx, title, '입고 대상 없음');
   const views = tasks.map(taskOrder);
-  const items = loadItems(views, onVan);
-  const onVanLines = views.flatMap((o) => o.lines).map((l) => ({ l, qty: onVan(l) })).filter((x) => x.qty > 0);
-  const teams = new Set(tasks.map((t) => t.order.id)).size;
+  const qty = new Map<FxLine, number>();
+  for (const o of views) for (const l of o.lines) if (onVan(l) > 0) qty.set(l, onVan(l));
+  for (const o of left) for (const l of o.lines) if (leftover(l) > 0) qty.set(l, leftover(l));
+  const lines = [...qty.keys()];
+  const items = itemCounts(lines.map((l) => ({ ...l, qty: qty.get(l)! })), (l) => l.qty);
+  const onVanLines = lines.map((l) => ({ l, qty: qty.get(l)! }));
+  const teams = new Set([...tasks.map((t) => t.order.id), ...left.map((o) => o.id)]).size;
   return {
     basis: head(ctx).basis,
     title,
-    summary: [[teams + '팀', ...items.map((it) => it.label + ' ' + it.qty + (it.unit ?? ''))].join(' · ')],
+    summary: [
+      [teams + '팀', ...items.map((it) => it.label + ' ' + it.qty + (it.unit ?? ''))].join(' · '),
+      ...left.map((o) => o.teamName + ' 팀 ' + itemCounts(o.lines.filter((l) => leftover(l) > 0).map((l) => ({ ...l, qty: leftover(l) })), (l) => l.qty)
+        .map((it) => it.label + ' ' + it.qty + (it.unit ?? '개')).join(' · ') + ' · ' + CANCEL_WORDS.orderCancel),
+    ],
     confirmLabel: ACTION_LABELS.receive_to_shop + ' · ' + countWords(onVanLines),
-    command: { type: 'stock.receive', payload: { vehicleId, taskIds: tasks.map((t) => t.id) } },
+    command: { type: 'stock.receive', payload: { vehicleId, taskIds: [...tasks.map((t) => t.id), ...left.map(deliverTaskId)] } },
   };
 }
 
@@ -981,7 +1024,7 @@ export function confirmDraft(ctx: ViewContext, params: ConfirmDraftParams): Conf
       return stockDraft(ctx, x, params, label('stamp.collect'), collectLeft,
         collectDone(x) ? '수거 완료' : '수거 대상 없음',
         (picks) => ({ type: 'stock.collect', payload: { taskId: task.id, lines: lines(picks) } }),
-        (picks) => collectDepositStep(ctx.state, task, picks));
+        (picks) => collectDepositStep(ctx.state, task, picks), 'held');
     }
     case 'pin': {
       const title = label('pin') + ' · ' + o.teamName + ' 팀';
@@ -1007,7 +1050,7 @@ export function confirmDraft(ctx: ViewContext, params: ConfirmDraftParams): Conf
     case 'stamp.issue': {
       // 기사 기기의 배달 업무('deliver:<접수>'): 차에 실은 것을 손님께 건넴(stock.deliver, 창 제목 · 주 버튼 `배달 처리`, 문구 표 결정 4).
       if (params.taskId && isDeliverTaskId(params.taskId)) return deliverDraft(ctx, params);
-      const draft = stockDraft(ctx, o, params, label('stamp.issue'), (l) => l.qty - l.issued, '지급 완료',
+      const draft = stockDraft(ctx, o, params, label('stamp.issue'), (l) => Math.max(0, liveQty(l) - l.issued), '지급 완료',
         (picks) => ({ type: 'stock.issue', payload: { orderId: o.id, lines: lines(picks) } }),
         (picks) => issueDeposit(ctx, o, picks));
       // 다 지급했는데 이어 보낸 보증금 입금이 막혀 받지 못한 권이 있으면 보증금 입금만(창 안에서 다시, data-model 4-18).
@@ -1025,7 +1068,7 @@ export function confirmDraft(ctx: ViewContext, params: ConfirmDraftParams): Conf
       return back ? { ...draft, template: 'return', command: { type: 'stock.direct_return', payload: { orderId: o.id, lines: [] } } } : draft;
     }
     case 'stamp.load':
-      return stockDraft(ctx, o, params, label('stamp.load'), (l) => (isVehiclePickup(o) ? l.qty - Math.max(l.loaded, l.issued) : 0),
+      return stockDraft(ctx, o, params, label('stamp.load'), (l) => (isVehiclePickup(o) ? Math.max(0, liveQty(l) - Math.max(l.loaded, l.issued)) : 0),
         '적재 완료',
         (picks) => ({ type: 'stock.load', payload: { taskId: deliverTaskId(o), lines: lines(picks) } }));
     case 'stamp.pay':

@@ -14,6 +14,7 @@ import { linesOf } from './lines.ts';
 import type { FxOrder, ShopState } from './model.ts';
 import { orderTasks } from './promises.ts';
 import { findOrder, isVehiclePickup, orderIdOfTask, pinTask } from './rules.ts';
+import { settingsTouches } from './settings.ts';
 
 const EMPTY: ChangeSet = { changes: [], touchedOrders: [], touchedTasks: [], touchedVehicles: [] };
 
@@ -28,9 +29,16 @@ export function execute(state: ShopState, envelope: AnyCommandEnvelope, ctx: Exe
     const seen = ctx.outcomeOf(id);
     if (seen) next.outcomes[id] = { outcome: seen.outcome, requestId: id, rev: 0, asOfRev: 0, epoch: state.epoch, rebased: false, changes: [] };
   }
-  const outcome = applyCommand(next, envelope, ctx.now, linesOf(ctx), { orderIds: ctx.orderIds ?? 'sequence' });
+  // 명령을 한 사람: 서버의 행위자 key 'staff:<직원 id>'(세션에서 온다).
+  const staffId = ctx.actor.key.startsWith('staff:') ? ctx.actor.key.slice('staff:'.length) : undefined;
+  const outcome = applyCommand(next, envelope, ctx.now, linesOf(ctx), {
+    orderIds: ctx.orderIds ?? 'sequence',
+    actor: { ...(staffId ? { staffId } : {}), name: ctx.actor.name, ...(ctx.actor.deviceId ? { deviceId: ctx.actor.deviceId } : {}) },
+    ...(ctx.viewer ? { viewer: ctx.viewer } : {}),
+  });
   next.outcomes = {};
-  const applied = outcome.outcome === 'applied' || outcome.outcome === 'partially_applied';
+  // 적은 것이 확인 필요뿐인 명령(이미 매장에 반납된 보냄 대기 수거: 결과는 superseded)도 새 상태를 돌려준다(features-1 E18).
+  const applied = outcome.outcome === 'applied' || outcome.outcome === 'partially_applied' || (next.reviews?.length ?? 0) > (state.reviews?.length ?? 0);
   if (!applied) return { outcome, changes: EMPTY, state };
   const before = new Map(state.orders.map((o) => [o.id, o]));
   const touchedOrders = next.orders.filter((o) => before.get(o.id) !== undefined ? JSON.stringify(before.get(o.id)) !== JSON.stringify(o) : true).map((o) => o.id);
@@ -61,7 +69,12 @@ const vehicleScope = (vehicleIds: string[], orderId?: string): CommandScope => (
 
 export function commandScope(state: ShopState, envelope: AnyCommandEnvelope): CommandScope {
   switch (envelope.type) {
-    case 'stock.load':
+    case 'stock.load': {
+      // 카운터의 예비권 적재(features-1 E21)는 그 차량. 배달 업무의 적재는 그 업무의 차량.
+      const p = envelope.payload;
+      if ('spares' in p) return vehicleScope([p.vehicleId]);
+      return vehicleScope(taskVehicles(state, p.taskId), orderIdOfTask(p.taskId));
+    }
     case 'stock.deliver':
     case 'stock.collect':
     case 'task.visit':
@@ -106,6 +119,11 @@ export function queryScope(state: ShopState, name: QueryName | 'config' | 'ledge
       const vehicleId = text(p.vehicleId);
       return vehicleId ? { kind: 'vehicle', vehicleIds: [vehicleId] } : null;
     }
+    case 'phoneReveal': {
+      // 전화 창(features-1 §8-4): 기사 세션은 자기 차량의 업무(배달 · 수거)가 있는 접수만.
+      const o = findOrder(state, text(p.orderId));
+      return o ? { kind: 'vehicle', vehicleIds: orderVehicles(o) } : null;
+    }
     case 'confirmDraft': {
       const taskId = text(p.taskId);
       if (taskId) {
@@ -142,6 +160,12 @@ export function conflictKeys(state: ShopState, envelope: AnyCommandEnvelope): Co
   switch (envelope.type) {
     case 'setting.set':
       return { writes: [SHOP_RULES_KEY], reads: [SHOP_RULES_KEY] };
+    case 'registry.update':
+    case 'staff.set': {
+      // 건드리는 목록 행마다(E19): 다른 사람이 그 행을 먼저 바꿨으면 충돌(창을 다시 연다).
+      const keys = settingsTouches(envelope.payload.changes, envelope.requestId, envelope.dependsOn?.[0]);
+      return { writes: keys, reads: keys };
+    }
     case 'promise.change': {
       const keys = envelope.payload.lines.map((l) => 'line:' + l.lineId + ':return_promise');
       return { writes: keys, reads: keys };
@@ -157,6 +181,57 @@ export function conflictKeys(state: ShopState, envelope: AnyCommandEnvelope): Co
       return { writes: ['closing:main:' + envelope.payload.date], reads: [] };
     case 'payment.take':
       return { writes: unique([...envelope.payload.orderIds, ...(envelope.payload.allocations ?? []).map((a) => a.orderId)]).map(moneyKey), reads: [] };
+    case 'discount.apply': {
+      // 할인 적용(E19): 그 칸 줄의 값을 쓰고, 받을 돈과 그 줄의 수량을 읽는다.
+      const o = findOrder(state, envelope.payload.orderId);
+      const lines = (o?.lines ?? []).filter((l) => l.section === envelope.payload.sectionKey);
+      return {
+        writes: [...lines.map((l) => 'line:' + l.id + ':price'), moneyKey(envelope.payload.orderId)],
+        reads: [moneyKey(envelope.payload.orderId), ...lines.map((l) => 'line:' + l.id + ':quantity')],
+      };
+    }
+    case 'payment.refund':
+      return { writes: [moneyKey(envelope.payload.orderId)], reads: [] };
+    case 'order.cancel': {
+      // 접수 취소 · 품목 취소(E19): 취소한 줄의 수량과 돈을 쓰고, 돈과 그 줄의 값(할인 적용이 바꿈)을 읽는다. 접수 취소는 모든 줄.
+      const o = findOrder(state, envelope.payload.orderId);
+      const ids = envelope.payload.scope === 'order' ? (o?.lines ?? []).map((l) => l.id) : unique(envelope.payload.lines.map((l) => l.lineId));
+      return {
+        writes: [...ids.map((id) => 'line:' + id + ':quantity'), moneyKey(envelope.payload.orderId)],
+        reads: [moneyKey(envelope.payload.orderId), ...ids.map((id) => 'line:' + id + ':price')],
+      };
+    }
+    case 'order.add': {
+      // 품목 추가(E19): 새 줄과 돈을 쓴다. 칸의 비율 할인을 이어받으므로 있는 줄의 값(할인 적용이 바꿈)을 읽는다.
+      const o = findOrder(state, envelope.payload.orderId);
+      return {
+        writes: ['order:' + envelope.payload.orderId + ':lines', moneyKey(envelope.payload.orderId)],
+        reads: (o?.lines ?? []).map((l) => 'line:' + l.id + ':price'),
+      };
+    }
+    case 'stock.issue':
+    case 'stock.direct_return':
+    case 'stock.collect':
+    case 'stock.deliver':
+      // 지급 · 반납 · 수거 · 배달(사실): 그 줄의 수량을 쓴다(그 뒤의 취소 · 할인 창이 옛 수로 확정하지 않게, E19).
+      return { writes: unique(envelope.payload.lines.map((l) => 'line:' + l.lineId + ':quantity')), reads: [] };
+    case 'exchange.swap':
+      // 즉시 교환(E19): 그 줄의 수량을 읽는다(그사이 반납 · 취소로 바뀐 수는 도메인이 다시 본다).
+      return { writes: [], reads: ['line:' + envelope.payload.lineId + ':quantity'] };
+    case 'stock.write_off':
+    case 'asset.found':
+      // 분실 처리 · 분실 회수(E19): 그 줄의 수량을 쓴다(수거 예정이 줄거나 되살아난다).
+      return { writes: unique(envelope.payload.lines.map((l) => 'line:' + l.lineId + ':quantity')), reads: [] };
+    case 'stock.load':
+      // 예비권 적재(E21): 그 차량의 예비권. 배달 적재는 사실이라 키가 없다.
+      return 'spares' in envelope.payload ? { writes: ['vehicle:' + envelope.payload.vehicleId + ':spares'], reads: [] } : { writes: [], reads: [] };
+    case 'stock.receive':
+      return envelope.payload.spares?.length ? { writes: ['vehicle:' + envelope.payload.vehicleId + ':spares'], reads: [] } : { writes: [], reads: [] };
+    case 'review.resolve': {
+      // 확인 필요 처리(E19): 그 한 건. 다른 사람이 먼저 끝냈으면 충돌(창은 목록을 다시 읽는다).
+      const key = 'review:' + envelope.payload.reviewId;
+      return { writes: [key], reads: [key] };
+    }
     case 'field.collect':
     case 'field.add_ticket':
       return { writes: [moneyKey(envelope.payload.orderId)], reads: [] };

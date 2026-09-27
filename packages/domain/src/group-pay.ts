@@ -15,6 +15,7 @@ import { lineNames, payMethodOf } from './catalog.ts';
 import type { FxLine, FxMethodKey, FxOrder, FxPaymentGroup, ShopState } from './model.ts';
 import { conflict, nothing, rejected, type Result } from './result.ts';
 import {
+  liveQty,
   coveredOrders, dueFor, findOrder, lineAmountFor, lineCharged, lineLeft, linePaid, linePayerId, lineQtyLeft, nextDue, selfDue,
 } from './rules.ts';
 import { itemCounts } from './stamps.ts';
@@ -261,7 +262,7 @@ export function evenSplit(x: FxOrder, lines: readonly FxLine[]): LineUnits[] {
   const paid = linePaid(x);
   const total = lines.reduce((sum, l) => sum + lineLeft(x, l, paid), 0);
   const target = Math.floor(total / 2);
-  const unit = (l: FxLine) => lineCharged(x, l) / Math.max(1, l.qty);
+  const unit = (l: FxLine) => lineCharged(x, l) / Math.max(1, liveQty(l));
   let acc = 0;
   const take = new Map<string, number>();
   for (const l of [...lines].sort((a, b) => unit(b) - unit(a))) {

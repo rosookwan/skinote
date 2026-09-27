@@ -71,6 +71,8 @@ export interface ExecContext {
   lines?: DomainLines;
   /** 새 접수 id의 모양(commands.ts ApplyOptions): 서버는 'dated'(날짜가 여럿인 장부), 없으면 'sequence'. */
   orderIds?: 'sequence' | 'dated';
+  /** 명령을 한 사람의 권한 · 한도(서버: 세션의 역할, features-1 E10). 할인 권한 · 직접 입력 한도를 도메인이 다시 본다. */
+  viewer?: { permissions: readonly string[]; limits?: { maxDiscountAmount?: number; maxDiscountPercentBp?: number } };
 }
 
 /** execute의 결과: 화면에 돌려줄 결과, 바뀐 것, 새 상태(입력 상태는 고치지 않는다). */

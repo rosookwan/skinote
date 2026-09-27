@@ -11,13 +11,13 @@ import {
   type RichText, type TextRun,
 } from '@skinote/contract';
 import { heldNumbers, numbered } from './assets.ts';
-import { lineNames } from './catalog.ts';
 import { backHeldUnits, baseRefundKey, canOffset, heldAmount, heldUnits, takenMethod, unsettledBack, type RefundMethodKey } from './deposits.ts';
 import type { FxDeposit, FxLine, FxOrder, FxPromise, ShopRegistry, ShopState } from './model.ts';
 import { countWordOf, countWords, piecesText, pieceWord, placeText, whenText } from './promise-sheet.ts';
 import { attributeReturn, bucketOut, lineBuckets, returnPromises, samePromise } from './promises.ts';
 import { backCount, findOrder, lateAtOf, othersDue, placeShortLabel, selfDue } from './rules.ts';
 import { businessDateOf, shopCutoff } from './time.ts';
+import { namesNow } from './variants.ts';
 import type { ViewContext } from './views.ts';
 
 const won = (n: number) => Math.round(n).toLocaleString('ko-KR') + '원';
@@ -254,7 +254,8 @@ export function returnSheet(ctx: ViewContext, params: ReturnSheetParams): Return
   const held = state.deposits.filter((d) => d.orderId === o.id && heldAmount(d) > 0);
   const lines: ReturnPieceLine[] = picks.filter((p) => p.mode !== 'none').map((p): ReturnPieceLine => {
     // 규격은 둘째 줄 앞에('헬멧' / '중 사이즈 · 매장 1개').
-    const names = lineNames(state.registry, p.l);
+    // 즉시 교환한 줄은 손님에게 있는 것의 지금 사이즈(features-1 §7-1).
+    const names = namesNow(state.registry, p.l, 'held');
     const base = {
       lineId: p.l.id, label: names.name, note: [names.variant, lineNote(state.registry, o, p.l, p.mode)].filter(Boolean).join(' · '), muted: p.n === 0,
       ...(names.variant ? { ariaLabel: p.l.label } : {}),

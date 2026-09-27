@@ -44,7 +44,11 @@ test('0003 applies on a file that holds 0001 + 0002: backup first, then version 
   const first = migrate(file, 'shop', { migrationsDir: upTo2, appVersion: 'test' });
   first.db.prepare(`INSERT INTO shops (id, code, name, created_at, updated_at) VALUES ('S1', 's1', '시험 매장', ?, ?)`).run(T, T);
   first.db.close();
-  const second = migrate(file, 'shop', { appVersion: 'test' });
+  // 0003까지만 든 폴더(뒤 마이그레이션 0004 …은 저마다의 시험이 본다).
+  const upTo3 = join(dir, 'v3');
+  mkdirSync(upTo3, { recursive: true });
+  for (const name of ['0001_shop.sql', '0002_shop_server_link.sql', '0003_shop_vehicle_late.sql']) copyFileSync(join(MIGRATIONS, name), join(upTo3, name));
+  const second = migrate(file, 'shop', { migrationsDir: upTo3, appVersion: 'test' });
   try {
     assert.equal(second.status, 'migrated');
     assert.equal(second.version, 3);

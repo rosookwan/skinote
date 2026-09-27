@@ -18,7 +18,8 @@ export function VanStockDialog({ load, onClose }: { load: VehicleLoad; onClose: 
   const perPage = Math.max(1, Math.floor((room + space.s) / (profile.minTargetPx + space.s)));
   // 팀 줄(배달할 것 · 수거한 것) 뒤에 예비권 한 줄(`예비권 · 야간권 6매`).
   const all = [
-    ...load.byTask.map((row) => ({ key: row.taskId, name: row.teamName + ' · ' + row.last4, items: row.items })),
+    // 취소한 배달의 차에 남은 것은 팀 이름 뒤에 `접수 취소`(읽기 모델의 note, features-1 E7).
+    ...load.byTask.map((row) => ({ key: row.taskId, name: row.teamName + ' · ' + row.last4 + (row.note ? ' · ' + row.note : ''), items: row.items })),
     ...(load.spareTickets.length ? [{ key: 'spare', name: say('spareTickets'), items: load.spareTickets }] : []),
   ];
   const pageCount = Math.max(1, Math.ceil(all.length / perPage));

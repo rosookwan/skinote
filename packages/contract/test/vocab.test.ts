@@ -1,10 +1,10 @@
 // 코드 쪽 어휘(src/vocab.ts, status-terms.ts)가 schema.sql의 sys_* 시드와 같은지 본다.
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   ACTION_COMMAND, ACTION_KIND, ACTION_LABELS, ACTION_SCREEN, ALIGN_KEYS, COLUMN_BINDING, COLUMN_RENDERER_KEYS, COMMAND_TYPES, CONDITION_SCOPE, CONFIRM_TEMPLATE_KEYS, DEVICE_CLASS_KEYS,
   FEATURE_KEYS, FIT_MODE_KEYS, OFFLINE_COMMANDS, offlineAllowed, FOLD_MODE_KEYS, GROUP_KEYS, LEDGER_FILTER_KEYS, LEDGER_METRIC_KEYS, OVERFLOW_MODE_KEYS,
-  ROW_GRAIN_KEYS, SCREEN_ROUTES, SCREEN_TEMPLATE_KEYS, SORT_KEY_IS_TIME, STAMP_ROLLUP_KEYS, STAMP_RULE_SCOPE,
+  REVIEW_COUNT_TEMPLATES, REVIEW_TEMPLATES, reviewMessage, ROW_GRAIN_KEYS, SCREEN_ROUTES, SCREEN_TEMPLATE_KEYS, SORT_KEY_IS_TIME, STAMP_ROLLUP_KEYS, STAMP_RULE_SCOPE,
   STAMP_STATE_KEYS, STAMP_TONE_BY_STATE, STATUS_DEFAULT_LABELS, TONE_KEYS, WORKSPACE_KEYS,
 } from '../src/index.ts';
 
@@ -12,14 +12,22 @@ import {
 const schemaUrl = new URL('../../schema/schema.sql', import.meta.url);
 if (!existsSync(schemaUrl)) throw new Error('참조 스키마가 없다: ' + schemaUrl.pathname);
 const schema = readFileSync(schemaUrl, 'utf8');
+// 0001 뒤의 마이그레이션(0002 ~ 0009)이 더한 sys_* 행(features-1 plan §3-1: 0004의 조건 · 동작 · 명령). 시드와 합쳐 본다.
+const migrationsUrl = new URL('../../schema/migrations/', import.meta.url);
+const migrations = readdirSync(migrationsUrl).filter((name) => /^000[2-9]_shop.*\.sql$/.test(name)).sort()
+  .map((name) => readFileSync(new URL(name, migrationsUrl), 'utf8'));
 
-/** 한 표의 첫 시드 INSERT 묶음에서 행마다 따옴표 값들을 꺼낸다(shop 시드가 뒤에 오면 마지막 것). */
+const insertPattern = (table: string) => new RegExp('INSERT INTO ' + table + ' \\(([^)]*)\\) VALUES([\\s\\S]*?);\\n', 'g');
+
+/** 한 표의 시드 행: schema.sql의 마지막 INSERT 묶음(shop 시드가 뒤에 오면 그것)과 뒤 마이그레이션의 INSERT 묶음 모두. */
 function seedRows(table: string): string[][] {
-  const pattern = new RegExp('INSERT INTO ' + table + ' \\(([^)]*)\\) VALUES([\\s\\S]*?);\\n', 'g');
-  const blocks = [...schema.matchAll(pattern)];
-  const last = blocks.at(-1);
-  if (!last) return [];
-  const body = last[2] ?? '';
+  const last = [...schema.matchAll(insertPattern(table))].at(-1);
+  const bodies = [...(last ? [last[2] ?? ''] : []), ...migrations.flatMap((sql) => [...sql.matchAll(insertPattern(table))].map((m) => m[2] ?? ''))];
+  return bodies.flatMap(rowsOf);
+}
+
+/** INSERT 묶음 하나의 행마다 따옴표 값들. */
+function rowsOf(body: string): string[][] {
   const rows: string[][] = [];
   let depth = 0;
   let current = '';
@@ -137,6 +145,23 @@ describe('어휘가 schema.sql 시드와 같다', () => {
     const tones = Object.fromEntries(seedRows('sys_tones').map(([key, , late, seal]) => [key, { late, seal }]));
     expect(tones['red']).toEqual({ late: '1', seal: '0' });
     expect(tones['seal']).toEqual({ late: '0', seal: '1' });
+  });
+
+  it('확인 필요 종류(REVIEW_TEMPLATES)가 sys_review_kinds 시드와 같다: 이름 · 틀 · 무게 · 보일 곳(features-1 E18)', () => {
+    const seeded = seedRows('sys_review_kinds');
+    expect(seeded.length).toBeGreaterThan(30);
+    expect(sorted(Object.keys(REVIEW_TEMPLATES))).toEqual(keysOf('sys_review_kinds'));
+    for (const [key, label, template, severity, routing] of seeded) {
+      expect(REVIEW_TEMPLATES[key ?? ''], key).toEqual({ label, template, severity, routing });
+    }
+    // 세는 말 틀은 시드 틀의 `{qty}개`(와 `{left}개`)를 `{qty}{unit}`로 바꾼 것뿐이다.
+    for (const [key, counted] of Object.entries(REVIEW_COUNT_TEMPLATES)) {
+      expect(counted.replace(/\{unit\}/g, '개'), key).toBe(REVIEW_TEMPLATES[key]?.template);
+    }
+    expect(reviewMessage('already_returned', { team: '최은정', item: '스키', qty: 1, unit: '대' })).toBe('최은정 팀 스키 1대 매장 반납 완료 · 기사 수거 기록 제외');
+    expect(reviewMessage('already_returned', { team: '최은정', item: '헬멧', qty: 2, unit: '개' })).toBe('최은정 팀 헬멧 2개 매장 반납 완료 · 기사 수거 기록 제외');
+    expect(reviewMessage('van_unsynced', { vehicle: '1호 차량', count: 2 })).toBe('1호 차량 기록 2건 전송 대기 · 마감 전 전송 필요');
+    expect(reviewMessage('no_such_kind', {})).toBe('');
   });
 
   it('상태 기본 문구가 sys_status_keys와 같다', () => {

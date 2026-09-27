@@ -10,7 +10,7 @@
 // 잰다: 태블릿 크기의 `이전`도 56px). 고르면 `체험판 미지원`. 로그인 미리 보기의 ?open은 스스로 붙은
 // 기기의 로그인(매장 이름 줄의 기기 모양 · 바닥줄의 `기기 선택`, 누르면 `체험판 미지원`).
 // 체험 자료(fixture)를 가져오지 않는다.
-import type { EnrollVehicle, LedgerViewResult, StaffTile } from '@skinote/contract';
+import type { EnrollVehicle, LedgerViewResult, SettingsOp, StaffTile } from '@skinote/contract';
 import { DeviceProfileProvider, useUi } from '@skinote/ui';
 import { useEffect, useMemo, useState } from 'react';
 import { TextSheet } from '../components/TextSheet.tsx';
@@ -18,6 +18,8 @@ import { ChooseScreen, type DriverKind } from '../screens/ChooseScreen.tsx';
 import { EnrollScreen, OfflineScreen } from '../screens/EnrollScreen.tsx';
 import { LoginScreen } from '../screens/LoginScreen.tsx';
 import { ExitScreen } from '../screens/PlainScreens.tsx';
+import { SettingsTabPreview } from '../screens/ShopSettingsScreen.tsx';
+import { PinDialog } from '../components/PinDialog.tsx';
 import { useClient, useConfig, useLive } from './client.tsx';
 import { go, useRoute, type PreviewView } from './router.ts';
 import { SessionContext, type SessionControls } from './session-context.ts';
@@ -47,7 +49,33 @@ export function PreviewScreen({ view }: { view: PreviewView }) {
     case 'login': return <LoginPreview key={'login?' + query} />;
     case 'offline': return <OfflinePreview />;
     case 'exit': return <ExitPreview />;
+    case 'pin': return <PinPreview />;
+    case 'settings-many': return <SettingsManyPreview key={'many?' + query} />;
   }
+}
+
+/** 미리 보기 비밀번호(예시 숫자: 브라우저는 비밀번호를 만들지 않는다, 서버가 만든다). */
+const PREVIEW_PIN = '2468';
+
+/** 비밀번호 재발급 창의 둘째 단계(새 비밀번호 · 한 번 보임): 견본 기사 이름과 예시 숫자. */
+function PinPreview() {
+  const client = useClient();
+  const [open, setOpen] = useState(true);
+  const name = client.previewStaff?.()[2] ?? '';
+  return (
+    <div className="pos-plain">
+      {open ? <PinDialog client={client} staffId="preview" name={name} preview={PREVIEW_PIN} onClose={() => setOpen(false)} /> : null}
+    </div>
+  );
+}
+
+/** 권종 · 장소가 많은 매장의 매장 설정 탭(?tab=pricing 기본 · places): 긴 카드의 `(계속)`. */
+function SettingsManyPreview() {
+  const client = useClient();
+  const tab = new URLSearchParams(window.location.hash.split('?')[1] ?? '').get('tab') === 'places' ? 'places' : 'pricing';
+  if (!client.previewSettings) return null;
+  const load = (ops: SettingsOp[]) => client.previewSettings!(tab, ops);
+  return <SettingsTabPreview tab={tab} load={load} />;
 }
 
 /** 연결 끊김 화면: 마지막 연결은 체험 시계의 지금. */

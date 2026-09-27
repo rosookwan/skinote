@@ -123,7 +123,7 @@ describe('현장 수납(field.collect)은 받을 돈을 넘지 않는다', () =>
     expect(queued.outcome).toBe('queued');
     client.setOffline(false);
     const reviews = await client.query('reviewList', {});
-    expect(reviews.find((r) => r.kindKey === 'overpaid')).toMatchObject({ orderId: 'o26', message: '최하은 팀 초과 수납 15,000원 · 환불 또는 다른 팀 이동' });
+    expect(reviews.items.find((r) => r.kindKey === 'overpaid')).toMatchObject({ orderId: 'o26', message: '최하은 팀 초과 수납 15,000원 · 환불 필요' });
   });
 });
 

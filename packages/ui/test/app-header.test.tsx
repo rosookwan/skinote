@@ -31,3 +31,32 @@ describe('머리줄의 연결 끊김 이름표', () => {
     expect(header()).not.toContain('sn-header-offline');
   });
 });
+
+describe('메뉴 버튼 안의 수(features-1 §9-3)', () => {
+  it('`확인 필요 3`: 16px 글자 칸(점 아님) · 읽는 이름 `확인 필요 3건`, 0이면 없음, 100 이상은 `99+`', () => {
+    const counted = render(
+      <AppHeader shopName="우리 스키샵" menu={menu} alertCount={0} menuCounts={{ review_list: 3 }} onHome={noop} onFind={noop} onMenu={noop} onMore={noop} onAlerts={noop} onExit={noop} />,
+    );
+    expect(counted).toContain('aria-label="확인 필요 3건"');
+    expect(counted).toMatch(/>확인 필요<span class="sn-count" aria-hidden="true">3<\/span>/);
+    const none = render(
+      <AppHeader shopName="우리 스키샵" menu={menu} alertCount={0} menuCounts={{ review_list: 0 }} onHome={noop} onFind={noop} onMenu={noop} onMore={noop} onAlerts={noop} onExit={noop} />,
+    );
+    expect(none).not.toContain('sn-count');
+    const many = render(
+      <AppHeader shopName="우리 스키샵" menu={menu} alertCount={0} menuCounts={{ review_list: 120 }} onHome={noop} onFind={noop} onMenu={noop} onMore={noop} onAlerts={noop} onExit={noop} />,
+    );
+    expect(many).toContain('>99+</span>');
+  });
+
+  it('더 보기로 들어간 메뉴의 수는 `더 보기`가 합쳐 보인다(좁은 포스: 메뉴 두 칸)', () => {
+    const narrow = renderToStaticMarkup(
+      <DeviceProfileProvider role="counter" timezone="Asia/Seoul" size={{ width: 875, height: 600 }}>
+        <AppHeader shopName="우리 스키샵" menu={menu} alertCount={0} menuCounts={{ lift_tickets: 2 }} onHome={noop} onFind={noop} onMenu={noop} onMore={noop} onAlerts={noop} onExit={noop} />
+      </DeviceProfileProvider>,
+    );
+    expect(narrow).toContain('aria-label="더 보기 2건"');
+    expect(narrow).toMatch(/>더 보기<span class="sn-count" aria-hidden="true">2<\/span>/);
+    expect(narrow).not.toContain('aria-label="리프트권 2건"');
+  });
+});

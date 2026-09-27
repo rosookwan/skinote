@@ -8,7 +8,8 @@
 import type { FxCharge, FxOrder, FxPin, FxVisit, FxVisitOutcome } from '@skinote/domain';
 import { addDays, isoOf, msOf } from '../ids.ts';
 import { all, insert, num, one, run, str, text, type Db } from '../db.ts';
-import { EXTENSION, EXTENSION_UNDO, VISIT_RESULT, reasonId } from '../registry-keys.ts';
+import { CANCELLATION, CANCELLATION_FEE, DISCOUNT_CHANGE, EXTENSION, EXTENSION_UNDO, VISIT_RESULT, reasonId } from '../registry-keys.ts';
+import { ensureCancellationKinds, ensureDiscountChangeType } from '../registry-write.ts';
 import { appended, businessDateOfCtx, factMeta, localDate, localTime, msOfLocal, unmapped, type WriteContext } from './common.ts';
 
 const orderOfTask = (taskId: string) => taskId.split(':')[1] ?? '';
@@ -61,6 +62,27 @@ export function writeCharges(ctx: WriteContext, prev: FxOrder | undefined, next:
   const charges = appended(prev?.charges, next.charges, '청구 조정 ' + next.id);
   for (const c of charges) {
     const meta = factMeta(ctx, c.at);
+    if (c.kind === 'discount_change') {
+      // 할인 변경(features-1 E9): 줄마다 한 행(부호 0, 몫의 부호 그대로), 할인 적용에 묶인다. 되읽기는 적용마다 한 조정으로 모은다.
+      if (!c.lines.length || c.lines.some((x) => x.amount === 0) || c.lines.reduce((sum, x) => sum + x.amount, 0) !== c.amount) unmapped('할인 변경의 모양: ' + c.id);
+      ensureDiscountChangeType(ctx.db, ctx.shopId, isoOf(ctx.now));
+      c.lines.forEach((x, k) => insert(ctx.db, 'charge_adjustments', {
+        shop_id: ctx.shopId, id: c.id + ':' + k, order_id: next.id, line_id: x.lineId, adjustment_type_id: DISCOUNT_CHANGE, type_sign: 0, amount: x.amount,
+        reason: '할인 변경', discount_application_id: c.applicationId, ...meta,
+      }));
+      continue;
+    }
+    if (c.kind === 'cancellation' || c.kind === 'cancellation_fee') {
+      // 취소(음수: 취소한 수의 값) · 환불 없음(양수: 그 줄에 남긴 돈), 취소 한 건에 묶인다(features-1 §5-2).
+      const fee = c.kind === 'cancellation_fee';
+      if (fee ? !(c.amount > 0) : !(c.amount < 0)) unmapped('취소 조정의 모양: ' + c.id);
+      ensureCancellationKinds(ctx.db, ctx.shopId, isoOf(ctx.now));
+      insert(ctx.db, 'charge_adjustments', {
+        shop_id: ctx.shopId, id: c.id, order_id: next.id, line_id: c.lineId, adjustment_type_id: fee ? CANCELLATION_FEE : CANCELLATION, type_sign: fee ? 1 : -1,
+        amount: c.amount, reason: fee ? '환불 없음' : '취소', cancellation_id: c.cancellationId, ...meta,
+      });
+      continue;
+    }
     if (c.kind === 'extension') {
       if (!(c.amount > 0) || !(c.quantity >= 1) || c.days < 0) unmapped('연장 값의 모양: ' + c.id);
       const extensionId = c.id + ':x';
@@ -162,17 +184,35 @@ export function loadDispatch(db: Db, shopId: string, byId: Map<string, FxOrder>)
   // 청구 조정.
   const extensionLines = new Map(all(db, 'SELECT adjustment_id, quantity, added_units FROM order_extension_lines WHERE shop_id = ? AND adjustment_id IS NOT NULL', shopId)
     .map((r) => [str(r.adjustment_id), { quantity: num(r.quantity), days: num(r.added_units) }]));
-  for (const r of all(db, 'SELECT id, order_id, line_id, adjustment_type_id, amount, occurred_at FROM charge_adjustments WHERE shop_id = ? ORDER BY rowid', shopId)) {
+  const sectionOfApplication = new Map(all(db, 'SELECT id, discount_group_id FROM discount_applications WHERE shop_id = ?', shopId)
+    .map((r) => [str(r.id), str(r.discount_group_id)]));
+  for (const r of all(db, 'SELECT id, order_id, line_id, adjustment_type_id, amount, occurred_at, discount_application_id, cancellation_id FROM charge_adjustments WHERE shop_id = ? ORDER BY rowid', shopId)) {
     const o = byId.get(str(r.order_id));
     if (!o) continue;
     const type = str(r.adjustment_type_id);
     const base = { id: str(r.id), lineId: text(r.line_id) ?? '', amount: num(r.amount), at: msOf(str(r.occurred_at)) };
     let charge: FxCharge;
-    if (type === EXTENSION) {
+    if (type === DISCOUNT_CHANGE) {
+      // 줄마다의 행('<조정 id>:<차례>')을 적용 하나의 조정으로 모은다.
+      const applicationId = str(r.discount_application_id);
+      const id = base.id.slice(0, base.id.lastIndexOf(':'));
+      const seen = (o.charges ?? []).find((c) => c.kind === 'discount_change' && c.id === id);
+      if (seen && seen.kind === 'discount_change') {
+        seen.amount += base.amount;
+        seen.lines.push({ lineId: base.lineId, amount: base.amount });
+        continue;
+      }
+      charge = {
+        id, kind: 'discount_change', applicationId, section: (sectionOfApplication.get(applicationId) ?? 'gear') as 'gear' | 'lift', amount: base.amount,
+        lines: [{ lineId: base.lineId, amount: base.amount }], at: base.at,
+      };
+    } else if (type === EXTENSION) {
       const x = extensionLines.get(base.id) ?? { quantity: 0, days: 0 };
       charge = { id: base.id, kind: 'extension', lineId: base.lineId, quantity: x.quantity, days: x.days, amount: base.amount, at: base.at };
     } else if (type === EXTENSION_UNDO) {
       charge = { id: base.id, kind: 'extension_undo', lineId: base.lineId, amount: base.amount, at: base.at };
+    } else if (type === CANCELLATION || type === CANCELLATION_FEE) {
+      charge = { id: base.id, kind: type === CANCELLATION ? 'cancellation' : 'cancellation_fee', cancellationId: str(r.cancellation_id), lineId: base.lineId, amount: base.amount, at: base.at };
     } else {
       continue;
     }

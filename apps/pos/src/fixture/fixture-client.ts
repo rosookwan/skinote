@@ -8,7 +8,8 @@
 // 다시 연결하면 쌓인 순서대로 보낸다. 카운터는 매장 네트워크라 늘 연결되어 있고, 기사 기기의 대기는 카운터에 보이지 않는다.
 import {
   defaultUiConfig, type AnyCommandEnvelope, type CommandOutcome, type CommandType, type ConnectionState, type DomainClient,
-  type LedgerViewResult, type PendingCommand, type QueryName, type QueryParams, type QueryResult, type SyncHead, type UiConfig, type ViewParams,
+  type LedgerViewResult, type PendingCommand, type QueryName, type QueryParams, type QueryResult, type SettingsOp, type SettingsTabKey, type ShopSettingsView,
+  type SyncHead, type UiConfig, type ViewParams,
 } from '@skinote/contract';
 import {
   MINUTE, OFFLINE_ALLOWED, SAMPLE_STAFF, findOrder, hm, iso, ledgerView, orderIdOfTask, runQuery, sampleRegistry, type FxState, type ReadContext, type SampleShop,
@@ -38,7 +39,22 @@ export interface FixtureClientOptions {
   story?: boolean;
   /** 견본 매장 모양: 체험판은 첫 매장(기본), 번호 · 권 보증금을 켠 매장(numbered)은 시험이 쓴다. */
   shop?: SampleShop;
+  /**
+   * 보는 사람(체험판 주소 ?viewer=counter): 카운터 역할의 권한으로 읽기 모델을 그린다(매장 설정의 `권한 없음 · 관리자 확인 필요`를 규칙 검사기가
+   * 잰다, features-1 E11). 없으면 모두 허락.
+   */
+  viewer?: 'counter';
 }
+
+/** 체험판의 카운터 역할 권한(서버 provision의 카운터: 매장 설정 · 직원 · 기기 · 마감 해제 빼고 모두, 여기는 화면이 보는 것만). */
+export const DEMO_COUNTER_PERMISSIONS: readonly string[] = [
+  'stock.move', 'stock.receive', 'payment.take', 'payment.refund', 'order.create', 'order.add', 'order.promise.change', 'deposit.take', 'deposit.return',
+  'closing.close', 'cash.transfer.confirm', 'task.pin', 'route.reorder', 'price_list.publish', 'discount.apply', 'discount.manual', 'order.cancel',
+  'exchange.manage', 'stock.correct', 'review.resolve',
+];
+
+/** 체험판 카운터의 직접 입력 할인 한도(견본 값 10,000원, 규칙 검사기가 한도 밖의 숫자판을 잰다, features-1 §3-3). */
+export const DEMO_COUNTER_LIMITS = Object.freeze({ maxDiscountAmount: 10_000 });
 
 export const FIXTURE_STORAGE_KEY = 'skinote.demo.v1';
 
@@ -47,15 +63,18 @@ interface Saved {
   state: FxState;
   /** 저장할 때의 체험 시계(ms). */
   clock: number;
+  /** 매장 설정을 바꾼 수(체험판의 config_rev: 머리줄의 매장 이름이 따라 바뀐다). */
+  configRev?: number;
   /** 견본 판(SAMPLE_REV)과 매장 모양. 다르면(옛 번호 · 보증금 견본으로 저장한 자료) 버리고 처음 자료로 시작한다. */
   sample?: string;
 }
 
 /**
  * 견본 판: 견본 매장이 바뀌면 올린다(2026-09-26 첫 매장 답: 수량 · 보증금 없음 · 기사 현금 · 계좌이체; 같은 날 검토 반영: 규격 줄의 규격 ·
- * 밤 수거 늦음 90분 · 견본 매장의 돈 수단).
+ * 밤 수거 늦음 90분 · 견본 매장의 돈 수단; 2026-09-27 매장 설정: 저장한 자료가 매장 목록 · 직원을 가진다; 같은 날 즉시 교환: 줄의 교환 기록;
+ * 같은 날 리프트권: 줄의 분실 처리 · 회수 수, 차량 예비권 행; 같은 날 확인 필요: 저장된 확인 필요(견본 한 건 · 보냄 대기 수거의 기록)).
  */
-export const SAMPLE_REV = 'first-shop-2026-09-26b';
+export const SAMPLE_REV = 'features-1-review-2026-09-27';
 
 /** 이 클라이언트가 맡은 기기: 카운터(포스) 또는 기사 기기. */
 export type FixtureDevice = 'counter' | 'driver';
@@ -75,6 +94,8 @@ export class FixtureClient implements DomainClient {
   private readonly listeners = new Set<(head: SyncHead) => void>();
   private readonly story: boolean;
   private readonly shop: SampleShop;
+  private readonly viewer: ReadContext['viewer'];
+  private configRev = 0;
   private device: FixtureDevice = 'counter';
 
   constructor(options: FixtureClientOptions = {}) {
@@ -83,9 +104,11 @@ export class FixtureClient implements DomainClient {
     this.realNow = options.realNow ?? (() => Date.now());
     this.story = options.story ?? false;
     this.shop = options.shop ?? 'first';
+    this.viewer = options.viewer === 'counter' ? { roleKey: 'counter', permissions: DEMO_COUNTER_PERMISSIONS, limits: DEMO_COUNTER_LIMITS } : undefined;
     this.settings = defaultUiConfig({ shopName: sampleRegistry(this.shop).shopName, timezone: 'Asia/Seoul' });
     const saved = this.read();
     this.state = saved?.state ?? createSeed(newEpoch(this.realNow()), this.shop);
+    this.configRev = saved?.configRev ?? 0;
     this.anchorDemo = saved?.clock ?? DEMO_START_MS;
     this.anchorReal = this.realNow();
     if (!saved) this.save();
@@ -95,6 +118,7 @@ export class FixtureClient implements DomainClient {
         const next = this.read();
         if (!next) return;
         this.state = next.state;
+        this.configRev = next.configRev ?? 0;
         this.anchorDemo = next.clock;
         this.anchorReal = this.realNow();
         this.emit();
@@ -121,6 +145,8 @@ export class FixtureClient implements DomainClient {
   /** 도장 · 수납을 모두 지우고 처음 자료 · 15:40으로. 열린 창의 명령은 epoch가 달라 거절된다. */
   reset(): void {
     this.state = createSeed(newEpoch(this.realNow()), this.shop);
+    // 매장 설정도 처음으로(매장 이름 · 목록): 머리줄이 설정을 다시 받게 config_rev를 올린다.
+    this.configRev += 1;
     this.anchorDemo = DEMO_START_MS;
     this.anchorReal = this.realNow();
     this.save();
@@ -168,15 +194,38 @@ export class FixtureClient implements DomainClient {
     return SAMPLE_STAFF.map((s) => s.name);
   }
 
+  /**
+   * 미리 보기(#/preview/settings-many): 체험 자료의 사본에 권종 다섯(청소년권)과 한 구역의 장소 열둘을 더한 매장으로 매장 설정 탭을 그린다
+   * (쪽보다 긴 카드가 `(계속)`으로 이어지는지 규칙 검사기가 잰다). 체험 자료는 바꾸지 않는다.
+   */
+  async previewSettings(tab: SettingsTabKey, changes: SettingsOp[]): Promise<ShopSettingsView> {
+    const { state, ctx } = this.context();
+    const many = structuredClone(state);
+    const lift = many.registry.kinds.find((k) => k.placement === 'grouped');
+    const products = many.registry.products as Record<string, FxState['registry']['products'][string]>;
+    if (lift) {
+      const extra = lift.products.map((key) => products[key]!).map((p) => ({ ...p, key: p.key.replace('_adult', '_youth'), label: p.label.replace('성인', '청소년'), price: p.price - 5_000 }));
+      for (const p of extra) products[p.key] = p;
+      (lift as { products: string[] }).products = [...lift.products, ...extra.map((p) => p.key)];
+    }
+    const area = many.registry.areas.filter((a) => a.lodging).at(-1);
+    if (area) {
+      const more = ['은행나무', '소나무', '단풍나무', '느티나무', '자작나무', '벚나무'].map((label, i) => ({ id: 'preview-place-' + i, label }));
+      (area as { places: { id: string; label: string }[] }).places = [...area.places, ...more];
+    }
+    return clone(runQuery(many, 'shopSettings', { tab, changes }, ctx));
+  }
+
   /** 미리 보기 화면(기기 선택의 차량 타일): 체험 매장의 차량(id와 이름). */
   previewVehicles(): { id: string; name: string }[] {
-    return this.state.registry.vehicles.map((v) => ({ id: v.id, name: v.label }));
+    return this.state.registry.vehicles.filter((v) => !v.ended).map((v) => ({ id: v.id, name: v.label }));
   }
 
   // ── DomainClient ──────────────────────────────────────────────────
 
   async config(): Promise<UiConfig> {
-    return clone(this.settings);
+    // 매장 이름은 저장한 자료의 것(매장 설정 `매장 정보`에서 바꾼다), config_rev는 매장 설정을 바꾼 수.
+    return clone({ ...this.settings, shopName: this.state.registry.shopName, configRev: this.settings.configRev + this.configRev });
   }
 
   async ledgerView(viewKey: string, params: ViewParams): Promise<LedgerViewResult> {
@@ -192,7 +241,11 @@ export class FixtureClient implements DomainClient {
   async command(envelope: AnyCommandEnvelope): Promise<CommandOutcome> {
     if (this.device === 'driver' && this.state.driverDevice.offline) return clone(this.enqueue(envelope));
     const before = this.state.rev;
-    const outcome = applyCommand(this.state, envelope, this.now());
+    const config = JSON.stringify([this.state.registry, this.state.settings, this.state.staff ?? []]);
+    // 보는 사람(?viewer=counter)의 권한 · 한도로 할인을 다시 본다(서버의 세션 역할과 같은 길, features-1 E10).
+    const outcome = applyCommand(this.state, envelope, this.now(), this.viewer ? { viewer: this.viewer } : {});
+    // 매장 설정이 바뀌었으면 config_rev를 올린다(서버의 shops.config_rev: 명령마다 한 번).
+    if (JSON.stringify([this.state.registry, this.state.settings, this.state.staff ?? []]) !== config) this.configRev += 1;
     this.save();
     if (this.state.rev !== before) this.emit();
     return clone(outcome);
@@ -244,7 +297,7 @@ export class FixtureClient implements DomainClient {
 
   /** 읽기 문맥: 지금 자료(기사 기기면 보냄 대기를 겹친 사본)와 화면 설정 · 체험 시계 · 체험 문구. */
   private context(): { state: FxState; ctx: ReadContext } {
-    const base = { config: this.settings, now: this.now(), lines: DEMO_LINES };
+    const base = { config: this.settings, now: this.now(), lines: DEMO_LINES, ...(this.viewer ? { viewer: this.viewer } : {}) };
     const queue = this.state.driverDevice.queue;
     if (this.device !== 'driver' || queue.length === 0) return { state: this.state, ctx: base };
     // 보냄 대기 겹치기(sync 8-1): 대기 명령을 복사본에 적용해 그리고 버린다. 수거 · 배달이 대기인 업무는 점선.
@@ -258,7 +311,7 @@ export class FixtureClient implements DomainClient {
   }
 
   private emit(): void {
-    const head: SyncHead = { epoch: this.state.epoch, rev: this.state.rev, configRev: this.settings.configRev };
+    const head: SyncHead = { epoch: this.state.epoch, rev: this.state.rev, configRev: this.settings.configRev + this.configRev };
     for (const listener of [...this.listeners]) listener(head);
   }
 
@@ -272,8 +325,8 @@ export class FixtureClient implements DomainClient {
         || typeof saved.clock !== 'number') return null;
       // 다른 견본(옛 번호 · 보증금 견본, 다른 매장 모양)으로 저장한 자료는 버린다: 줄의 재고 방식 · 운영 규칙이 지금 목록과 맞지 않는다.
       if (saved.sample !== this.sampleKey()) return null;
-      // 매장 목록(registry)은 체험판 코드의 견본 값이다: 저장된 것이 없거나 옛것이어도 늘 지금 값을 쓴다.
-      saved.state.registry = sampleRegistry(this.shop);
+      // 매장 목록(registry) · 직원은 저장한 자료의 것이다(매장 설정에서 바꾼다, features-1). 없는 옛 자료는 버린다(견본 판이 다르다).
+      if (!saved.state.registry || !Array.isArray(saved.state.staff)) return null;
       return saved;
     } catch {
       return null;
@@ -287,7 +340,7 @@ export class FixtureClient implements DomainClient {
 
   private save(): void {
     try {
-      const saved: Saved = { version: 3, state: this.state, clock: this.now(), sample: this.sampleKey() };
+      const saved: Saved = { version: 3, state: this.state, clock: this.now(), configRev: this.configRev, sample: this.sampleKey() };
       this.storage?.setItem(this.key, JSON.stringify(saved));
     } catch {
       // 저장이 막힌 브라우저에서도 체험은 돈다(새로 고치면 처음 자료).

@@ -126,6 +126,10 @@ export const CONDITION_SCOPE = {
   has_items_out: 'line',
   before_last_return_slot: 'view',
   after_last_return_slot: 'view',
+  // 0004(features-1 plan §3-1): 진행 중 접수(할인 적용 · 품목 추가), 접수 취소 가능(모든 줄이 손님에게 없음, 접수 전체로 셈), 미반납 리프트권.
+  order_open: 'order',
+  cancellable: 'order',
+  tickets_out: 'line',
 } as const;
 export type ConditionKey = keyof typeof CONDITION_SCOPE;
 export const CONDITION_KEYS = Object.keys(CONDITION_SCOPE) as ConditionKey[];
@@ -166,6 +170,11 @@ export const ACTION_KIND = {
   route_reset: 'command',
   pin: 'command',
   open_slip: 'screen',
+  // 0004(features-1 plan §3-1): 접수증 옆 동작.
+  add_items: 'command',
+  remove_items: 'command',
+  apply_discount: 'command',
+  ticket_loss: 'command',
 } as const satisfies Record<string, ActionKindKey>;
 export type ActionKey = keyof typeof ACTION_KIND;
 export const ACTION_KEYS = Object.keys(ACTION_KIND) as ActionKey[];
@@ -206,6 +215,10 @@ export const ACTION_LABELS = {
   route_reset: '시간순 정렬',
   pin: '긴급 요청',
   open_slip: '접수증',
+  add_items: '품목 추가',
+  remove_items: '품목 취소',
+  apply_discount: '할인 적용',
+  ticket_loss: '분실 처리',
 } as const satisfies Record<ActionKey, string>;
 
 /**
@@ -247,6 +260,10 @@ export const ACTION_COMMAND = {
   route_reset: 'route.reset',
   pin: 'task.pin',
   open_slip: null,
+  add_items: 'order.add',
+  remove_items: 'order.cancel',
+  apply_discount: 'discount.apply',
+  ticket_loss: 'stock.write_off',
 } as const satisfies Record<ActionKey, string | null>;
 
 /** 동작이 여는 화면(sys_actions.screen_key, 종류 'screen'만). */

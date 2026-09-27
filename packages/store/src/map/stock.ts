@@ -9,27 +9,32 @@
 //   - 번호 실물의 위치(assets.location_id)는 마지막 이동의 도착지다. 차량 예비권(FxAsset.vehicleId)은 접수 없이 차량에 있는 번호다.
 // 되읽기는 줄의 이동을 적은 차례(rev · 이동 · 줄 번호)로 접는다(foldLine): 적재는 도메인과 같이 max(loaded, issued) + 수.
 import type { FxAsset, FxLine, FxOrder, FxVanSpare, ShopRegistry, ShopState } from '@skinote/domain';
-import { findDeliverTask, orderIdOfTask, plannedLeft, resolveTask } from '@skinote/domain';
+import { backOf, findDeliverTask, hasSwaps, orderIdOfTask, plannedLeft, resolveTask, vanOf, variantRange } from '@skinote/domain';
 import { isoOf, msOf } from '../ids.ts';
 import { all, insert, num, one, run, str, text, type Db, type Row } from '../db.ts';
-import { OK_CONDITION, SHOP_LOCATION, customerLocation, defaultVariantId, variantId, vehicleLocation } from '../registry-keys.ts';
+import { OK_CONDITION, SHOP_LOCATION, VOID_LOCATION, customerLocation, defaultVariantId, variantId, vehicleLocation } from '../registry-keys.ts';
 import { recordFinding } from '../journal.ts';
 import { factMeta, idMaker, unmapped, type WriteContext } from './common.ts';
 
 type Ids = ReturnType<typeof idMaker>;
-type MoveKind = 'load' | 'deliver' | 'direct_return' | 'collect' | 'receive';
-/** 한 명령 안의 이동 차례(되읽기의 접기 차례와 같다). */
-const KIND_ORDER: readonly MoveKind[] = ['load', 'deliver', 'direct_return', 'collect', 'receive'];
+type MoveKind = 'load' | 'deliver' | 'direct_return' | 'collect' | 'receive' | 'write_off' | 'reversal' | 'found';
+/**
+ * 한 명령 안의 이동 차례(되읽기의 접기 차례와 같다). 분실 처리의 되돌림(reversal: 폐기·분실 → 손님)은 수거 앞이다: 보냄 대기로 온 수거가 분실
+ * 처리한 권을 받아 오면 그 몫을 먼저 되돌리고 받는다(features-1 E20).
+ */
+const KIND_ORDER: readonly MoveKind[] = ['load', 'deliver', 'direct_return', 'reversal', 'collect', 'receive', 'write_off', 'found'];
 
-interface MoveLine {
+export interface MoveLine {
   order: FxOrder;
   line: FxLine;
   /** 번호로 세는 줄의 번호(하나), 수량 줄은 없음. */
   assetId?: string;
   quantity: number;
+  /** 수량 줄의 규격(즉시 교환한 줄은 자리 셈으로 나눈 규격, features-1 §7-3). 없으면 줄의 규격(variantKey). */
+  variantKey?: string;
 }
 
-interface Movement {
+export interface Movement {
   kind: MoveKind;
   from: string;
   to: string;
@@ -37,18 +42,33 @@ interface Movement {
   at: number;
   lines: MoveLine[];
   id?: string;
+  /** 즉시 교환의 이동(stock_movements.exchange_id): 되읽기가 줄의 수 셈에 넣지 않는다. */
+  exchangeId?: string;
+  /** 되돌리는 이동(stock_movements.reverses_movement_id): 분실 처리의 되돌림이 가리키는 그 줄의 마지막 분실 처리. */
+  reverses?: string;
 }
 
 const numbered = (l: FxLine) => (l.tracking ?? 'unit') === 'unit';
 
 /** 줄의 빈 모양(새 접수 · 새 줄의 '앞'): 수 셈 0, 번호 · 시각 없음. */
 export function blankLine(l: FxLine): FxLine {
-  const { loadedAt: _a, issuedAt: _b, returnedAt: _c, collectedAt: _d, receivedAt: _e, assetIds: _f, backAssetIds: _g, plannedAssetIds: _h, ...rest } = l;
+  const {
+    loadedAt: _a, issuedAt: _b, returnedAt: _c, collectedAt: _d, receivedAt: _e, assetIds: _f, backAssetIds: _g, plannedAssetIds: _h, lost: _i, lostAt: _j, found: _k,
+    foundAt: _l, ...rest
+  } = l;
   return { ...rest, loaded: 0, issued: 0, returned: 0, collected: 0, received: 0 };
 }
 
+/** 폐기·분실 위치(매장마다 하나, 처음 쓸 때 만든다: 분실 처리한 권이 가는 곳, schema 2.10). */
+export function ensureVoid(ctx: WriteContext): string {
+  if (!one(ctx.db, 'SELECT 1 AS x FROM stock_locations WHERE shop_id = ? AND id = ?', ctx.shopId, VOID_LOCATION)) {
+    insert(ctx.db, 'stock_locations', { shop_id: ctx.shopId, id: VOID_LOCATION, kind_key: 'void', label: '폐기·분실', created_at: isoOf(ctx.now) });
+  }
+  return VOID_LOCATION;
+}
+
 /** 손님 위치(접수마다 처음 쓸 때 만든다). */
-function ensureCustomer(ctx: WriteContext, orderId: string): string {
+export function ensureCustomer(ctx: WriteContext, orderId: string): string {
   const id = customerLocation(orderId);
   if (!one(ctx.db, 'SELECT 1 AS x FROM stock_locations WHERE shop_id = ? AND id = ?', ctx.shopId, id)) {
     insert(ctx.db, 'stock_locations', { shop_id: ctx.shopId, id, kind_key: 'customer', label: '손님', order_id: orderId, created_at: isoOf(ctx.now) });
@@ -83,9 +103,9 @@ function added(before: readonly string[] | undefined, after: readonly string[] |
 }
 
 /** 한 줄의 이동 몫(앞 → 뒤). 수가 줄면 던진다(이동 사실은 되돌리지 않는다). */
-function lineMoves(ctx: WriteContext, o: FxOrder, p: FxLine, n: FxLine): { kind: MoveKind; qty: number; assets: string[]; at: number; vehicle?: string }[] {
-  const out: { kind: MoveKind; qty: number; assets: string[]; at: number; vehicle?: string }[] = [];
-  const delta = (k: 'loaded' | 'issued' | 'returned' | 'collected' | 'received') => {
+function lineMoves(ctx: WriteContext, o: FxOrder, p: FxLine, n: FxLine): { kind: MoveKind; qty: number; assets: string[]; at: number; vehicle?: string; leftover?: true }[] {
+  const out: { kind: MoveKind; qty: number; assets: string[]; at: number; vehicle?: string; leftover?: true }[] = [];
+  const delta = (k: 'loaded' | 'issued' | 'returned' | 'collected' | 'received' | 'unloaded' | 'found') => {
     const d = (n[k] ?? 0) - (p[k] ?? 0);
     if (d < 0) unmapped('줄의 ' + k + '이 줄었다: ' + n.id);
     return d;
@@ -119,6 +139,19 @@ function lineMoves(ctx: WriteContext, o: FxOrder, p: FxLine, n: FxLine): { kind:
     out.push({ kind: 'collect', qty: dCollected, assets: numbered(n) ? back.slice(dReturned) : [], at: n.collectedAt ?? ctx.now, vehicle: collectVehicle(ctx, o, n) });
   }
   if (dReceived > 0) out.push({ kind: 'receive', qty: dReceived, assets: [], at: n.receivedAt ?? ctx.now });
+  // 취소한 배달의 차에 남은 것을 매장에 내려놓음(features-1 E7): 그 접수의 배달 차량 → 매장(수량 줄만: 번호 줄은 차에 실린 것을 취소하지 않는다).
+  const dUnloaded = delta('unloaded');
+  if (dUnloaded > 0) {
+    if (numbered(n)) unmapped('번호 줄의 차에 남은 것: ' + n.id);
+    out.push({ kind: 'receive', qty: dUnloaded, assets: [], at: ctx.now, vehicle: o.pickup.vehicleId ?? unmapped('배달 차량이 없다: ' + o.id), leftover: true });
+  }
+  // 분실 처리(손님 → 폐기·분실) · 그 되돌림(폐기·분실 → 손님, 보냄 대기 수거가 받아 온 몫) · 분실 회수(폐기·분실 → 매장), features-1 E20. 수량 권만.
+  const dLost = (n.lost ?? 0) - (p.lost ?? 0);
+  const dFound = delta('found');
+  if ((dLost !== 0 || dFound !== 0) && numbered(n)) unmapped('번호 줄의 분실 처리: ' + n.id);
+  if (dLost > 0) out.push({ kind: 'write_off', qty: dLost, assets: [], at: n.lostAt ?? ctx.now });
+  if (dLost < 0) out.push({ kind: 'reversal', qty: -dLost, assets: [], at: ctx.now });
+  if (dFound > 0) out.push({ kind: 'found', qty: dFound, assets: [], at: n.foundAt ?? ctx.now });
   return out;
 }
 
@@ -169,7 +202,8 @@ export function writeStock(ctx: WriteContext, ids: Ids, prevLine: (o: FxOrder, l
         const customer = ensureCustomer(ctx, o.id);
         const pushUnits = (from: (asset: string) => string, to: string, orderId: string | undefined) => {
           if (unit) for (const a of mv.assets) addLine(mv.kind, from(a), to, orderId, mv.at, { order: o, line: n, assetId: a, quantity: 1 });
-          else addLine(mv.kind, from(''), to, orderId, mv.at, { order: o, line: n, quantity: mv.qty });
+          // 즉시 교환한 수량 줄은 자리 셈으로 규격을 나눠 적는다(교환 없는 줄은 한 줄, 줄의 규격).
+          else for (const part of countParts(p, n, mv)) addLine(mv.kind, from(''), to, orderId, mv.at, { order: o, line: n, quantity: part.quantity, ...(part.key !== undefined ? { variantKey: part.key } : {}) });
         };
         switch (mv.kind) {
           case 'load': {
@@ -196,7 +230,26 @@ export function writeStock(ctx: WriteContext, ids: Ids, prevLine: (o: FxOrder, l
             pushUnits(() => customer, vehicleLocation(mv.vehicle), o.id);
             break;
           }
+          case 'write_off':
+            pushUnits(() => customer, ensureVoid(ctx), o.id);
+            break;
+          case 'reversal': {
+            pushUnits(() => ensureVoid(ctx), customer, o.id);
+            const last = one(ctx.db, `SELECT m.id FROM stock_movement_lines ml JOIN stock_movements m ON m.shop_id = ml.shop_id AND m.id = ml.movement_id
+              WHERE ml.shop_id = ? AND ml.order_line_id = ? AND m.kind_key = 'write_off' ORDER BY m.created_rev DESC, m.rowid DESC LIMIT 1`, ctx.shopId, n.id);
+            const m = movements.find((x) => x.kind === 'reversal' && x.orderId === o.id);
+            if (m && last && !m.reverses) m.reverses = str(last.id);
+            break;
+          }
+          case 'found':
+            pushUnits(() => ensureVoid(ctx), SHOP_LOCATION, o.id);
+            break;
           case 'receive': {
+            if (mv.leftover) {
+              // 접수가 있는 입고 이동(되읽기가 unloaded로 접는다, 매장 입고 기록은 아니다).
+              addLine('receive', vehicleLocation(mv.vehicle!), SHOP_LOCATION, o.id, mv.at, { order: o, line: n, quantity: mv.qty });
+              break;
+            }
             const vehicle = receiveVehicle ?? collectVehicleOf(ctx, o, n);
             if (!vehicle) unmapped('입고 차량이 없다: ' + o.id);
             const from = vehicleLocation(vehicle);
@@ -204,6 +257,9 @@ export function writeStock(ctx: WriteContext, ids: Ids, prevLine: (o: FxOrder, l
               const assets = receiveAssets(ctx, n.id, mv.qty, from);
               if (assets.length !== mv.qty) unmapped('입고할 번호가 차량에 없다: ' + n.id);
               for (const a of assets) addLine('receive', from, SHOP_LOCATION, undefined, mv.at, { order: o, line: n, assetId: a, quantity: 1 });
+            } else if (hasSwaps(n)) {
+              // 즉시 교환한 줄: 차에 있는 그 줄의 규격(수거 이동 − 입고 이동)에서 먼저 실린 것부터.
+              for (const part of vanParts(ctx, n.id, from, mv.qty)) addLine('receive', from, SHOP_LOCATION, undefined, mv.at, { order: o, line: n, quantity: part.quantity, variantKey: part.key });
             } else {
               addLine('receive', from, SHOP_LOCATION, undefined, mv.at, { order: o, line: n, quantity: mv.qty });
             }
@@ -219,6 +275,43 @@ export function writeStock(ctx: WriteContext, ids: Ids, prevLine: (o: FxOrder, l
   return movements;
 }
 
+/**
+ * 수량 줄 이동 하나의 규격 조각(features-1 §7-3 splitByVariants): 교환 없는 줄은 줄의 규격 한 조각. 교환한 줄은 자리 셈(variants.ts)으로 이 이동이
+ * 옮기는 자리의 규격: 적재는 차에 실린 자리 뒤, 지급 · 배달은 지급한 수부터, 반납 · 수거는 돌아온 수부터(한 명령의 반납 뒤 수거), 차에 남은 것은
+ * 차에 실린 자리의 끝. 앞 모양(p)의 수로 센다.
+ */
+function countParts(p: FxLine, n: FxLine, mv: { kind: MoveKind; qty: number; leftover?: true }): { key?: string; quantity: number }[] {
+  if (!hasSwaps(n)) return [{ quantity: mv.qty }];
+  switch (mv.kind) {
+    case 'load': return variantRange(n, p.issued + vanOf(p), mv.qty);
+    case 'deliver': return variantRange(n, p.issued, mv.qty);
+    case 'direct_return': return variantRange(n, backOf(p), mv.qty);
+    case 'collect': return variantRange(n, backOf(p) + (n.returned - p.returned), mv.qty);
+    case 'receive': return mv.leftover ? variantRange(n, p.issued + vanOf(p) - mv.qty, mv.qty) : [{ quantity: mv.qty }];
+    // 분실 처리는 규격 없는 수량 권만(E20): 줄의 규격 한 조각.
+    default: return [{ quantity: mv.qty }];
+  }
+}
+
+/** 차에 있는 그 줄의 규격(수거로 실린 것 − 입고로 내린 것)에서 qty만큼(먼저 실린 규격부터). 모자라면 줄의 규격으로 채운다. */
+function vanParts(ctx: WriteContext, lineId: string, vehicleLoc: string, qty: number): { key: string; quantity: number }[] {
+  const rows = all(ctx.db, `SELECT v.code AS variant, m.kind_key, m.to_location_id AS t, m.from_location_id AS f, ml.quantity FROM stock_movement_lines ml
+    JOIN stock_movements m ON m.shop_id = ml.shop_id AND m.id = ml.movement_id JOIN item_variants v ON v.shop_id = ml.shop_id AND v.id = ml.variant_id
+    WHERE ml.shop_id = ? AND ml.order_line_id = ? AND ((m.kind_key = 'collect' AND m.to_location_id = ?) OR (m.kind_key = 'receive' AND m.from_location_id = ?))
+    ORDER BY m.created_rev, m.rowid, ml.line_no`, ctx.shopId, lineId, vehicleLoc, vehicleLoc);
+  const held = new Map<string, number>();
+  for (const r of rows) held.set(str(r.variant), (held.get(str(r.variant)) ?? 0) + (str(r.kind_key) === 'collect' ? num(r.quantity) : -num(r.quantity)));
+  const out: { key: string; quantity: number }[] = [];
+  let left = qty;
+  for (const [key, n] of held) {
+    const take = Math.min(left, Math.max(0, n));
+    if (take > 0) out.push({ key, quantity: take });
+    left -= take;
+  }
+  if (left > 0) unmapped('차에 있는 규격이 입고 수보다 적다: ' + lineId);
+  return out;
+}
+
 /** 입고 차량을 봉투로 모를 때(가져오기): 수거한 이동의 도착 차량. */
 function collectVehicleOf(ctx: WriteContext, o: FxOrder, l: FxLine): string | undefined {
   const row = one(ctx.db, `SELECT loc.vehicle_id FROM stock_movement_lines ml JOIN stock_movements m ON m.shop_id = ml.shop_id AND m.id = ml.movement_id
@@ -227,16 +320,17 @@ function collectVehicleOf(ctx: WriteContext, o: FxOrder, l: FxLine): string | un
   return text(row?.vehicle_id) ?? o.giveBack.vehicleId;
 }
 
-function insertMovement(ctx: WriteContext, ids: Ids, m: Movement): void {
+export function insertMovement(ctx: WriteContext, ids: Ids, m: Movement): void {
   const id = ids('m');
   m.id = id;
   insert(ctx.db, 'stock_movements', {
     shop_id: ctx.shopId, id, kind_key: m.kind, from_location_id: m.from, from_kind_key: locationKind(ctx, m.from), to_location_id: m.to, to_kind_key: locationKind(ctx, m.to),
-    order_id: m.orderId, ...factMeta(ctx, m.at),
+    order_id: m.orderId, exchange_id: m.exchangeId, reverses_movement_id: m.reverses, ...factMeta(ctx, m.at),
   });
   m.lines.forEach((x, i) => {
-    // 수량 줄은 늘 규격을 가진다: 규격 없는 수량 상품(첫 매장의 스키 · 권)은 기본 규격(registry-keys defaultVariantId).
-    const variant = x.line.variantKey !== undefined ? variantId(x.line.kind, x.line.variantKey) : !x.assetId ? defaultVariantId(x.line.kind) : undefined;
+    // 수량 줄은 늘 규격을 가진다: 규격 없는 수량 상품(첫 매장의 스키 · 권)은 기본 규격(registry-keys defaultVariantId). 교환한 줄은 나눈 규격.
+    const key = x.variantKey ?? x.line.variantKey;
+    const variant = key !== undefined ? variantId(x.line.kind, key) : !x.assetId ? defaultVariantId(x.line.kind) : undefined;
     if (!x.assetId && !variant) unmapped('번호도 규격도 없는 이동 줄: ' + x.line.id);
     insert(ctx.db, 'stock_movement_lines', {
       shop_id: ctx.shopId, movement_id: id, line_no: i + 1, catalog_item_id: x.line.kind, asset_id: x.assetId, variant_id: variant, quantity: x.quantity,
@@ -364,9 +458,9 @@ export function writeClaims(ctx: WriteContext, ids: Ids, movements: readonly Mov
  * 몫 합). 돌려주는 것: 매장 입고(vanReceipts, 입고 이동의 차례).
  */
 export function loadStock(db: Db, shopId: string, orders: readonly FxOrder[], lineById: Map<string, FxLine>, chains: Map<string, string[]>): { vehicleId: string; at: number }[] {
-  const rows = all(db, `SELECT m.id, m.kind_key, m.occurred_at, ml.order_line_id, ml.asset_id, ml.quantity FROM stock_movement_lines ml
+  const rows = all(db, `SELECT m.id, m.kind_key, m.from_kind_key, m.occurred_at, m.order_id, ml.order_line_id, ml.asset_id, ml.quantity FROM stock_movement_lines ml
     JOIN stock_movements m ON m.shop_id = ml.shop_id AND m.id = ml.movement_id
-    WHERE ml.shop_id = ? AND ml.order_line_id IS NOT NULL ORDER BY m.created_rev, m.rowid, ml.line_no`, shopId);
+    WHERE ml.shop_id = ? AND ml.order_line_id IS NOT NULL AND m.exchange_id IS NULL ORDER BY m.created_rev, m.rowid, ml.line_no`, shopId);
   for (const r of rows) {
     const l = lineById.get(str(r.order_line_id));
     if (!l) continue;
@@ -394,8 +488,24 @@ export function loadStock(db: Db, shopId: string, orders: readonly FxOrder[], li
         if (asset) l.backAssetIds = [...(l.backAssetIds ?? []), asset];
         break;
       case 'receive':
-        l.received += q;
-        l.receivedAt = t;
+        // 접수가 있는 입고 = 취소한 배달의 차에 남은 것을 내려놓음(features-1 E7).
+        if (text(r.order_id) !== undefined) l.unloaded = (l.unloaded ?? 0) + q;
+        else {
+          l.received += q;
+          l.receivedAt = t;
+        }
+        break;
+      // 분실 처리 · 그 되돌림 · 분실 회수(features-1 E20).
+      case 'write_off':
+        l.lost = (l.lost ?? 0) + q;
+        l.lostAt = t;
+        break;
+      case 'reversal':
+        if (str(r.from_kind_key) === 'void') l.lost = Math.max(0, (l.lost ?? 0) - q);
+        break;
+      case 'found':
+        l.found = (l.found ?? 0) + q;
+        l.foundAt = t;
         break;
     }
   }
@@ -439,8 +549,11 @@ export function loadStock(db: Db, shopId: string, orders: readonly FxOrder[], li
       if (total.received > 0) s.received = total.received;
     }
   }
+  // 매장 입고 기록: 접수 줄을 내린 입고만(차량 예비권 입고는 줄이 없는 이동이라 빠진다, features-1 E21).
   return all(db, `SELECT m.occurred_at, loc.vehicle_id FROM stock_movements m JOIN stock_locations loc ON loc.shop_id = m.shop_id AND loc.id = m.from_location_id
-    WHERE m.shop_id = ? AND m.kind_key = 'receive' ORDER BY m.created_rev, m.rowid`, shopId).map((r) => ({ vehicleId: str(r.vehicle_id), at: msOf(str(r.occurred_at)) }));
+    WHERE m.shop_id = ? AND m.kind_key = 'receive' AND m.order_id IS NULL
+      AND EXISTS (SELECT 1 FROM stock_movement_lines ml WHERE ml.shop_id = m.shop_id AND ml.movement_id = m.id AND ml.order_line_id IS NOT NULL)
+    ORDER BY m.created_rev, m.rowid`, shopId).map((r) => ({ vehicleId: str(r.vehicle_id), at: msOf(str(r.occurred_at)) }));
 }
 
 /**
@@ -463,15 +576,17 @@ export function loadAssets(db: Db, shopId: string): FxAsset[] {
  * 위치의 수량 재고(stock_balances)에는 수거해 온 것도 섞이기 때문이다. 차례는 매장 목록의 차량 → 상품 차례, 다 쓴 행도 0으로 남는다.
  */
 export function loadVanSpares(db: Db, shopId: string, reg: Pick<ShopRegistry, 'vehicles' | 'products'>): FxVanSpare[] {
-  const rows = all(db, `SELECT loc.vehicle_id, ml.catalog_item_id, sum(CASE WHEN m.kind_key = 'stock_opening' THEN ml.quantity ELSE -ml.quantity END) AS n,
-    max(m.kind_key = 'stock_opening') AS opened
+  // 들어온 것: 기초 재고 · 카운터의 예비권 적재(접수 줄 없는 load). 나간 것: 리프트권 추가(배달 중 추가 묶음의 배달) · 예비권 입고(접수 줄 없는 receive).
+  const rows = all(db, `SELECT loc.vehicle_id, ml.catalog_item_id, sum(CASE WHEN m.to_location_id = loc.id THEN ml.quantity ELSE -ml.quantity END) AS n,
+    max(m.kind_key = 'stock_opening' OR m.kind_key = 'load') AS opened
     FROM stock_movement_lines ml
     JOIN stock_movements m ON m.shop_id = ml.shop_id AND m.id = ml.movement_id
-    JOIN stock_locations loc ON loc.shop_id = m.shop_id AND loc.id = (CASE WHEN m.kind_key = 'stock_opening' THEN m.to_location_id ELSE m.from_location_id END)
+    JOIN stock_locations loc ON loc.shop_id = m.shop_id AND loc.id = (CASE WHEN m.kind_key IN ('stock_opening', 'load') THEN m.to_location_id ELSE m.from_location_id END)
     LEFT JOIN order_lines ol ON ol.shop_id = ml.shop_id AND ol.id = ml.order_line_id
     LEFT JOIN order_batches b ON b.shop_id = ol.shop_id AND b.id = ol.batch_id
     WHERE ml.shop_id = ? AND loc.kind_key = 'vehicle' AND ml.asset_id IS NULL AND ml.variant_id IS NOT NULL
-      AND (m.kind_key = 'stock_opening' OR (m.kind_key = 'deliver' AND b.source_key = 'driver_field'))
+      AND (m.kind_key = 'stock_opening' OR (m.kind_key = 'deliver' AND b.source_key = 'driver_field')
+        OR (m.kind_key IN ('load', 'receive') AND ml.order_line_id IS NULL))
     GROUP BY loc.vehicle_id, ml.catalog_item_id`, shopId);
   const vehicleOrder = reg.vehicles.map((v) => v.id);
   const productOrder = Object.keys(reg.products);
@@ -481,23 +596,71 @@ export function loadVanSpares(db: Db, shopId: string, reg: Pick<ShopRegistry, 'v
     .sort((a, b) => vehicleOrder.indexOf(a.vehicleId) - vehicleOrder.indexOf(b.vehicleId) || productOrder.indexOf(a.productKey) - productOrder.indexOf(b.productKey));
 }
 
+/** 차량 예비권 적재 · 입고의 이동 줄(접수 없는 이동, features-1 E21): 차량 · 상품 · 수(+ 적재, − 입고). */
+export interface SpareMove {
+  vehicleId: string;
+  productKey: string;
+  delta: number;
+}
+
 /**
- * 명령 앞뒤의 수량 차량 예비권이 이동과 맞는지: 행은 늘거나 줄지 않고, 줄어드는 수는 그 차량에서 리프트권 추가로 건넨 수량 줄(새로 더한 줄의
- * 배달 이동)만큼이다.
+ * 카운터의 예비권 적재 · 입고(stock.load · stock.receive의 spares, features-1 E21): 명령 앞뒤의 차량 예비권 차이를 이동 하나로 적는다(적재 매장 → 차량,
+ * 입고 차량 → 매장, 접수 없음, 상품의 기본 규격 수량 줄). 매장의 권 수량(stock_balances)은 모자라면 0에 멈추고 확인 결과(projection_drift)가 남는다
+ * (첫 매장은 매장의 권 재고를 세지 않는다, README D7 ⑥).
  */
-export function checkVanSpares(before: ShopState, after: ShopState, movements: readonly Movement[]): void {
+export function writeSpares(ctx: WriteContext, ids: Ids): SpareMove[] {
+  const env = ctx.envelope;
+  const load = env?.type === 'stock.load' && 'spares' in env.payload ? env.payload.vehicleId : undefined;
+  const unload = env?.type === 'stock.receive' && env.payload.spares?.length ? env.payload.vehicleId : undefined;
+  const vehicleId = load ?? unload;
+  if (!vehicleId) return [];
+  const qty = (s: ShopState, key: string) => (s.vanSpares ?? []).find((x) => x.vehicleId === vehicleId && x.productKey === key)?.quantity ?? 0;
+  const keys = [...new Set([...(ctx.before.vanSpares ?? []), ...(ctx.after.vanSpares ?? [])].filter((x) => x.vehicleId === vehicleId).map((x) => x.productKey))];
+  const moves = keys.map((productKey) => ({ vehicleId, productKey, delta: qty(ctx.after, productKey) - qty(ctx.before, productKey) })).filter((m) => m.delta !== 0);
+  if (moves.some((m) => (load ? m.delta < 0 : m.delta > 0))) unmapped('예비권 적재 · 입고의 방향이 다르다: ' + vehicleId);
+  if (!moves.length) return [];
+  const van = vehicleLocation(vehicleId);
+  const [from, to] = load ? [SHOP_LOCATION, van] : [van, SHOP_LOCATION];
+  const id = ids('m');
+  insert(ctx.db, 'stock_movements', {
+    shop_id: ctx.shopId, id, kind_key: load ? 'load' : 'receive', from_location_id: from, from_kind_key: locationKind(ctx, from), to_location_id: to,
+    to_kind_key: locationKind(ctx, to), ...factMeta(ctx, ctx.now),
+  });
+  moves.forEach((m, i) => {
+    const variant = defaultVariantId(m.productKey);
+    insert(ctx.db, 'stock_movement_lines', {
+      shop_id: ctx.shopId, movement_id: id, line_no: i + 1, catalog_item_id: m.productKey, variant_id: variant, quantity: Math.abs(m.delta),
+      before_condition_id: OK_CONDITION, after_condition_id: OK_CONDITION, created_rev: ctx.rev,
+    });
+    moveBalance(ctx, from, variant, -Math.abs(m.delta));
+    moveBalance(ctx, to, variant, Math.abs(m.delta));
+  });
+  return moves;
+}
+
+/**
+ * 명령 앞뒤의 수량 차량 예비권이 이동과 맞는지: 줄어드는 수는 그 차량에서 리프트권 추가로 건넨 수량 줄(새로 더한 줄의 배달 이동)과 예비권 입고, 느는 수는
+ * 예비권 적재만큼이다. 행은 줄지 않고, 새 행은 예비권 적재로만 생긴다(차례: 매장 목록의 차량 → 상품).
+ */
+export function checkVanSpares(before: ShopState, after: ShopState, movements: readonly Movement[], spares: readonly SpareMove[] = []): void {
   const a = before.vanSpares ?? [];
   const b = after.vanSpares ?? [];
-  if (a.length !== b.length || a.some((x, i) => x.vehicleId !== b[i]!.vehicleId || x.productKey !== b[i]!.productKey)) unmapped('차량 예비권 행이 늘거나 줄었다');
+  const key = (x: { vehicleId: string; productKey: string }) => x.vehicleId + '|' + x.productKey;
+  const bKeys = new Set(b.map(key));
+  if (a.some((x) => !bKeys.has(key(x)))) unmapped('차량 예비권 행이 줄었다');
+  const aKeys = new Set(a.map(key));
   const prevLines = new Set(before.orders.flatMap((o) => o.lines.map((l) => l.id)));
-  a.forEach((x, i) => {
+  for (const x of b) {
+    const moved = spares.filter((m) => key(m) === key(x)).reduce((n, m) => n + m.delta, 0);
+    if (!aKeys.has(key(x)) && moved <= 0) unmapped('차량 예비권 행이 이동 없이 늘었다: ' + key(x));
     const given = movements
       .filter((m) => m.kind === 'deliver' && m.from === vehicleLocation(x.vehicleId))
       .flatMap((m) => m.lines)
       .filter((l) => !l.assetId && l.line.kind === x.productKey && !prevLines.has(l.line.id))
       .reduce((n, l) => n + l.quantity, 0);
-    if (b[i]!.quantity !== x.quantity - given) unmapped('차량 예비권 수가 이동과 다르다: ' + x.vehicleId + ' ' + x.productKey);
-  });
+    const was = a.find((y) => key(y) === key(x))?.quantity ?? 0;
+    if (x.quantity !== was - given + moved) unmapped('차량 예비권 수가 이동과 다르다: ' + x.vehicleId + ' ' + x.productKey);
+  }
 }
 
 /** 명령 앞뒤의 번호 실물 목록이 이동과 맞는지: 차량 예비권이 사라지는 것은 차량에서 지급한 번호만. 목록 자체는 늘거나 줄지 않는다. */

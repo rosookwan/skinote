@@ -258,10 +258,15 @@ export function pickPrimaryAction(rows: readonly PrimaryActionRow[], activeCondi
   return sorted.find((row) => row.condition_key === 'always' || activeConditions.includes(row.condition_key)) ?? null;
 }
 
-/** 옆 동작을 읽기 모델이 준 능력(조건)으로 거른다. 순서는 seq. */
-export function availableActions(rows: readonly ViewActionRow[], activeConditions: readonly ConditionKey[]): ViewActionRow[] {
+/**
+ * 옆 동작을 읽기 모델이 준 능력(조건)으로 거른다. 순서는 seq. denied는 보는 사람에게 없는 권한(읽기 모델 OrderSlip.deniedPermissions): 그 권한이
+ * 필요한 줄(required_permission_key)은 빠진다(기능 feature_key처럼 설정을 거르는 것이고 규칙이 아니다 — 서버의 권한 확인이 다시 막는다,
+ * features-1 plan E11).
+ */
+export function availableActions(rows: readonly ViewActionRow[], activeConditions: readonly ConditionKey[], denied: readonly string[] = []): ViewActionRow[] {
   return rows
     .filter((row) => row.condition_key === 'always' || activeConditions.includes(row.condition_key))
+    .filter((row) => row.required_permission_key === null || !denied.includes(row.required_permission_key))
     .sort((a, b) => a.seq - b.seq);
 }
 

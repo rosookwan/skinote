@@ -19,6 +19,11 @@ const ClosingScreen = lazy(() => import('../screens/ClosingScreen.tsx').then((m)
 const ManageScreen = lazy(() => import('../screens/ManageScreen.tsx').then((m) => ({ default: m.ManageScreen })));
 const ShopSettingsScreen = lazy(() => import('../screens/ShopSettingsScreen.tsx').then((m) => ({ default: m.ShopSettingsScreen })));
 const TaskSheetScreen = lazy(() => import('../screens/TaskSheetScreen.tsx').then((m) => ({ default: m.TaskSheetScreen })));
+// 리프트권(features-1 §8-2)과 인쇄 문서 화면(§8-3, 연결하지 않은 주소 — 규칙 검사기가 잰다)도 따로 묶는다.
+const TicketsScreen = lazy(() => import('../screens/TicketsScreen.tsx').then((m) => ({ default: m.TicketsScreen })));
+// 확인 필요(features-1 §9-3)도 따로 묶는다.
+const ReviewScreen = lazy(() => import('../screens/ReviewScreen.tsx').then((m) => ({ default: m.ReviewScreen })));
+const PrintScreen = lazy(() => import('../components/PrintHost.tsx').then((m) => ({ default: m.PrintScreen })));
 // 체험판 전용 미리 보기(#/preview/keyboard, 연결하지 않은 주소): 규칙 검사기가 여는 곳이라 따로 묶는다.
 const PreviewScreen = lazy(() => import('./preview.tsx').then((m) => ({ default: m.PreviewScreen })));
 // 서버 모드의 연결 끊김 화면(기사 첫 화면이 오늘을 받지 못함): 서버 모드 묶음에 있다.
@@ -35,6 +40,7 @@ const TITLES: Record<Route['name'], string> = {
   slip: say('titleSlip'),
   newOrder: say('titleNewOrder'),
   groupPay: say('titleGroupPay'),
+  addItems: say('titleAddItems'),
   closing: say('titleClosing'),
   manage: say('titleManage'),
   shopSettings: say('titleShopSettings'),
@@ -43,6 +49,10 @@ const TITLES: Record<Route['name'], string> = {
   driver: say('titleDriver'),
   deliveries: say('titleDeliveries'),
   task: say('titleTask'),
+  tickets: say('titleTickets'),
+  review: say('titleReview'),
+  printCollection: say('titlePrint'),
+  printSlip: say('titlePrint'),
   preview: say('appName'),
   unknown: say('appName'),
 };
@@ -65,6 +75,8 @@ function RouteScreen({ route }: { route: Route }) {
     case 'newOrder': return <NewOrderScreen key="new" step={route.step} />;
     // 일괄 수납(V5): 다른 팀 몫까지 받을 팀의 접수증에서 연다.
     case 'groupPay': return <GroupPayScreen key={'pay:' + route.orderId} orderId={route.orderId} />;
+    // 품목 추가(features-1 §5-5): 새 접수 화면의 ① 품목만(그 접수의 일정 · 대표자), ③ 결제는 품목 추가의 확정 창.
+    case 'addItems': return <NewOrderScreen key={'add:' + route.orderId} step="items" addTo={route.orderId} />;
     // 하루 마감(V6): 장부의 주 버튼 `마감`(마지막 반납 타임 뒤) · 관리 → 마감.
     case 'closing': return <ClosingScreen key={'closing:' + (route.date ?? '')} date={route.date} />;
     // 관리(카드 목록: 매장 설정 · 마감)와 매장 설정(V8은 운영 규칙 탭, 다른 탭은 준비 중인 화면). 탭마다 새로 그린다(저장하지 않은 바꿈은
@@ -74,10 +86,17 @@ function RouteScreen({ route }: { route: Route }) {
     // 기사 배달 목록(ui 6-5)과 업무 판(V7): 목록의 팀 칸 → 업무 판, 바닥줄 `‹ 배달 목록`으로 그 쪽 그 줄에 돌아온다.
     case 'deliveries': return <DeliveryListScreen key={'deliveries:' + route.date} date={route.date} device={route.device} />;
     case 'task': return <TaskSheetScreen key={'task:' + route.taskId} taskId={route.taskId} device={route.device} />;
-    case 'collection': return <PosCollectionScreen key={'collection:' + (route.date ?? '')} date={route.date} />;
+    case 'collection': return <PosCollectionScreen key={'collection:' + (route.date ?? '') + ':' + (route.vehicleId ?? '')} date={route.date} {...(route.vehicleId ? { vehicleId: route.vehicleId } : {})} />;
     case 'exit': return <ExitScreen from={route.from ?? 'pos'} />;
     case 'driver': return <DriverListScreen key={'driver:' + route.date} date={route.date} device={route.device} />;
     case 'preview': return <PreviewScreen key={'preview:' + route.view + ':' + (route.device ?? 'counter')} view={route.view} />;
+    // 리프트권(머리줄 메뉴 `리프트권`): 탭마다 새로 그린다.
+    case 'tickets': return <TicketsScreen key={'tickets:' + route.tab} tab={route.tab} />;
+    // 확인 필요(머리줄 메뉴 `확인 필요`): 탭마다 새로 그린다.
+    case 'review': return <ReviewScreen key={'review:' + route.tab} tab={route.tab} />;
+    // 인쇄 문서(A4, 쪽 하나씩): 규칙 검사기가 인쇄 등급으로 잰다.
+    case 'printCollection': return <PrintScreen key={'print:' + route.date + ':' + (route.vehicleId ?? '') + ':' + route.page} job={{ kind: 'collection', date: route.date, vehicleId: route.vehicleId }} page={route.page} />;
+    case 'printSlip': return <PrintScreen key={'print:' + route.orderId + ':' + route.page} job={{ kind: 'slip', orderId: route.orderId }} page={route.page} />;
     case 'unknown': return null;
   }
 }

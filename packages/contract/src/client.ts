@@ -3,13 +3,15 @@
 import type { UiConfig } from './config.ts';
 import type { ActionKey, ConfirmTemplateKey, DeviceClassKey } from './vocab.ts';
 import type {
-  Basis, BusinessDate, FindResult, IsoTime, LedgerViewResult, OrderSlip, ReviewItem, VehicleLoad,
+  Basis, BusinessDate, FindResult, IsoTime, LedgerViewResult, OrderSlip, ReviewListView, VehicleLoad,
 } from './read-models.ts';
 import type {
-  AddTicketSheetParams, AddTicketSheetView, CheckoutChoice, CheckoutSheetParams, CheckoutSheetView, ClosingSheetParams, ClosingSheetView,
-  FieldPaySheetParams, FieldPaySheetView, GroupPaySheetParams, GroupPaySheetView, LineUnits, OrderDraftInput, OrderDraftParams, OrderDraftView,
-  PartialPaySheetParams, PartialPaySheetView, PromiseInput, PromiseSheetParams, PromiseSheetView, ReturnPieceLine, ReturnSheetParams, ReturnSheetView, RuleChange,
-  ShopRulesParams, ShopRulesView, TaskSheetParams, TaskSheetView,
+  AddPayer, AddTicketSheetParams, AddTicketSheetView, CancelDecision, CancelReasonKey, CancelScope, CancelSheetParams, CancelSheetView, CheckoutChoice,
+  CheckoutSheetParams, CheckoutSheetView, ClosingSheetParams, ClosingSheetView, DiscountSheetParams, DiscountSheetView, DraftItem, ExchangeSheetParams,
+  ExchangeSheetView, FieldPaySheetParams, FieldPaySheetView, GroupPaySheetParams, GroupPaySheetView, LineUnits, OrderDraftInput, OrderDraftParams, OrderDraftView,
+  PartialPaySheetParams, PartialPaySheetView, PhoneRevealParams, PhoneRevealView, PromiseInput, PromiseSheetParams, PromiseSheetView, RefundSheetParams,
+  RefundSheetView, ReturnPieceLine, ReturnSheetParams, ReturnSheetView, RuleChange, ShopRulesParams, ShopRulesView, ShopSettingsParams, ShopSettingsView, SpareSheetParams, SpareSheetView,
+  SpareUnits, TaskSheetParams, TaskSheetView, TicketBoardParams, TicketBoardView, TicketLossSheetParams, TicketLossSheetView,
 } from './sheets.ts';
 import { newRequestId } from './request-id.ts';
 
@@ -99,7 +101,8 @@ export interface QueryMap {
   orderSlip: { params: { orderId: string; deviceClass?: DeviceClassKey }; result: OrderSlip };
   findLast4: { params: { last4: string; date?: BusinessDate }; result: FindResult };
   confirmDraft: { params: ConfirmDraftParams; result: ConfirmDraftView };
-  reviewList: { params: { scope?: 'mine' | 'all' }; result: ReviewItem[] };
+  /** 확인 필요(features-1 §9): 열린 것 · 오늘 끝낸 것 · 알림 · 메뉴의 수. */
+  reviewList: { params: { scope?: 'mine' | 'all' }; result: ReviewListView };
   vehicleLoad: { params: { vehicleId: string }; result: VehicleLoad };
   // 둘째 판 화면(sheets.ts): 사람이 고른 것을 인자로 다시 물으면 줄 글 · 합계 · 주 버튼 · 명령을 새로 써 준다.
   /** V1 반납 확인 창 · 부분 반납. */
@@ -124,6 +127,24 @@ export interface QueryMap {
   addTicketSheet: { params: AddTicketSheetParams; result: AddTicketSheetView };
   /** V8 매장 설정 · 운영 규칙. */
   shopRules: { params: ShopRulesParams; result: ShopRulesView };
+  /** 매장 설정의 다른 탭(매장 정보 · 장소 · 반납 타임 · 요금 · 할인 · 차량 · 직원). */
+  shopSettings: { params: ShopSettingsParams; result: ShopSettingsView };
+  /** 접수증 옆 동작 `할인 적용`(features-1 §6-2): 칸 · 할인 고르기 · 요약 · 환불 줄 · 주 버튼 · 명령(할인 적용 → 환불). */
+  discountSheet: { params: DiscountSheetParams; result: DiscountSheetView };
+  /** 접수증 옆 동작 `접수 취소` · `품목 취소`(features-1 §5-4): 수량 · 구분 · 돈 결정 · 환불 줄 · 요약 · 주 버튼 · 명령(취소 → 환불). */
+  cancelSheet: { params: CancelSheetParams; result: CancelSheetView };
+  /** 접수증 옆 동작 `즉시 교환`(features-1 §7-2): 교환 품목 · 수량 · 지급 사이즈 · 요약 · 주 버튼 · 명령(exchange.swap). */
+  exchangeSheet: { params: ExchangeSheetParams; result: ExchangeSheetView };
+  /** 머리줄 메뉴 `리프트권`(features-1 §8-2): 현황(권종마다 · 차량 예비권) · 미반납(모든 날) · 분실. */
+  ticketBoard: { params: TicketBoardParams; result: TicketBoardView };
+  /** `분실 처리` · `분실 회수` 창(features-1 §8-2): 권 줄마다 수 · 창의 줄 · 주 버튼 · 명령(stock.write_off · asset.found). */
+  ticketLossSheet: { params: TicketLossSheetParams; result: TicketLossSheetView };
+  /** `예비권 적재` · `예비권 입고` 창(features-1 §8-2): 권종마다 수 · 요약 · 주 버튼 · 명령(stock.load · stock.receive의 spares). */
+  spareSheet: { params: SpareSheetParams; result: SpareSheetView };
+  /** 전화 창의 온전한 번호(features-1 §8-4). 서버는 개인정보 열람 기록(phone_reveal)을 남긴다. */
+  phoneReveal: { params: PhoneRevealParams; result: PhoneRevealView };
+  /** 확인 필요 `초과 수납`의 `환불` 창(features-1 §9-1): 환불 줄(수납마다 원래 수단 · 현금) · 요약 · 주 버튼 · 명령(payment.refund, cause 'overpaid'). */
+  refundSheet: { params: RefundSheetParams; result: RefundSheetView };
 }
 export type QueryName = keyof QueryMap;
 export type QueryParams = { [Q in QueryName]: QueryMap[Q]['params'] };
@@ -150,13 +171,100 @@ export interface PaymentAllocationInput {
   lines?: { lineId: string; quantity: number; amount: number }[];
 }
 
+/**
+ * 매장 목록 행을 가리키는 글: 있는 행의 id, 또는 같은 명령(차량 · 직원 탭은 앞 명령)에서 더한 행 'new:<ref>'. 명령이
+ * `${요청번호}:<ref>`로 바꾼다(창은 id를 만들지 않는다, plan E25).
+ */
+export type RowId = string;
+
+/** 직원 역할(roles.key). */
+export type StaffRoleKey = 'manager' | 'counter' | 'driver';
+
+/** 결제 칸(할인 대상). */
+export type SettingsSection = 'gear' | 'lift';
+
+/** 매장 목록 바꿈 한 건(registry.update, plan §3-5). 차례대로 적용하고, 하나라도 거절되면 명령 전체를 거절한다. */
+export type RegistryOp =
+  | { op: 'shop.set'; name?: string; phone?: string }
+  | { op: 'area.add'; ref: string; label: string }
+  | { op: 'area.rename'; id: RowId; label: string }
+  | { op: 'area.hide'; id: RowId; hidden: boolean }
+  | { op: 'area.move'; id: RowId; toIndex: number }
+  | { op: 'place.add'; ref: string; areaId: RowId; label: string }
+  | { op: 'place.rename'; id: RowId; label: string }
+  | { op: 'place.hide'; id: RowId; hidden: boolean }
+  | { op: 'place.move'; id: RowId; toIndex: number }
+  | { op: 'slot.add'; ref: string; label: string; time: string }
+  | { op: 'slot.update'; id: RowId; label?: string; time?: string }
+  | { op: 'slot.hide'; id: RowId; hidden: boolean }
+  | { op: 'slot.move'; id: RowId; toIndex: number }
+  | { op: 'price.set'; productKey: string; amount: number }
+  | { op: 'discount.add'; ref: string; label: string; kind: 'percent' | 'amount'; value: number; sections: SettingsSection[] }
+  | { op: 'discount.update'; id: RowId; label?: string; value?: number }
+  | { op: 'discount.active'; id: RowId; active: boolean }
+  | { op: 'vehicle.add'; ref: string; label: string }
+  | { op: 'vehicle.rename'; id: RowId; label: string }
+  | { op: 'vehicle.active'; id: RowId; active: boolean }
+  | { op: 'setting.default_slot'; slotId: RowId }
+  | { op: 'setting.night_notice'; minutes: number }
+  | { op: 'setting.vehicle_late'; minutes: number; nightMinutes: number };
+
+/** 직원 바꿈 한 건(staff.set). vehicleId null = 배정 끝. */
+export type StaffOp =
+  | { op: 'staff.add'; ref: string; name: string; role: StaffRoleKey; vehicleId?: RowId }
+  | { op: 'staff.update'; id: RowId; role?: StaffRoleKey; vehicleId?: RowId | null }
+  | { op: 'staff.active'; id: RowId; active: boolean };
+
+/** 매장 설정 화면의 초안 한 건(목록 바꿈 또는 직원 바꿈). */
+export type SettingsOp = RegistryOp | StaffOp;
+
+/** 직접 입력 할인(catalog 9, features-1 E10): 금액(원) 또는 비율(%)과 사유. 리프트권 칸은 비율만. */
+export interface ManualDiscount {
+  kind: 'amount' | 'percent';
+  value: number;
+  reason: string;
+}
+
+/** 할인 적용(discount.apply)에서 고른 것: 매장 할인 · 직접 입력 · 할인 없음(지금 할인을 해제). */
+export type DiscountChoice = { ruleKey: string } | { manual: ManualDiscount } | { none: true };
+
+/** 할인 적용이 받는 결제 칸(할인 묶음). */
+export type DiscountSectionKey = 'gear' | 'lift';
+
+/** 환불 한 줄(payment.refund): 돌려줄 수납(접수의 수납 id)과 수단(그 수납의 수단 또는 `현금`), 금액. */
+export interface RefundInput {
+  paymentId: string;
+  methodKey: string;
+  amount: number;
+}
+
+/** 환불의 까닭(features-1 E3): 할인 변경 · 접수 취소 · 초과 수납. 할인 · 취소는 앞 명령(dependsOn[0])이 그 까닭이다. */
+export type RefundCause = 'discount' | 'cancellation' | 'overpaid';
+
+export const STAFF_OPS: readonly StaffOp['op'][] = ['staff.add', 'staff.update', 'staff.active'];
+export const isStaffOp = (op: SettingsOp): op is StaffOp => (STAFF_OPS as readonly string[]).includes(op.op);
+
 /** 이 화면 줄기가 보내는 명령의 본문. 명령 이름은 sys_event_types의 key다. */
 export interface CommandPayloads {
   'stock.issue': { orderId: string; lines: LineUnits[] };
   'stock.direct_return': { orderId: string; lines: LineUnits[] };
-  'stock.load': { taskId: string; lines: LineUnits[] };
+  /**
+   * 적재: 배달 업무의 품목(taskId · lines), 또는 카운터가 차량에 싣는 예비권(vehicleId · spares, 수량으로 세는 권만, features-1 E21 — 기사 세션은
+   * 거절).
+   */
+  'stock.load': { taskId: string; lines: LineUnits[] } | { vehicleId: string; spares: SpareUnits[] };
   'stock.collect': { taskId: string; lines: LineUnits[] };
-  'stock.receive': { vehicleId: string; taskIds: string[]; lines?: LineUnits[] };
+  /** 매장 입고: 차에 있는 수거 품목(taskIds · lines)과 차량 예비권을 내림(spares, taskIds 빈 목록, 카운터만). */
+  'stock.receive': { vehicleId: string; taskIds: string[]; lines?: LineUnits[]; spares?: SpareUnits[] };
+  /**
+   * 분실 처리(features-1 E20): 손님에게서 돌아오지 않은 권(수량으로 세고 보증금이 없는 줄)을 청구 없이 닫는다(폐기·분실로 옮김, 돈 없음). 수거 예정이
+   * 줄고 접수가 끝날 수 있다.
+   */
+  'stock.write_off': { orderId: string; lines: LineUnits[]; reasonKey: 'lost' };
+  /** 분실 회수(features-1 E20): 분실 처리한 권을 찾음(폐기·분실 → 매장). */
+  'asset.found': { orderId: string; lines: LineUnits[] };
+  /** 확인 필요 처리(features-1 §9-1): 저장된 확인 필요 한 건을 끝낸다(`확인`, 누가 · 언제는 명령을 한 사람 · 서버 시각). */
+  'review.resolve': { reviewId: string; resolutionKey: 'acknowledged' };
   /** 차량 배달(기사가 손님께 건넴, 오프라인 허용). */
   'stock.deliver': { taskId: string; lines: LineUnits[] };
   /**
@@ -203,6 +311,32 @@ export interface CommandPayloads {
   };
   /** 운영 규칙 저장(다음 기록부터). */
   'setting.set': { changes: RuleChange[] };
+  /** 매장 목록 바꿈(매장 정보 · 장소 · 반납 타임 · 요금 · 할인 · 차량, 다음 기록부터). */
+  'registry.update': { changes: RegistryOp[] };
+  /** 직원 바꿈(더하기 · 역할 · 차량 배정 · 사용 종료). */
+  'staff.set': { changes: StaffOp[] };
+  /**
+   * 할인 적용 · 변경 · 해제(features-1 §6-1): 그 칸의 지금 할인을 새 할인이 대신한다(차이는 청구 조정). 창이 본 받을 금액(expect.dueAmount)과
+   * 다르면 충돌. 적용한 뒤 접수가 더 낸 돈이 되면 창이 이어서 환불(payment.refund, cause 'discount')을 보낸다.
+   */
+  'discount.apply': { orderId: string; sectionKey: DiscountSectionKey; choice: DiscountChoice };
+  /** 환불(features-1 E3 · E4): 돌려줄 수납마다 수단 · 금액. expect.refundAmount = 합. 까닭이 할인 · 취소면 dependsOn[0]이 그 명령이다. */
+  'payment.refund': { orderId: string; cause: RefundCause; refunds: RefundInput[] };
+  /**
+   * 접수 취소 · 품목 취소(features-1 §5-1): 범위 · 줄마다 수(접수 취소는 창이 센 수 모두) · 구분 · 비운 돈의 결정. 창이 본 받을 금액(expect.dueAmount)과
+   * 다르면 충돌. 환불이면 창이 이어서 payment.refund(cause 'cancellation', dependsOn = 이 명령)를 보낸다.
+   */
+  'order.cancel': { orderId: string; scope: CancelScope; lines: LineUnits[]; reasonKey: CancelReasonKey; decision: CancelDecision };
+  /**
+   * 품목 추가(features-1 §5-5): 이 접수에 품목을 더한다(새 차수, 접수의 일정 · 결제 팀, 칸의 비율 할인은 새 줄에도). 칸마다 지금 받기 · 후불(할인
+   * 고르기 없음), 후불 칸의 결제 팀(payer). 창이 본 가격(expect.quoteHash)과 다르면 충돌.
+   */
+  'order.add': { orderId: string; items: DraftItem[]; choices: CheckoutChoice[]; payer: AddPayer };
+  /**
+   * 즉시 교환(features-1 §7-1): 줄 하나의 수량 일부를 같은 종류의 다른 사이즈로. planned = 아직 지급하지 않은 것(매장에 있는 것, 이동 없음), 아니면
+   * 손님에게 있는 것(옛 사이즈가 매장으로 돌아오고 새 사이즈가 나감). 돈은 바뀌지 않는다(금액 유지). 누가 · 언제는 명령을 한 사람 · 서버 시각.
+   */
+  'exchange.swap': { orderId: string; lineId: string; quantity: number; from: string; to: string; planned: boolean };
   'route.move': { taskId: string; anchorTaskId: string | null; position: 'before' | 'after' | 'top' };
   'route.reset': { vehicleId: string; date: BusinessDate };
   'task.pin': { taskId: string; note?: string };
@@ -217,7 +351,8 @@ export const COMMAND_TYPES = [
   'stock.issue', 'stock.direct_return', 'stock.load', 'stock.collect', 'stock.receive', 'stock.deliver',
   'payment.take', 'payment_promise.set', 'promise.change', 'order.create', 'deposit.take', 'deposit.return',
   'field.collect', 'field.add_ticket', 'field.deposit_return', 'cash.transfer', 'cash.transfer_confirm', 'closing.close', 'setting.set',
-  'route.move', 'route.reset', 'task.pin', 'task.unpin', 'task.visit', 'notification.ack',
+  'registry.update', 'staff.set', 'discount.apply', 'payment.refund', 'order.cancel', 'order.add', 'exchange.swap', 'stock.write_off', 'asset.found', 'review.resolve', 'route.move',
+  'route.reset', 'task.pin', 'task.unpin', 'task.visit', 'notification.ack',
 ] as const satisfies readonly CommandType[];
 // 목록이 모든 명령을 담았는지 형식으로 확인한다(명령을 더하고 목록을 잊으면 컴파일 오류).
 const COMMAND_TYPES_COMPLETE: [Exclude<CommandType, (typeof COMMAND_TYPES)[number]>] extends [never] ? true : never = true;
@@ -237,6 +372,10 @@ export const MONEY_COMMAND_EXPECT: Readonly<Partial<Record<CommandType, readonly
   'field.deposit_return': ['depositHeld'],
   'cash.transfer_confirm': ['expectedCash'],
   'closing.close': ['expectedCash'],
+  'discount.apply': ['dueAmount'],
+  'payment.refund': ['refundAmount'],
+  'order.cancel': ['dueAmount'],
+  'order.add': ['quoteHash'],
 };
 
 /** 돈을 옮기는 명령: expect(창이 본 받을 돈)가 없으면 서버가 거절한다(sync 4-2). */

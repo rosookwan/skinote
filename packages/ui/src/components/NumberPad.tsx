@@ -2,14 +2,14 @@
 // (Keypad)과 같은 모양이고 `정정` · `입력`, 금액은 `000`도 가진다. 새 접수의 연락처 · 직접 입력 시각(V2 · V3), 확정 창 · 일괄 수납 ·
 // 마감 · 기사 현장 수납의 금액(V4 · V5 · V6 · V7), 매장 설정의 값(V8)이 쓴다. 아래에서 올라오는 판(sheet) 또는 화면 안의 판(inline).
 // 부품은 보이는 모양만 만든다: 번호 · 금액이 맞는지는 부르는 쪽이 서버에 묻는다. 카운터 PC의 자판(숫자 · 지움 · 들어가기 · Esc)도 받는다.
-// 서버 연결(계획 work/impl-server/plan.md 6-3)의 두 모드: 기기 등록 번호(code, 12자리를 넷씩 끊어 '1234-5678-9012')와 직원
+// 매장 설정(features-1)의 분(`60분`) · 비율(`10%`) 모드도 있다. 서버 연결(계획 work/impl-server/plan.md 6-3)의 두 모드: 기기 등록 번호(code, 12자리를 넷씩 끊어 '1234-5678-9012')와 직원
 // 비밀번호(pin, 4 ~ 6자리를 가려 '● ● ● ●'로만 보인다). 비밀번호는 표시 칸 · 읽는 이름 어디에도 숫자로 나오지 않는다.
 import { useEffect, useId } from 'react';
 import { formatEnrollDigits, formatPhone, formatPinMask, formatTimeDigits, formatWon } from '../format.ts';
 import { t } from '../strings.ko-KR.ts';
 import { TextFit } from './TextFit.tsx';
 
-export type NumberPadMode = 'phone' | 'amount' | 'time' | 'code' | 'pin';
+export type NumberPadMode = 'phone' | 'amount' | 'time' | 'code' | 'pin' | 'minutes' | 'percent';
 
 export interface NumberPadProps {
   mode: NumberPadMode;
@@ -41,7 +41,7 @@ export interface NumberPadProps {
  * 모드마다 칠 수 있는 숫자 수(휴대폰 11, 시각 HHMM 4, 금액 9자리 = 999,999,999원, 등록 번호 12, 비밀번호 6).
  * 등록 번호 · 비밀번호의 자리 수는 계약(@skinote/contract의 ENROLL_CODE_DIGITS · PIN_MAX_DIGITS)과 같다(시험이 맞춰 본다).
  */
-export const NUMBER_PAD_DIGITS: Readonly<Record<NumberPadMode, number>> = { phone: 11, amount: 9, time: 4, code: 12, pin: 6 };
+export const NUMBER_PAD_DIGITS: Readonly<Record<NumberPadMode, number>> = { phone: 11, amount: 9, time: 4, code: 12, pin: 6, minutes: 3, percent: 3 };
 
 /** 비밀번호의 가장 짧은 자리 수(계약의 PIN_MIN_DIGITS). */
 export const NUMBER_PAD_PIN_MIN = 4;
@@ -52,6 +52,9 @@ export function numberPadText(mode: NumberPadMode, digits: string): string {
   if (mode === 'time') return formatTimeDigits(digits);
   if (mode === 'code') return formatEnrollDigits(digits);
   if (mode === 'pin') return formatPinMask(digits.length);
+  // 분 · 비율(매장 설정의 야간 수거 준비 · 차량 지연 기준 · 할인 비율): `60분` · `10%`.
+  if (mode === 'minutes') return digits ? t('minutes', { n: String(Number(digits)) }) : '';
+  if (mode === 'percent') return digits ? t('percent', { n: String(Number(digits)) }) : '';
   return digits ? formatWon(Number(digits)) : '';
 }
 

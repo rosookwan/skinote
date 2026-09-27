@@ -1,5 +1,5 @@
 // @ts-check
-// 매장 운영 명령 넷(plan §5-5): 등록 번호 만들기, 비밀번호 새로, 기기 끊기, 상태. 명령줄(bin/shop.js)이 서버가 멈췄을 때 직접 부르고,
+// 매장 운영 명령(plan §5-5): 등록 번호 만들기, 비밀번호 새로, 기기 끊기, 역할 한도(set-limit), 상태. 명령줄(bin/shop.js)이 서버가 멈췄을 때 직접 부르고,
 // 서버가 돌면 관리 소켓(admin-socket.js)을 거쳐 서버가 자기 연결로 부른다(한 매장 파일에 쓰는 사람은 하나, D4). SQL은 저장소에만 있다.
 // 돌려주는 값 가운데 비밀(등록 번호 · 비밀번호)은 명령줄이 표준 출력에 한 번 보여 줄 뿐 어디에도 적지 않는다.
 
@@ -187,11 +187,46 @@ function openDevicesOf(ctx) {
   };
 }
 
+/** 역할 key(roles.key). */
+const LIMIT_ROLES = Object.freeze(['counter', 'driver', 'manager']);
+/** 직접 입력 할인 한도의 끝(도메인 MANUAL_DISCOUNT와 같은 끝: 금액 1,000,000원 · 비율 100%). */
+const LIMIT_MAX = Object.freeze({ amount: 1_000_000, percent: 100 });
+
+/**
+ * 역할의 직접 입력 할인 한도(role_permissions.limits_json, features-1 E10 · §14 Q3, 2026-09-27 점검: 한도를 적는 길이 없었다): `--amount 20000`
+ * (원, 10원 단위) · `--percent 10`, `--amount none`이면 한도 없음. 매장 설정 권한이 있는 사람(관리자)이 명령줄에서 한다.
+ * @param {OpsContext} ctx @param {{ role?: unknown, amount?: unknown, percent?: unknown }} args
+ */
+export function setLimitOp(ctx, args) {
+  const role = typeof args.role === 'string' ? args.role : '';
+  if (!LIMIT_ROLES.includes(role)) throw new OpError('BAD_ARGS', '--role은 counter · driver · manager 가운데 하나');
+  if (!ctx.control.tenant(ctx.shopId)) throw new OpError('NOT_PROVISIONED', '아직 만들지 않은 매장입니다(provision 먼저)');
+  const none = args.amount === 'none' && args.percent === undefined;
+  /** @type {{ maxDiscountAmount?: number, maxDiscountPercentBp?: number }} */
+  const limits = {};
+  if (!none) {
+    if (args.amount !== undefined) {
+      const amount = Number(args.amount);
+      if (!Number.isInteger(amount) || amount < 0 || amount > LIMIT_MAX.amount || amount % 10 !== 0) throw new OpError('BAD_ARGS', `--amount는 0~${LIMIT_MAX.amount}(10원 단위) 또는 none`);
+      limits.maxDiscountAmount = amount;
+    }
+    if (args.percent !== undefined) {
+      const percent = Number(args.percent);
+      if (!Number.isInteger(percent) || percent < 0 || percent > LIMIT_MAX.percent) throw new OpError('BAD_ARGS', `--percent는 0~${LIMIT_MAX.percent}`);
+      limits.maxDiscountPercentBp = percent * 100;
+    }
+    if (limits.maxDiscountAmount === undefined && limits.maxDiscountPercentBp === undefined) throw new OpError('BAD_ARGS', '--amount 또는 --percent가 있어야 합니다');
+  }
+  if (!ctx.port.setRoleLimits(role, none ? null : limits)) throw new OpError('NOT_FOUND', '그 역할에 직접 입력 할인 권한이 없습니다');
+  return { role, limits: ctx.port.roleLimits(role) };
+}
+
 /** 관리 소켓 · 명령줄이 부르는 이름 → 명령. */
 export const ONLINE_OPS = Object.freeze({
   'device-code': deviceCodeOp,
   'rotate-pin': rotatePinOp,
   'revoke-device': revokeDeviceOp,
+  'set-limit': setLimitOp,
   status: statusOp,
 });
 

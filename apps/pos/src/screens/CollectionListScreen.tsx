@@ -20,17 +20,22 @@ import {
   AppHeader, ConnectionStrip, FooterBar, IndexTabs, Keypad, Ledger, Pager, PinBar, REORDER_LOOK, RowActionBar, fillTitle, formatItem, formatTime, t,
   useDeviceProfile, useKeypadPlacement, useServerNow, useUi, type FooterMetric, type LedgerPaging, type PrimaryButtonProps, type RowAction,
 } from '@skinote/ui';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { dispatchAction } from '../app/actions.ts';
 import { useClient, useConfig, useConnection, useLive, usePointerDown } from '../app/client.tsx';
 import { figureText } from '../app/labels.ts';
 import { go, navState, patchNavState, type DeviceShape } from '../app/router.ts';
 import { say } from '../app/strings.ts';
 import { pressStamp, useConfirmFlow } from '../components/ConfirmFlow.tsx';
-import { ChoiceSheet, NoticeDialog, type Choice } from '../components/NoticeDialog.tsx';
+import { ChoiceSheet, type Choice } from '../components/NoticeDialog.tsx';
 import { usePosHeader } from '../components/PosHeader.tsx';
 import { VanStockDialog } from '../components/VanStockDialog.tsx';
 import { VisitResultDialog } from '../components/VisitResultDialog.tsx';
+import { CallDialog } from '../components/CallDialog.tsx';
+
+// 카운터의 A4 인쇄(features-1 §8-3): 처음 누를 때 받는다(첫 화면 묶음을 작게).
+const loadPrint = () => import('../components/PrintHost.tsx');
+const PrintHost = lazy(() => loadPrint().then((m) => ({ default: m.PrintHost })));
 
 type Workspace = 'driver' | 'pos';
 
@@ -83,7 +88,9 @@ interface CollectionScreenParts {
   overlays: ReactNode;
 }
 
-function useCollectionScreen(workspace: Workspace, viewKey: DriverListKey, date: string | null, externalHold: boolean, device: DeviceShape = 'tablet'): CollectionScreenParts {
+function useCollectionScreen(
+  workspace: Workspace, viewKey: DriverListKey, date: string | null, externalHold: boolean, device: DeviceShape = 'tablet', listVehicle?: string,
+): CollectionScreenParts {
   const client = useClient();
   const config = useConfig();
   const profile = useDeviceProfile();
@@ -104,26 +111,31 @@ function useCollectionScreen(workspace: Workspace, viewKey: DriverListKey, date:
   const [note, setNote] = useState<string | undefined>(undefined);
   const [findOpen, setFindOpen] = useState(false);
   const [visit, setVisit] = useState<LedgerRow | null>(null);
-  const [call, setCall] = useState<{ title: string; phone: string } | null>(null);
+  /** 전화 창(features-1 §8-4): 온전한 번호는 창이 phoneReveal로 받는다. */
+  const [call, setCall] = useState<{ title: string; orderId: string } | null>(null);
+  /** 카운터의 A4 인쇄(features-1 §8-3). */
+  const [printing, setPrinting] = useState(false);
   /** 전화 알림 창 제목: '전화 · 김민재 팀'(접수증의 전화 창과 같은 모양). */
   const callTitle = (name: string) => say('noticeTitle', { label: ACTION_LABELS.call, name });
   const [sheet, setSheet] = useState<Sheet | null>(null);
   const [vanOpen, setVanOpen] = useState(false);
   const flow = useConfirmFlow();
   const pointer = usePointerDown();
-  const hold = externalHold || flow.active || pointer || findOpen || visit !== null || call !== null || sheet !== null || vanOpen;
+  const hold = externalHold || flow.active || pointer || findOpen || visit !== null || call !== null || sheet !== null || vanOpen || printing;
 
   const live = useLive<LedgerViewResult>(
-    [viewKey, workspace, date ?? '', tab, profile.key].join(':'),
-    (c) => c.ledgerView(viewKey, { ...(date ? { date } : {}), tabKey: tab, deviceClass: profile.key }),
+    [viewKey, workspace, date ?? '', tab, profile.key, listVehicle ?? ''].join(':'),
+    (c) => c.ledgerView(viewKey, { ...(date ? { date } : {}), tabKey: tab, deviceClass: profile.key, ...(listVehicle ? { vehicleId: listVehicle } : {}) }),
     hold,
   );
   const result = live.data;
   const connection = useConnection();
+  // 카운터의 인쇄 묶음은 목록을 연 뒤 미리 받아 둔다(누르면 곧바로 인쇄 창).
+  useEffect(() => { if (!driver) void loadPrint().catch(() => undefined); }, [driver]);
 
   // 날짜 없이 열면(#/collections) 서버의 오늘 영업일 주소로 바꾼다.
   useEffect(() => {
-    if (!date && result) go({ name: 'collection', date: result.currentBusinessDate }, { replace: true });
+    if (!date && result) go({ name: 'collection', date: result.currentBusinessDate, ...(listVehicle ? { vehicleId: listVehicle } : {}) }, { replace: true });
   }, [date, result]);
 
   const view = useMemo(() => {
@@ -214,8 +226,7 @@ function useCollectionScreen(workspace: Workspace, viewKey: DriverListKey, date:
 
   const callRow = (row: LedgerRow) => {
     const team = teamOf(row);
-    const phone = phoneOf(row);
-    if (phone) setCall({ title: callTitle(team?.name ?? ''), phone });
+    if (phoneOf(row) && row.orderId) setCall({ title: callTitle(team?.name ?? ''), orderId: row.orderId });
   };
 
   /** 줄의 동작: 종류로 가르고(app/actions.ts), 자기 창이 따로 있는 것만 여기서. */
@@ -307,6 +318,8 @@ function useCollectionScreen(workspace: Workspace, viewKey: DriverListKey, date:
         onPress: () => { if (task.taskId) dispatchAction(task.actionKey, { flow, target: { ...target, taskId: task.taskId } }); },
       };
     }
+    // 카운터의 `인쇄`(features-1 §8-3): 이 날 · 차량의 A4 수거 목록을 브라우저 인쇄 창으로.
+    if (key === 'print') return { label: name, onPress: () => setPrinting(true) };
     return { label: name, onPress: () => dispatchAction(key, { flow, target }) };
   })() : null;
 
@@ -332,11 +345,12 @@ function useCollectionScreen(workspace: Workspace, viewKey: DriverListKey, date:
       moreCount={pins.length - 1}
       onOpen={(p) => selectTask(p.taskId)}
       onCall={(p) => {
-        if (!p.phone) return;
+        if (!p.phone || !p.orderId) return;
+        const orderId = p.orderId;
         // 목록에 그 줄이 있으면 팀 이름으로('전화 · 오승민 팀'), 없으면(다른 탭) 긴급 줄의 이름 · 끝 4자리로.
         const hit = rows.find((r) => r.taskId === p.taskId);
         const name = hit ? teamOf(hit)?.name : undefined;
-        setCall({ title: name ? callTitle(name) : ACTION_LABELS.call + ' · ' + (p.parts.find((x) => x.drop === 0)?.text ?? ''), phone: p.phone });
+        setCall({ title: name ? callTitle(name) : ACTION_LABELS.call + ' · ' + (p.parts.find((x) => x.drop === 0)?.text ?? ''), orderId });
       }}
       {...(driver ? { onAck: ack } : {})}
       compact={profile.key === 'driver_phone'}
@@ -453,8 +467,15 @@ function useCollectionScreen(workspace: Workspace, viewKey: DriverListKey, date:
           onClose={() => setVisit(null)}
         />
       ) : null}
-      {call ? (
-        <NoticeDialog title={call.title} lines={[call.phone, say('demoNoCall')]} onClose={() => setCall(null)} />
+      {call ? <CallDialog orderId={call.orderId} fallbackTitle={call.title} onClose={() => setCall(null)} /> : null}
+      {printing ? (
+        <Suspense fallback={null}>
+          <PrintHost
+            job={{ kind: 'collection', date: result?.titleValues.date ?? date, vehicleId: vehicleId ?? null }}
+            onDone={() => setPrinting(false)}
+            onFail={(line) => { setPrinting(false); flow.notify({ title: ACTION_LABELS.print, lines: [line] }); }}
+          />
+        </Suspense>
       ) : null}
       {vanOpen && load ? <VanStockDialog load={load} onClose={() => setVanOpen(false)} /> : null}
       {flow.element}
@@ -499,9 +520,9 @@ export function DeliveryListScreen({ date, device = 'tablet' }: { date: string; 
 }
 
 /** 카운터의 수거 목록(#/collections/:date, N3): 같은 설정의 pos 판. 순서 바꾸기 · 빨리 확인 · 접수증 · 전화. */
-export function PosCollectionScreen({ date }: { date: string | null }) {
+export function PosCollectionScreen({ date, vehicleId }: { date: string | null; vehicleId?: string }) {
   const header = usePosHeader('collection', 'collection_list');
-  const parts = useCollectionScreen('pos', 'collection_list', date, header.active);
+  const parts = useCollectionScreen('pos', 'collection_list', date, header.active, 'tablet', vehicleId);
   return (
     <div className="sn-screen">
       {header.element}

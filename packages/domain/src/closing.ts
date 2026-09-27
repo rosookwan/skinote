@@ -6,8 +6,8 @@
 // 보증금은 매출이 아니라 결제 수단 표에 없고 돈통 예상에만 든다(`보증금 5,000원 포함`). 마감 차례: 차량 현금 점검 → 돈통 점검 → 마감.
 // 돈통 셈은 명령 · 장부 표가 없어 화면 초안(params.counts)으로 오고 마감 명령이 싣는다(impl-v2 plan §8 D3).
 import {
-  DomainError, type CarryItem, type CashCheckRow, type ChoiceOption, type ClosingCheckView, type ClosingCount, type ClosingMethodRow,
-  type ClosingSheetParams, type ClosingSheetView, type CommandEnvelope, type FitPart, type RichText, type StampCell,
+  DomainError, reviewMessage, type CarryItem, type CashCheckRow, type ChoiceOption, type ClosingCheckView, type ClosingCount, type ClosingMethodRow,
+  type ClosingSheetParams, type ClosingSheetView, type CommandEnvelope, type FitPart, type ReviewStepView, type RichText, type StampCell,
 } from '@skinote/contract';
 import { heldAmount, heldUnits } from './deposits.ts';
 import type { DomainLines, FxCashTransfer, FxClosing, FxClosingSheet, FxDepositEntry, FxLine, FxOrder, ShopState } from './model.ts';
@@ -15,7 +15,7 @@ import { bucketOnVan, bucketOut, currentReturn, lineBuckets, taskBucket } from '
 import { countWordOf, countWords, pieceWord, slotTime } from './promise-sheet.ts';
 import { conflict, done, nothing, rejected, unsupported, type Result } from './result.ts';
 import {
-  lastReturnSlotAt, lateAtOf, moneyLateAt, othersDue, pendingIssue, routeTasks, selfDue, slotAt, vehicleLabel,
+  lastReturnSlotAt, lateAtOf, leftover, moneyLateAt, othersDue, pendingIssue, routeTasks, selfDue, slotAt, vehicleLabel,
 } from './rules.ts';
 import { businessDateOf, dateTitle, hm, iso, kstAt, kstDate, shopCutoff } from './time.ts';
 import type { ViewContext } from './views.ts';
@@ -23,10 +23,11 @@ import type { ViewContext } from './views.ts';
 /** 카운터 돈통. */
 export const COUNTER = 'counter';
 /**
- * 보냄 대기(state.driverDevice)를 가진 기사 기기의 차량(메모리 어댑터의 기사 기기는 1호 차량의 것이다). B2c에서 보냄 대기가 어댑터 몫으로
- * 나가면 이 셈도 어댑터가 넘기는 값이 된다.
+ * 보냄 대기(state.driverDevice)를 가진 기사 기기의 차량: 기기가 차량을 가지면 그 차량, 없으면 1호 차량(메모리 어댑터의 기사 기기). B2c에서 보냄
+ * 대기가 어댑터 몫으로 나가면 이 셈도 어댑터가 넘기는 값이 된다. 서버에서는 기기가 보낼 수를 알리기 전까지 비어 있다(features-1 §0-2).
  */
 const DRIVER_DEVICE_VEHICLE = 'v1';
+const deviceVehicle = (state: ShopState) => state.driverDevice.vehicleId ?? DRIVER_DEVICE_VEHICLE;
 const vanDrawer = (vehicleId: string) => 'van:' + vehicleId;
 /** 아직 인계하지 않은 차량 지갑의 key(`van:v1`)면 그 차량. */
 const walletVehicle = (state: ShopState, key: string) => state.registry.vehicles.find((v) => vanDrawer(v.id) === key)?.id;
@@ -83,10 +84,11 @@ const postedOn = (state: ShopState, date: string) => (ms: number) => postingDate
 
 // ── 돈통 · 차량 지갑 ─────────────────────────────────────────────────
 
-/** 이 영업일에 그 돈통 · 차량 지갑에 든 현금 수납(결제 자리의 팀 몫 합). */
+/** 이 영업일에 그 돈통 · 차량 지갑에 든 현금 수납(결제 자리의 팀 몫 합) − 그 돈통에서 돌려준 현금 환불(features-1 E4). */
 function paidCash(state: ShopState, date: string, drawerId: string): number {
   const day = postedOn(state, date);
-  return state.orders.reduce((sum, o) => sum + o.payments.filter((p) => p.drawerId === drawerId && day(p.at)).reduce((n, p) => n + p.amount, 0), 0);
+  return state.orders.reduce((sum, o) => sum + o.payments.filter((p) => p.drawerId === drawerId && day(p.at)).reduce((n, p) => n + p.amount, 0)
+    - (o.refunds ?? []).filter((r) => r.drawerId === drawerId && day(r.at)).reduce((n, r) => n + r.amount, 0), 0);
 }
 
 const DEPOSIT_SIGN: Record<FxDepositEntry['kind'], number> = { take: 1, restore: 1, refund: -1, apply: 0, keep: 0 };
@@ -104,6 +106,22 @@ const transfersOf = (state: ShopState, date: string, vehicleId: string) => state
 export function walletLeft(state: ShopState, date: string, vehicleId: string): number {
   const drawer = vanDrawer(vehicleId);
   return paidCash(state, date, drawer) + depositCash(state, date, drawer) - transfersOf(state, date, vehicleId).reduce((n, t) => n + t.amount, 0);
+}
+
+/**
+ * 차량 지갑에 남은 현금(날을 가리지 않음): 그 지갑의 모든 현금 수납 − 현금 환불 + 현금 보증금(입금 − 반환) − 모든 인계. 점검 이월한 전날의 현금도
+ * 남는다(차량 사용 종료의 막힘, settings.ts vehicleEndRefusal).
+ */
+export function walletBalance(state: ShopState, vehicleId: string): number {
+  const drawer = vanDrawer(vehicleId);
+  let n = 0;
+  for (const o of state.orders) {
+    n += o.payments.filter((p) => p.drawerId === drawer).reduce((sum, p) => sum + p.amount, 0);
+    n -= (o.refunds ?? []).filter((r) => r.drawerId === drawer).reduce((sum, r) => sum + r.amount, 0);
+  }
+  for (const dep of state.deposits) n += dep.entries.filter((e) => e.drawerId === drawer).reduce((sum, e) => sum + DEPOSIT_SIGN[e.kind] * e.amount, 0);
+  n -= state.cashTransfers.filter((t) => t.vehicleId === vehicleId).reduce((sum, t) => sum + t.amount, 0);
+  return n;
 }
 
 /**
@@ -132,8 +150,17 @@ function lastReceipt(state: ShopState, date: string, vehicleId: string): number 
 }
 
 /** 매장 입고 뒤에도 차에 남은 것: 입고 전에 수거했는데 내려놓지 않은 수(`김민수 · 0025 · 헬멧 1개 미입고`). */
-export function notReceived(state: ShopState, date: string): { o: FxOrder; l: FxLine; qty: number; at: number }[] {
-  const out: { o: FxOrder; l: FxLine; qty: number; at: number }[] = [];
+export function notReceived(state: ShopState, date: string): { o: FxOrder; l: FxLine; qty: number; at: number; vehicleId?: string }[] {
+  const out: { o: FxOrder; l: FxLine; qty: number; at: number; vehicleId?: string }[] = [];
+  // 취소한 배달의 차에 남은 것(features-1 E7): 매장 입고 전까지 `미입고`(취소한 때부터).
+  for (const o of state.orders) {
+    if (o.pickup.mode !== 'vehicle') continue;
+    const at = (o.cancellations ?? []).at(-1)?.at ?? o.pickup.at;
+    for (const l of o.lines) {
+      const qty = leftover(l);
+      if (qty > 0) out.push({ o, l, qty, at, ...(o.pickup.vehicleId ? { vehicleId: o.pickup.vehicleId } : {}) });
+    }
+  }
   for (const v of state.registry.vehicles) {
     const at = lastReceipt(state, date, v.id);
     if (at === undefined) continue;
@@ -141,7 +168,7 @@ export function notReceived(state: ShopState, date: string): { o: FxOrder; l: Fx
       for (const l of task.order.lines) {
         const b = l.returnable ? taskBucket(task, l) : undefined;
         const qty = b ? bucketOnVan(b) : 0;
-        if (qty > 0 && (l.collectedAt ?? 0) <= at) out.push({ o: task.order, l, qty, at });
+        if (qty > 0 && (l.collectedAt ?? 0) <= at) out.push({ o: task.order, l, qty, at, vehicleId: v.id });
       }
     }
   }
@@ -176,8 +203,9 @@ interface ClosingPlan {
   countReady: boolean;
   methods: ClosingMethodRow[];
   total: number;
-  /** 보낼 것이 남은 기사 기기(`1호 차량 · 전송 대기 있음`). */
+  /** 보낼 것이 남은 기사 기기(`1호 차량 · 전송 대기 있음`)와 그 수. */
   blocked?: string;
+  blockedCount?: number;
 }
 
 const reasonOk = (state: ShopState, diff: number, reasonKey: string | undefined, reasonNote: string | undefined) =>
@@ -198,12 +226,31 @@ function methodRows(state: ShopState, date: string): ClosingMethodRow[] {
       acc.set(p.methodKey, a);
     }
   }
-  return state.registry.payMethods.flatMap((m) => {
+  const refunds = state.orders.flatMap((o) => (o.refunds ?? []).filter((r) => day(r.at)));
+  const refundOf = (key: string) => refunds.filter((r) => r.methodKey === key).reduce((sum, r) => sum + r.amount, 0);
+  const rows: ClosingMethodRow[] = state.registry.payMethods.flatMap((m) => {
     const a = acc.get(m.key);
     if (!a || a.amount <= 0) return [];
-    const note: FitPart[] = [...a.vans].filter(([, n]) => n > 0).map(([v, n]) => ({ text: vehicleLabel(state.registry, v) + ' ' + won(n) + ' 포함', drop: 1, short: vehicleLabel(state.registry, v) + ' ' + won(n) }));
+    // 그 수단으로 돌려준 돈은 그 줄의 둘째 줄 첫 조각(빠지지 않음): 카드 단말기 · 통장 · 돈통과 맞춰 보는 몫이다(2026-09-27 점검: 수단이 셋이면 환불
+    // 줄의 수단 조각이 빠져 `환불 3건`만 남았다).
+    const back = refundOf(m.key);
+    const note: FitPart[] = [
+      ...(back > 0 ? [{ text: '환불 ' + minusWon(-back), drop: 0 }] : []),
+      ...[...a.vans].filter(([, n]) => n > 0).map(([v, n]) => ({ text: vehicleLabel(state.registry, v) + ' ' + won(n) + ' 포함', drop: 1, short: vehicleLabel(state.registry, v) + ' ' + won(n) })),
+    ];
     return [{ key: m.key, label: m.label, ...(note.length ? { note } : {}), count: a.groups.size, amount: a.amount }];
   });
+  // 환불은 받은 수단의 줄에서 빼지 않고 한 줄로(features-1 §3-2 마감의 돈): `환불 · 2건 · −27,500원`. 둘째 줄은 그날 받은 줄이 없는 수단의 환불만
+  // (선입금 계좌이체를 오늘 돌려줌: `계좌이체 135,000원`), 나머지는 각 수단 줄에 있다.
+  if (refunds.length) {
+    const shown = new Set(rows.map((r) => r.key));
+    const orphan = state.registry.payMethods.map((m) => ({ m, n: refundOf(m.key) })).filter((x) => x.n > 0 && !shown.has(x.m.key));
+    rows.push({
+      key: 'refund', label: '환불', ...(orphan.length ? { note: [{ text: orphan.map((x) => x.m.label + ' ' + won(x.n)).join(' · '), drop: 0 }] } : {}), count: refunds.length,
+      amount: -refunds.reduce((sum, r) => sum + r.amount, 0),
+    });
+  }
+  return rows;
 }
 
 function closingPlan(state: ShopState, date: string, params: Pick<ClosingSheetParams, 'counts' | 'deferredTransferIds'>): ClosingPlan {
@@ -233,13 +280,25 @@ function closingPlan(state: ShopState, date: string, params: Pick<ClosingSheetPa
     countReady: count !== undefined && !stale && reasonOk(state, count.countedAmount - counter.amount, count.reasonKey, count.reasonNote),
     methods,
     total: methods.reduce((n, m) => n + m.amount, 0),
-    ...(queue > 0 ? { blocked: vehicleLabel(state.registry, DRIVER_DEVICE_VEHICLE) + ' · 전송 대기 있음' } : {}),
+    ...(queue > 0 ? { blocked: vehicleLabel(state.registry, deviceVehicle(state)) + ' · 전송 대기 있음', blockedCount: queue } : {}),
+  };
+}
+
+/**
+ * 마감의 막는 단계(features-1 §9-1, sys_review_kinds van_unsynced · dialog_step): `1호 차량 기록 2건 전송 대기 · 마감 전 전송 필요`와 `재확인`(주 버튼,
+ * 다시 묻기) · `닫기`. 문장의 조각은 첫 조각(사실)이 빠지지 않고 뒤 조각(할 일)부터 빠진다.
+ */
+export function vanUnsyncedStep(vehicle: string, count: number): ReviewStepView {
+  const message = reviewMessage('van_unsynced', { vehicle, count });
+  return {
+    kindKey: 'van_unsynced', message, parts: message.split(' · ').map((text, i) => ({ text, drop: i })),
+    choices: [{ key: 'recheck', label: '재확인' }, { key: 'close', label: '닫기' }],
   };
 }
 
 // ── 화면 줄 ─────────────────────────────────────────────────────────
 
-const pending = (state: ShopState, vehicleId: string) => (vehicleId === DRIVER_DEVICE_VEHICLE ? state.driverDevice.queue.length : 0);
+const pending = (state: ShopState, vehicleId: string) => (vehicleId === deviceVehicle(state) ? state.driverDevice.queue.length : 0);
 
 function actualRuns(counted: number, diff: number): RichText {
   return [{ text: '실제 ' + won(counted) + ' · ' }, { text: '차액 ' + diffWon(diff), strong: true, ...(diff === 0 ? { tone: 'green' as const } : {}) }];
@@ -352,7 +411,9 @@ function returnCarry(state: ShopState, now: number, date: string): CarryItem[] {
     const first = list.filter((x) => x.o === teams[0]).sort((a, b) => a.at - b.at)[0]!;
     out.push({
       key: 'overdue:' + section.key, title: late(section.label + ' 미반납 · ' + figure(list) + ' · '),
-      note: teamsNote(teams, '반납 ' + closingWhen(first.at, date)), late: true, ...openOf(teams, 'return'),
+      note: teamsNote(teams, '반납 ' + closingWhen(first.at, date)), late: true,
+      // 안 돌아온 리프트권은 리프트권 화면의 `미반납` 탭(분실 처리 · 전화가 있는 곳, features-1 §8-2). 장비는 접수증 · 장부.
+      ...(section.key === 'lift' ? { ticketTab: 'unreturned' as const } : openOf(teams, 'return')),
     });
   }
   return out;
@@ -568,6 +629,7 @@ export function closingSheet(ctx: ViewContext, params: ClosingSheetParams): Clos
     ...head, date, title, band, methods: plan.methods, cash, carry: carryItems(state, ctx.now, date, plan), footer: footerOf(plan, next), next,
     ...(check ? { check } : {}),
     ...(plan.blocked ? { blocked: plan.blocked } : {}),
+    ...(plan.blocked && next.kind === 'close' ? { step: vanUnsyncedStep(vehicleLabel(state.registry, deviceVehicle(state)), plan.blockedCount ?? 0) } : {}),
     ...(confirmLine ? { confirm: { title: next.label, line: confirmLine } } : {}),
     ...(next.kind === 'close' ? closeCommand(plan) : {}),
   };

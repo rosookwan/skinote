@@ -120,6 +120,11 @@ export interface DeviceRows {
   revoke(deviceId: string, reason: string, now: number): boolean;
   /** 기기 id → 상태(서버의 기기 상태 캐시). */
   statusMap(): Map<string, DeviceStatus>;
+  /**
+   * 끊기지 않은 기기를 마지막으로 로그인한 직원마다(매장 설정 `차량 · 직원`의 `기기 막기 · {기기}`, features-1 E13c): 직원 id → 기기(id · 이름).
+   * 기기 번호 차례.
+   */
+  lastUsers(): Map<string, { id: string; label: string }[]>;
 }
 
 export function deviceRows(db: Db, shopId: string): DeviceRows {
@@ -228,6 +233,17 @@ export function deviceRows(db: Db, shopId: string): DeviceRows {
     },
     list() {
       return all(db, 'SELECT * FROM devices WHERE shop_id = ? ORDER BY short_no', shopId).map(deviceOf);
+    },
+    lastUsers() {
+      const out = new Map<string, { id: string; label: string }[]>();
+      for (const r of all(db, `SELECT d.id, d.label, s.staff_member_id FROM devices d
+        JOIN device_sign_ins s ON s.shop_id = d.shop_id AND s.device_id = d.id
+        WHERE d.shop_id = ? AND d.status_key = 'active' AND s.seq = (SELECT max(x.seq) FROM device_sign_ins x WHERE x.shop_id = d.shop_id AND x.device_id = d.id)
+        ORDER BY d.short_no`, shopId)) {
+        const staff = str(r.staff_member_id);
+        out.set(staff, [...(out.get(staff) ?? []), { id: str(r.id), label: str(r.label) }]);
+      }
+      return out;
     },
     signIn(input) {
       return atomically(db, () => {

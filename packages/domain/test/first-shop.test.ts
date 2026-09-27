@@ -37,9 +37,9 @@ describe('차량 늦음의 여유(매장 설정 vehicleLate, 답 15)', () => {
     const late = (now: number) => list(now).rows.filter((r) => r.groupKey === 's2200' && r.lateAt !== undefined && Date.parse(r.lateAt) <= now).map((r) => r.id);
     expect(list(at(23, 0)).rows.filter((r) => r.groupKey === 's2200').length).toBeGreaterThan(5);
     expect(late(at(23, 0))).toEqual([]);
-    expect(runQuery(state, 'reviewList', {}, ctx(at(23, 0))).filter((x) => x.kindKey === 'late_return').map((x) => x.orderId)).not.toContain('o25');
+    expect(runQuery(state, 'reviewList', {}, ctx(at(23, 0))).notices.filter((x) => x.kindKey === 'late_return').map((x) => x.orderId)).not.toContain('o25');
     expect(late(at(23, 30))).toContain('collect:o25');
-    expect(runQuery(state, 'reviewList', {}, ctx(at(23, 30))).filter((x) => x.kindKey === 'late_return').map((x) => x.orderId)).toContain('o25');
+    expect(runQuery(state, 'reviewList', {}, ctx(at(23, 30))).notices.filter((x) => x.kindKey === 'late_return').map((x) => x.orderId)).toContain('o25');
   });
 
   it('야간 수거 준비 안내: 알림 분(60분) 전 21:00부터 그 타임의 수거가 늦음이 되는 23:30 전까지', () => {
@@ -79,7 +79,7 @@ describe('차량 예비권(수량)보다 많이 건넨 끊긴 기사 기기의 �
     expect(state.orders.find((o) => o.id === 'o26')!.lines.at(-1)).toMatchObject({ kind: 'night_adult', qty: 7, issued: 7, tracking: 'count' });
     expect(state.vanSpares).toEqual([{ vehicleId: 'v1', productKey: 'night_adult', quantity: -1 }]);
     expect(spareTickets(state, 'v1')).toEqual([]);
-    const review = runQuery(state, 'reviewList', {}, ctx(at(17, 0))).filter((x) => x.kindKey === 'ticket_unavailable');
+    const review = runQuery(state, 'reviewList', {}, ctx(at(17, 0))).items.filter((x) => x.kindKey === 'ticket_unavailable');
     expect(review.map((x) => x.message)).toEqual(['1호 차량 야간권 재고 기록 부족 1매 · 차량 재고 확인']);
   });
 

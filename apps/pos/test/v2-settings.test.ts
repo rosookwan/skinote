@@ -4,15 +4,17 @@
 // 첫 매장(체험판 기본, 2026-09-26)의 값: 리프트권 반납 필수 · 리프트권 보증금 미사용(권 카드의 1,000원은 리조트와 가게 사이의 돈) · 선입금 전액 ·
 // 당일 취소 환불 · 06:00. 보증금 줄(입금 시점 · 미반납 시 · 분실금)의 셈은 보증금을 켠 매장(shop 'numbered')으로 본다.
 import { readFileSync } from 'node:fs';
-import { envelopeFor, parseRuleKey, type ConfirmCommand, type RuleChange, type ShopRulesView } from '@skinote/contract';
+import { envelopeFor, parseRuleKey, type ConfirmCommand, type RuleCard as RuleCardView, type RuleChange, type SettingsOp, type ShopRulesView } from '@skinote/contract';
 import { fitList } from '@skinote/layout';
-import { DEVICE_PROFILES, openOrRestoreDraft } from '@skinote/ui';
+import { DEVICE_PROFILES, openOrRestoreDraft, ruleListCells } from '@skinote/ui';
 import { describe, expect, it } from 'vitest';
-import { inputAccepts, optionPress, padValue, withChange } from '../src/app/settings-draft.ts';
+import { dropFrom, fillOp, inputAccepts, inputRun, optionPress, padValue, stepValue, withChange, withOp, type StepRun } from '../src/app/settings-draft.ts';
 import { businessDateOf, type FxState, heldRule, kstAt, liftReturnable, ruleKeys, type SampleShop, shopCutoff } from '@skinote/domain';
 import { SHOP_RULES, sampleRegistry } from '@skinote/domain/sample';
 import { FixtureClient } from '../src/fixture/fixture-client.ts';
-import { rulesLayout, saveRowsPerPage, settingsTabs } from '../src/screens/ShopSettingsScreen.tsx';
+import { rulesLayout, saveRowsPerPage, settingsLayout, settingsTabs } from '../src/screens/ShopSettingsScreen.tsx';
+
+const ruleListCellsOf = (card: RuleCardView) => ruleListCells(card.list);
 
 const ms = (h: number, m: number, day = 0) => kstAt('2026-12-26', day, h, m);
 
@@ -351,5 +353,76 @@ describe('V8 화면 도우미 — 카드 쪽 · 저장 창 줄 수 · 탭', () =
     const fitted = fitList(tabs.map((tab) => ({ ...tab, pinnedEnd: false })), DEVICE_PROFILES.pos_narrow.capacity.tabs, { moreTakesSlot: true });
     expect(fitted.shown.map((tab) => tab.label)).toEqual(['매장 정보', '장소', '반납 타임', '운영 규칙']);
     expect(fitList(tabs.map((tab) => ({ ...tab, pinnedEnd: false })), pos.capacity.tabs, { moreTakesSlot: true }).overflow).toEqual([]);
+  });
+});
+
+describe('매장 설정의 다른 탭(features-1 §4-4): 초안 도우미 · 카드 조각 · 체험 자료에서 저장', () => {
+  it('op 채우기(점으로 이은 자리) · 단계 차례 · 값 버튼의 단계 · 거절된 건부터 빼기', () => {
+    const op = { op: 'setting.vehicle_late' as const, minutes: 60, nightMinutes: 0 };
+    expect(fillOp(op, 'nightMinutes', 120)).toEqual({ op: 'setting.vehicle_late', minutes: 60, nightMinutes: 120 });
+    expect(op.nightMinutes).toBe(0);
+    const run: StepRun = {
+      op: { op: 'discount.add', ref: 'n1', label: '', kind: 'percent', value: 0, sections: [] },
+      steps: [
+        { kind: 'choose', field: 'sections', title: '대상', options: [{ key: 'gear', label: '장비', value: ['gear'] }] },
+        { kind: 'input', field: 'value', input: { key: 'value', mode: 'percent', title: '할인 비율', min: 1, max: 100 } },
+        { kind: 'input', field: 'label', input: { key: 'label', mode: 'text', title: '할인 이름', min: 1, max: 20 } },
+      ],
+      index: 0,
+    };
+    const one = stepValue(run, ['gear']);
+    expect('next' in one && one.next.index).toBe(1);
+    const two = 'next' in one ? stepValue(one.next, 15) : one;
+    const three = 'next' in two ? stepValue(two.next, '장비 15%') : two;
+    expect(three).toEqual({ done: { op: 'discount.add', ref: 'n1', label: '장비 15%', kind: 'percent', value: 15, sections: ['gear'] } });
+    expect(inputRun({ key: 'x', mode: 'amount', title: 't', min: 1, max: 9 })).toBeNull();
+    expect(inputRun({ key: 'name', mode: 'text', title: '매장 이름', min: 1, max: 20, op: { op: 'shop.set', name: '' }, field: 'name' })?.steps).toHaveLength(1);
+    expect(dropFrom([op, op, op], 1)).toHaveLength(1);
+    expect(withOp([op], op)).toHaveLength(2);
+  });
+
+  it('숫자판의 받는 값: 전화(비우거나 9 ~ 11자리), 금액의 단위(10원), 분 · 비율의 범위, 시각은 24시 전', () => {
+    const phone = { key: 'p', mode: 'phone' as const, title: '전화', min: 0, max: 0 };
+    expect([inputAccepts(phone, ''), inputAccepts(phone, '0100'), inputAccepts(phone, '01000000000')]).toEqual([true, false, true]);
+    expect(padValue(phone, '01000000000')).toBe('01000000000');
+    const amount = { key: 'a', mode: 'amount' as const, title: '할인 금액', min: 10, max: 1_000_000, step: 10 };
+    expect([inputAccepts(amount, '5005'), inputAccepts(amount, '5000')]).toEqual([false, true]);
+    const minutes = { key: 'm', mode: 'minutes' as const, title: '야간 수거 준비', min: 0, max: 180 };
+    expect([inputAccepts(minutes, '0'), inputAccepts(minutes, '181'), padValue(minutes, '60')]).toEqual([true, false, 60]);
+    const time = { key: 't', mode: 'time' as const, title: '반납 타임', min: 0, max: 23 * 60 + 59 };
+    expect([inputAccepts(time, '2030'), inputAccepts(time, '2400'), padValue(time, '2030')]).toEqual([true, false, '20:30']);
+  });
+
+  it('카드 조각: 1024×600(본문 964 × 408)의 장소 탭은 두 쪽; 장소 열둘인 구역은 1024×529(337)에서 `(계속)`으로 이어진다', async () => {
+    const profile = DEVICE_PROFILES.pos;
+    const { client } = at(0, false);
+    const places = await client.query('shopSettings', { tab: 'places' });
+    const tall = settingsLayout(profile, { width: 964, height: 408 }, places.cards);
+    expect(tall.columns).toBe(2);
+    expect(tall.pieces.map((p) => [p.card.title, p.listColumns, p.height])).toEqual([
+      ['설천', 3, 172], ['만선', 3, 172], ['솔마을', 3, 172], ['꽃마을', 3, 232], ['구역', 1, 80],
+    ]);
+    // 칸 높이 396: 설천 · 만선 | 솔마을(꽃마을 232는 남은 자리에 들지 않음), 둘째 쪽 꽃마을 · 구역 추가.
+    expect(tall.pages).toEqual([[[0, 1], [2]], [[3, 4]]]);
+    const many = await client.previewSettings('places', []);
+    const short = settingsLayout(profile, { width: 964, height: 337 }, many.cards);
+    const kkot = short.pieces.filter((p) => p.card.title === '꽃마을');
+    expect(kkot.map((p) => [p.card.continued ?? false, p.height <= 325])).toEqual([[false, true], [true, true]]);
+    expect(kkot.flatMap((p) => ruleListCellsOf(p.card)).map((c) => c.label)).toEqual(ruleListCellsOf(many.cards.find((c) => c.title === '꽃마을')!).map((c) => c.label));
+    const narrow = settingsLayout(DEVICE_PROFILES.pos_narrow, { width: 827, height: 457 }, places.cards);
+    expect(narrow.columns).toBe(1);
+  });
+
+  it('체험 자료에서 저장: 장소 추가(새 구역에 장소) → 새 접수의 반납 장소 고르기에 나온다, 거절되는 초안은 refused', async () => {
+    const { client } = at(0, false);
+    const changes: SettingsOp[] = [{ op: 'area.add', ref: 'n1', label: '설천 입구' }, { op: 'place.add', ref: 'n2', areaId: 'new:n1', label: '매표소' }];
+    const view = await client.query('shopSettings', { tab: 'places', changes });
+    expect(view.primary).toMatchObject({ label: '저장 · 2건', enabled: true });
+    const draft = openOrRestoreDraft(null, view.command!, view.basis, {});
+    expect((await client.command(envelopeFor(draft, view.command, undefined)!)).outcome).toBe('applied');
+    const order = await client.query('orderDraft', { draft: { channel: 'walk_in', leader: { name: '', phone: '', party: 0 }, items: [], pickup: { mode: 'store', immediate: true }, giveBack: { mode: 'store' } } });
+    expect(order.schedule.areas.map((a) => a.label)).toContain('설천 입구');
+    const refused = await client.query('shopSettings', { tab: 'places', changes: [{ op: 'area.add', ref: 'n1', label: '설천 입구' }] });
+    expect(refused.refused).toEqual({ at: 0, message: '이름 중복 · 다른 이름 필요' });
   });
 });

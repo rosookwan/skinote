@@ -20,7 +20,7 @@ import {
   clearNewOrder, draftParams, EMPTY_NEW_ORDER, hasDraft, loadNewOrder, qtyOf, saveNewOrder, withDeliver, withName, withOpenKind, withOpenVariant, withParty, withPhone,
   withPickupNow, withQuantity, withReserve, withReturnDay, withReturnPlace, withReturnSlot, type NewOrderState,
 } from '../app/new-order-draft.ts';
-import { go, type NewOrderStep } from '../app/router.ts';
+import { back, go, navState, type NewOrderStep } from '../app/router.ts';
 import { say } from '../app/strings.ts';
 import { CheckoutDialog } from '../components/CheckoutDialog.tsx';
 import { ChoiceSheet, NoticeDialog } from '../components/NoticeDialog.tsx';
@@ -117,11 +117,16 @@ function useOrderDraftView(params: OrderDraftParams): OrderDraftView | null {
 
 // ── 화면 ──────────────────────────────────────────────────────────
 
-export function NewOrderScreen({ step }: { step: NewOrderStep }) {
+/**
+ * 새 접수(V2 · V3), 또는 품목 추가(addTo, features-1 §5-5): 그 접수에 더할 품목만 고르는 ① 품목(대표자 줄 · ② 일정 없음, 단계 탭 없음). 제목은 읽기 모델의
+ * `품목 추가 · 박준호 팀`, 바닥줄 `‹ 접수증`, 주 버튼 `다음 · 결제`(품목 추가의 확정 창). 품목 추가의 초안은 이 화면에만 있다(새 접수 초안을 건드리지 않는다).
+ */
+export function NewOrderScreen({ step, addTo }: { step: NewOrderStep; addTo?: string }) {
   const header = usePosHeader('other');
-  const [order, setOrder] = useState<NewOrderState>(() => loadNewOrder());
+  const adding = addTo !== undefined;
+  const [order, setOrder] = useState<NewOrderState>(() => (adding ? EMPTY_NEW_ORDER : loadNewOrder()));
   const [sheet, setSheet] = useState<Sheet | null>(null);
-  const view = useOrderDraftView(draftParams(order));
+  const view = useOrderDraftView({ ...draftParams(order), ...(adding ? { addTo } : {}) });
   // 종류 격자의 쪽: 한 쪽의 타일 수는 격자가 잰 높이로 센다(ItemsBody가 알린다), 쪽 넘김은 바닥줄.
   const [tilePage, setTilePage] = useState(0);
   const [perPage, setPerPage] = useState(9);
@@ -135,11 +140,16 @@ export function NewOrderScreen({ step }: { step: NewOrderStep }) {
 
   // 초안은 화면을 떠나도 남는다(‹ 장부 · 머리줄 장부 · 끝 4자리로 연 접수증 · 브라우저 뒤로): 손님 응대로 끊겨도 `새 접수`를 다시 누르면
   // 그대로 열린다. 지우는 것은 접수 확정(order.create)과 `접수 취소`(묻고 지움)뿐이다.
-  useEffect(() => { saveNewOrder(order); }, [order]);
+  useEffect(() => { if (!adding) saveNewOrder(order); }, [order]);
   const [discarding, setDiscarding] = useState(false);
 
   const change = (next: NewOrderState) => setOrder(next);
-  const toLedger = () => go({ name: 'ledger', date: null });
+  // 품목 추가는 온 접수증으로 돌아간다(접수증에서 열었으면 뒤로 가기: 장부 자리도 그대로).
+  const toLedger = () => {
+    if (!adding) go({ name: 'ledger', date: null });
+    else if (navState().fromSlip) back();
+    else go({ name: 'slip', orderId: addTo }, { replace: true });
+  };
   const discard = () => {
     clearNewOrder();
     setDiscarding(false);
@@ -161,26 +171,31 @@ export function NewOrderScreen({ step }: { step: NewOrderStep }) {
         <article className="sn-slip pos-new" aria-label={step === 'items' ? say('newOrderItemsAria') : say('newOrderScheduleAria')}>
           <header className="sn-slip-head">
             <div className="pos-new-head">
-              <h1 className="sn-slip-title">{say('newOrder')}</h1>
-              {view?.channelTag ? <Tag text={view.channelTag} tone="blue" /> : null}
+              <h1 className="sn-slip-title">{adding ? <TextFit input={{ mode: 'words', text: view?.add?.title ?? '' }} /> : say('newOrder')}</h1>
+              {view?.channelTag && !adding ? <Tag text={view.channelTag} tone="blue" /> : null}
             </div>
-            <div className="sn-tabs pos-new-tabs" role="tablist" aria-label={say('newOrderSteps')}>
-              <button type="button" role="tab" className="sn-tab" aria-selected={step === 'items'} onClick={() => toStep('items')}>{stepTab(say('stepItems'))}</button>
-              <button type="button" role="tab" className="sn-tab" aria-selected={step === 'schedule'} disabled={step !== 'schedule' && !ready.items} onClick={() => toStep('schedule')}>{stepTab(say('stepSchedule'))}</button>
-              <button type="button" role="tab" className="sn-tab" aria-selected={false} disabled={!ready.schedule} onClick={() => setSheet({ kind: 'pay' })}>{stepTab(say('stepPay'))}</button>
-            </div>
+            {adding ? null : (
+              <div className="sn-tabs pos-new-tabs" role="tablist" aria-label={say('newOrderSteps')}>
+                <button type="button" role="tab" className="sn-tab" aria-selected={step === 'items'} onClick={() => toStep('items')}>{stepTab(say('stepItems'))}</button>
+                <button type="button" role="tab" className="sn-tab" aria-selected={step === 'schedule'} disabled={step !== 'schedule' && !ready.items} onClick={() => toStep('schedule')}>{stepTab(say('stepSchedule'))}</button>
+                <button type="button" role="tab" className="sn-tab" aria-selected={false} disabled={!ready.schedule} onClick={() => setSheet({ kind: 'pay' })}>{stepTab(say('stepPay'))}</button>
+              </div>
+            )}
           </header>
-          {view && step === 'items' ? <ItemsBody view={view} order={order} change={change} setSheet={setSheet} tiles={tiles} onPerPage={setPerPage} /> : null}
-          {view && step === 'schedule' ? <ScheduleBody view={view} order={order} change={change} setSheet={setSheet} /> : null}
+          {view && step === 'items' ? <ItemsBody view={view} order={order} change={change} setSheet={setSheet} tiles={tiles} onPerPage={setPerPage} adding={adding} /> : null}
+          {view && step === 'schedule' && !adding ? <ScheduleBody view={view} order={order} change={change} setSheet={setSheet} /> : null}
         </article>
         {view ? (
           step === 'items'
-            ? <ItemsSide view={view} order={order} change={change} onKind={showKind} onNext={() => toStep('schedule')} />
+            ? <ItemsSide view={view} order={order} change={change} onKind={showKind} onNext={() => (adding ? setSheet({ kind: 'pay' }) : toStep('schedule'))} adding={adding} />
             : <ScheduleSide view={view} onNext={() => setSheet({ kind: 'pay' })} />
         ) : <aside className="pos-side" />}
       </div>
-      <NewOrderFooter view={view} tiles={step === 'items' ? tiles : null} onTilePage={setTilePage} onBack={toLedger} {...(hasDraft(order) ? { onDiscard: () => setDiscarding(true) } : {})} />
-      {view && sheet ? <Sheets key={sheetKey(sheet)} sheet={sheet} view={view} order={order} change={change} setSheet={setSheet} /> : null}
+      <NewOrderFooter
+        view={view} tiles={step === 'items' ? tiles : null} onTilePage={setTilePage} onBack={toLedger} adding={adding}
+        {...(hasDraft(order) && !adding ? { onDiscard: () => setDiscarding(true) } : {})}
+      />
+      {view && sheet ? <Sheets key={sheetKey(sheet)} sheet={sheet} view={view} order={order} change={change} setSheet={setSheet} {...(adding ? { addTo } : {})} /> : null}
       {discarding ? (
         <NoticeDialog
           title={ACTION_LABELS.cancel}
@@ -209,7 +224,7 @@ interface TilePaging {
   perPage: number;
 }
 
-function ItemsBody({ view, order, change, setSheet, tiles, onPerPage }: PartProps & { tiles: TilePaging; onPerPage: (perPage: number) => void }) {
+function ItemsBody({ view, order, change, setSheet, tiles, onPerPage, adding }: PartProps & { tiles: TilePaging; onPerPage: (perPage: number) => void; adding: boolean }) {
   const { viewport } = useUi();
   const profile = useDeviceProfile();
   const fonts = useFontsVersion();
@@ -217,7 +232,8 @@ function ItemsBody({ view, order, change, setSheet, tiles, onPerPage }: PartProp
   const repRef = useRef<HTMLDivElement>(null);
   const body = useElementSize(bodyRef);
   // 격자에 남는 높이 = 종이 본문 − 위아래 여백 − 대표자 줄 − 고르는 줄 둘(52 + 8 + 52) − 사이 둘. 격자는 위에 붙고 남는 자리는 맨 아래(큰 화면).
-  const fixed = profile.space.s * 2 + profile.minTargetPx + (profile.minTargetPx * 2 + profile.space.s) + profile.space.s * 2;
+  // 품목 추가는 대표자 줄(과 그 사이)이 없다(그 접수의 대표자).
+  const fixed = profile.space.s * 2 + (adding ? 0 : profile.minTargetPx + profile.space.s) + (profile.minTargetPx * 2 + profile.space.s) + profile.space.s;
   const perPage = tilesPerPage(body ? body.height - fixed : undefined, profile.minTargetPx + profile.space.xs, profile.space.s, view.tiles.length);
   useIsoLayoutEffect(() => { if (perPage !== tiles.perPage) onPerPage(perPage); }, [perPage, tiles.perPage]);
   const name = order.draft.leader.name.trim();
@@ -241,6 +257,7 @@ function ItemsBody({ view, order, change, setSheet, tiles, onPerPage }: PartProp
 
   return (
     <div ref={bodyRef} className="pos-new-body">
+      {adding ? null : (
       <div ref={repRef} className={'pos-new-rep' + ['drop-icon', 'drop-party', 'drop-contact', 'drop-leader'].slice(0, drop).map((c) => ' ' + c).join('')}>
         <button type="button" className={'sn-button pos-new-field is-name' + (name ? ' has-value' : '') + (view.ready.missing === 'name' ? ' is-missing' : '')} aria-label={name ? say('leaderInput', { name }) : say('leaderPad')} onClick={() => setSheet({ kind: 'name' })}>
           <small className="pos-new-label">{say('leader')}</small>
@@ -258,6 +275,7 @@ function ItemsBody({ view, order, change, setSheet, tiles, onPerPage }: PartProp
           <button type="button" className="sn-qty-button" aria-label={t('qtyPlus')} disabled={party.value >= party.max} onClick={() => change(withParty(order, party.value + 1))}>+</button>
         </div>
       </div>
+      )}
 
       <div className="pos-new-kinds" role="group" aria-label={say('kindGroup')} style={{ gridTemplateRows: 'repeat(' + gridRows + ', calc(var(--sn-target) + var(--sn-space-xs)))' }}>
         {shown.map((tile) => <KindTile key={tile.key} tile={tile} onPress={openKind} />)}
@@ -323,7 +341,7 @@ function PanelRows({ rows, extra, render, onShort }: { rows: DraftLineView[]; ex
   );
 }
 
-function ItemsSide({ view, order, change, onKind, onNext }: Omit<PartProps, 'setSheet'> & { onKind: (kindKey: string) => void; onNext: () => void }) {
+function ItemsSide({ view, order, change, onKind, onNext, adding }: Omit<PartProps, 'setSheet'> & { onKind: (kindKey: string) => void; onNext: () => void; adding: boolean }) {
   const { viewport } = useUi();
   // 선택 품목 줄이 다 들어가지 않으면(1024×569 · 529) 합계의 장비 · 리프트권 줄을 빼고 합계 · 보증금만 둔다(창 크기 · 줄 수가 바뀌면 다시).
   const signature = [viewport.width, viewport.height, view.selected.length].join('|');
@@ -355,7 +373,7 @@ function ItemsSide({ view, order, change, onKind, onNext }: Omit<PartProps, 'set
         ))}
       </div>
       {view.ready.itemsReason ? <p className="pos-new-reason">{view.ready.itemsReason}</p> : null}
-      <PrimaryButton className="pos-new-go" label={say('nextToSchedule')} disabled={!view.ready.items} onPress={onNext} />
+      <PrimaryButton className="pos-new-go" label={adding ? say('nextToPay') : say('nextToSchedule')} disabled={!view.ready.items} onPress={onNext} />
     </aside>
   );
 }
@@ -433,8 +451,8 @@ function ScheduleSide({ view, onNext }: { view: OrderDraftView; onNext: () => vo
 
 // ── 바닥줄: ‹ 장부 · 팀 한 줄 · 종류 격자의 쪽 ────────────────────────────────
 
-function NewOrderFooter({ view, tiles, onTilePage, onBack, onDiscard }: {
-  view: OrderDraftView | null; tiles: TilePaging | null; onTilePage: (page: number) => void; onBack: () => void; onDiscard?: () => void;
+function NewOrderFooter({ view, tiles, onTilePage, onBack, onDiscard, adding }: {
+  view: OrderDraftView | null; tiles: TilePaging | null; onTilePage: (page: number) => void; onBack: () => void; onDiscard?: () => void; adding: boolean;
 }) {
   return (
     <FooterBar
@@ -444,7 +462,7 @@ function NewOrderFooter({ view, tiles, onTilePage, onBack, onDiscard }: {
       <div className="pos-footer-back">
         <button type="button" className="sn-button" onClick={onBack}>
           <Icon name="left" />
-          <span>{t('home')}</span>
+          <span>{adding ? say('toSlip') : t('home')}</span>
         </button>
         {onDiscard ? <button type="button" className="sn-button" onClick={onDiscard}>{ACTION_LABELS.cancel}</button> : null}
         {view ? <TextFit input={{ mode: 'alts', alts: footerAlts(view.footer) }} /> : null}
@@ -458,7 +476,7 @@ function NewOrderFooter({ view, tiles, onTilePage, onBack, onDiscard }: {
 /** 창마다 따로 그린다(숫자판의 친 숫자가 다른 창으로 넘어가지 않게). */
 const sheetKey = (sheet: Sheet) => sheet.kind + ('back' in sheet ? ':' + sheet.back : '') + (sheet.kind === 'area' ? ':' + sheet.area.key : '');
 
-function Sheets({ sheet, view, order, change, setSheet }: PartProps & { sheet: Sheet }) {
+function Sheets({ sheet, view, order, change, setSheet, addTo }: PartProps & { sheet: Sheet; addTo?: string }) {
   const [digits, setDigits] = useState(() => (sheet.kind === 'phone' ? order.draft.leader.phone : ''));
   const close = () => setSheet(null);
   const s = view.schedule;
@@ -560,7 +578,17 @@ function Sheets({ sheet, view, order, change, setSheet }: PartProps & { sheet: S
         />
       ) : null;
     case 'pay':
-      // ③ 결제(V4 접수 확정 창): 확정되면 초안을 지우고 새 접수의 접수증으로(주소를 바꿔 뒤로 가기는 장부).
+      // ③ 결제(V4 접수 확정 창): 확정되면 초안을 지우고 새 접수의 접수증으로(주소를 바꿔 뒤로 가기는 장부). 품목 추가는 그 접수증으로 돌아간다.
+      if (addTo !== undefined) {
+        return (
+          <CheckoutDialog
+            draft={order.draft}
+            addTo={addTo}
+            onClose={close}
+            onDone={(orderId) => { if (navState().fromSlip) back(); else go({ name: 'slip', orderId }, { replace: true }); }}
+          />
+        );
+      }
       return (
         <CheckoutDialog
           draft={order.draft}

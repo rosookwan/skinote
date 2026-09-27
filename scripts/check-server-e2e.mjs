@@ -14,6 +14,21 @@
 //         장부 조회는 403
 //   E(기사 휴대폰 · 1호 차량, 360×640 — 첫 매장 기사의 주 기기): 등록 · 로그인(휴대폰 등급) → 배달 목록(촘촘한 줄) → 업무 판(품목 줄 한 쪽)
 //         → 현장 수납 수단은 현금 · 계좌이체뿐 → 장부 조회 403 → 끝에 명령줄로 그 휴대폰을 끊으면 기기 등록 화면
+//   매장 설정(settingsE2E, features-1 §4-6): B가 설천에 장소 추가 → A의 새 접수에 보임 → B가 차량 추가 + 박기사 배정(한 저장) → A의
+//         수거 차량에 보임 → B가 박기사 비밀번호 재발급(본인 비밀번호 먼저) → E · C 로그아웃, 옛 비밀번호 틀림, 새 비밀번호로 다시 로그인 →
+//         A(카운터)는 읽기만(항목 판 · 바닥줄 `권한 없음 · 관리자 확인 필요`) · registry.update FORBIDDEN → B가 그 차량 사용 종료 → 다시 사용
+//   할인 적용(discountE2E, features-1 §6-6): A가 자기 팀(현금 결제 뒤)에 `직접 입력` 5,000원 · 사유 `단골` → `할인 적용 · 환불 현금 5,000원` →
+//         접수증 출처 줄(할인 · 환불) → A가 미수 팀(윤서준)에 10% → 미수가 줄어듦 → B(관리자)가 카드로 낸 팀(김민재)에 직접 입력 5,000원 · 환불
+//         현금 → 마감 결제 수단 표의 환불 줄
+//   품목 추가 · 취소(orderEditE2E, features-1 §5-6): A가 자기 팀에 `품목 추가`(헬멧 · 현금) → 접수증 `품목 추가` 줄 → 그 헬멧을 `품목 취소` · 환불
+//         현금 → 마감 `환불` 줄 → A가 최하은 팀(전화 예약)을 `연락 없음`으로 접수 취소(처음 결정 환불 없음 → 환불을 고름) → 장부 줄 `취소` · E의 배달 목록에서 빠짐
+//   즉시 교환(exchangeE2E, features-1 §7-6): A가 김민재 팀(0021) 의류를 `즉시 교환` 창에서 다른 사이즈로 → 접수증 줄 이름 · 출처 줄 · 돈 그대로, E는 창 403
+//   리프트권(ticketsE2E, features-1 §8-5): A가 리프트권 화면에서 `예비권 적재 · 1호 차량` 2매 → E의 차량 재고 +2매, A가 박준호 팀(0022)을 지급
+//         (`지급 처리 · 6개 · 3매`) → 미반납 탭 `분실 처리`(0매로 열림) 1매 → 현황 미반납 2 · 분실 1, 그 팀의 수거 목록 줄은 야간권 2매 → 분실 탭 `분실 회수` → 분실 0
+//   인쇄 · 전화(printCallE2E, features-1 §8-5): A의 수거 목록 `인쇄`(인쇄 창을 막아 둠) → 한 번 · 인쇄 문서에 가린 번호만, E(기사 휴대폰)의 `전화` →
+//         주 버튼이 `tel:` 링크, A의 접수증 `전화` → 번호만(`tel:` 없음)
+//   확인 필요(reviewE2E, features-1 §9-5): 견본 확인 필요 한 건이 A의 `확인 필요` 화면 · 머리줄 수에 있음 → `확인` → 수가 줄고 처리 완료 탭에
+//         `확인 완료 · 시각 · 김카운터` → 서버를 다시 띄워도 그대로, E는 목록 403
 //   D(카운터 3): 관리자 비밀번호를 다섯 번 틀림 → `로그인 잠김 · … 이후 가능`, B는 그대로 로그인
 //   화면 키보드 875×600(A의 새 접수) 찍기 → 우리 주소의 ?demo는 서버 모드 그대로(기기 등록 화면) → 표시를 찍지 않는 둘째 앞단(체험판)의
 //   360×640 미리 보기 키보드 → A 로그아웃(로그인 화면, 머리 401) → 다시 로그인하면 장부(나가기 화면이 아님) → 명령줄로 C 기기 끊기(관리
@@ -239,6 +254,575 @@ async function newWalkIn(page) {
   await cash.click();
   await dialog.locator('[data-primary="true"]:enabled').waitFor({ timeout: STEP_MS }).catch(() => {});
   return { typed, nameField, noEditable, dialog };
+}
+
+/** 매장 설정 목록 칸(쪽을 넘겨 찾는다). label은 칸의 이름, 또는 칸을 고르는 함수. */
+async function settingsCellE2E(page, label) {
+  const target = typeof label === 'function' ? () => label(page)
+    : () => page.locator('.sn-rule-item').filter({ has: page.locator('.sn-rule-item-label', { hasText: new RegExp('^' + label + '$') }) });
+  for (let guard = 0; guard < 6; guard += 1) {
+    if (await target().count()) return target().first();
+    const next = page.locator('.sn-footer').getByRole('button', { name: '다음 쪽' });
+    if (!(await next.count()) || !(await next.isEnabled())) break;
+    await next.click();
+  }
+  throw new Error('매장 설정 목록에 칸이 없음: ' + (typeof label === 'function' ? '(고르는 함수)' : label));
+}
+
+/** 항목 판의 버튼(첫 줄 글이 label). */
+const sheetChoiceE2E = (page, label) => page.locator('[role="dialog"] .pos-choice-button').filter({ has: page.locator('.pos-choice-text > .sn-fit:first-child', { hasText: new RegExp('^' + label + '$') }) }).last();
+
+/** 매장 설정 저장: 바닥줄 주 버튼 → 저장 확인 창(쪽이 여럿이면 끝까지) → 주 버튼 → 창이 닫히고 바닥줄 `변경 없음`. */
+async function saveSettingsE2E(page) {
+  await page.locator('.sn-footer [data-primary="true"]:enabled').click();
+  const dialog = page.locator('[role="dialog"]').last();
+  await dialog.waitFor({ timeout: STEP_MS });
+  const next = dialog.getByRole('button', { name: '다음 쪽' });
+  for (let guard = 0; guard < 6 && await next.count() && await next.isEnabled(); guard += 1) await next.click();
+  await dialog.locator('[data-primary="true"]').click();
+  await page.waitForFunction(() => !document.querySelector('[role="dialog"]'), null, { timeout: STEP_MS });
+  await page.waitForFunction(() => document.querySelector('.pos-footer-back')?.textContent?.includes('변경 없음'), null, { timeout: STEP_MS });
+}
+
+/**
+ * 매장 설정(features-1 §4-6): B가 설천에 장소 `매표소`를 더하면 A의 새 접수 반납 장소에 나온다(새로 고침 없이) → B가 `3호 차량`을 더하며 박기사를
+ * 그 차량에 배정(한 저장, 두 명령) → A의 일정 변경 창 수거 차량에 `3호 차량` → B가 박기사의 비밀번호 재발급(본인 비밀번호 먼저) → E(기사 휴대폰)는
+ * 로그인이 끝나고 옛 비밀번호는 틀리고 새 비밀번호로 다시 로그인 → A(카운터)의 `요금 · 할인`은 `권한 없음 · 관리자 확인 필요` · 저장 막힘, A가 보낸
+ * registry.update는 FORBIDDEN → B가 `3호 차량` 사용 종료 → 다시 사용. 끝에 B는 운영 규칙 탭(뒤 걸음이 그 화면을 새로 고친다).
+ */
+async function settingsE2E({ APP, a, b, c, e, pins, secretsSeen }) {
+  // 장소 추가(B, 화면): 설천 카드의 `장소 추가` → 화면 키보드 `매표소` → 저장.
+  await b.goto(APP + '#/manage/settings/places');
+  await b.waitForSelector('.sn-rule-card', { timeout: STEP_MS });
+  await (await settingsCellE2E(b, (pg) => pg.locator('.sn-rule-card[aria-label="설천"] .sn-rule-item.is-add'))).click();
+  const kb = b.locator('.sn-kb');
+  await kb.waitFor({ timeout: STEP_MS });
+  for (const key of ['ㅁ', 'ㅐ', 'ㅍ', 'ㅛ', 'ㅅ', 'ㅗ']) await kb.getByRole('button', { name: key, exact: true }).click();
+  await kb.locator('[data-primary="true"]').click();
+  await b.waitForFunction(() => document.querySelector('.pos-footer-back')?.textContent?.includes('변경 1건'), null, { timeout: STEP_MS });
+  await shot(b, 'b-settings-place-1024x600');
+  await saveSettingsE2E(b);
+  const draft = { channel: 'walk_in', leader: { name: '', phone: '', party: 0 }, items: [], pickup: { mode: 'store', immediate: true }, giveBack: { mode: 'store' } };
+  const orderA = await pageQuery(a, { name: 'orderDraft', params: { draft } });
+  const seolcheon = (orderA.body?.schedule?.areas ?? []).find((area) => area.label === '설천');
+  check('설정: B가 더한 장소 `매표소`가 A의 새 접수 반납 장소(설천)에 있음', orderA.status === 200 && (seolcheon?.places ?? []).some((pl) => pl.label === '매표소'), String(orderA.status));
+
+  // 차량 추가 + 박기사 배정(B, 화면): 한 저장이 목록 바꿈 · 직원 바꿈 두 명령.
+  await b.goto(APP + '#/manage/settings/fleet');
+  await b.waitForSelector('.sn-rule-card', { timeout: STEP_MS });
+  await (await settingsCellE2E(b, '차량 추가')).click();
+  await b.locator('.sn-kb').waitFor({ timeout: STEP_MS });
+  const vehicleName = await b.locator('.sn-kb-display').getAttribute('data-value');
+  await b.locator('.sn-kb [data-primary="true"]').click();
+  await (await settingsCellE2E(b, STAFF.driver)).click();
+  await sheetChoiceE2E(b, '차량').click();
+  await sheetChoiceE2E(b, '3호 차량').click();
+  await b.waitForFunction(() => document.querySelector('.pos-footer-back')?.textContent?.includes('변경 2건'), null, { timeout: STEP_MS });
+  await shot(b, 'b-settings-fleet-1024x600');
+  await saveSettingsE2E(b);
+  const fleet = await pageQuery(b, { name: 'shopSettings', params: { tab: 'fleet' } });
+  const items = fleet.body?.cards?.[0]?.list?.items ?? [];
+  const driverItem = (fleet.body?.cards?.[1]?.list?.items ?? []).find((i) => i.label === STAFF.driver);
+  check('설정: `차량 추가` 3호 차량(처음 이름) · 박기사 배정이 한 저장으로', vehicleName === '3호 차량' && items.some((i) => i.label === '3호 차량' && i.tag === '담당 ' + STAFF.driver) && driverItem?.tag === '기사 · 3호 차량',
+    vehicleName + ' · ' + JSON.stringify(items.map((i) => i.label + '/' + (i.tag ?? ''))));
+  const ledgerA = await pageQuery(a, { name: 'ledgerView', params: { viewKey: 'day_ledger' } });
+  const orderId = (ledgerA.body?.rows ?? []).map((row) => row.orderId).find(Boolean);
+  const sheet = orderId ? await pageQuery(a, { name: 'promiseSheet', params: { orderId, place: { mode: 'vehicle', placeKey: 'seolcheon_parking' } } }) : { status: 0 };
+  check('설정: A의 일정 변경 창 수거 차량에 `3호 차량`', sheet.status === 200 && (sheet.body?.vehicles ?? []).some((v) => v.label === '3호 차량'), String(sheet.status) + ' ' + orderId);
+
+  // 비밀번호 재발급(B, 화면): 본인 비밀번호 → 새 비밀번호 한 번 → E는 로그인이 끝나고 새 비밀번호로만 들어온다.
+  await (await settingsCellE2E(b, STAFF.driver)).click();
+  await sheetChoiceE2E(b, '비밀번호 재발급').click();
+  const own = b.locator('.sn-sheet-overlay .sn-numpad');
+  await own.waitFor({ timeout: STEP_MS });
+  for (const d of pins[STAFF.manager]) await own.getByRole('button', { name: d, exact: true }).click();
+  await own.getByRole('button', { name: '입력', exact: true }).click();
+  // 새 비밀번호 창은 찍지 않는다(비밀번호가 그림에 남는다; 모양은 규칙 검사기가 #/preview/pin으로 본다).
+  await b.waitForSelector('.pos-pin-digits', { timeout: STEP_MS });
+  const newPin = ((await b.locator('.pos-pin-digits').textContent()) ?? '').replace(/\s/g, '');
+  secretsSeen.push(newPin);
+  await b.locator('[role="dialog"] [data-primary="true"]').click();
+  check('설정: 비밀번호 재발급 → 새 비밀번호 4자리를 한 번 보임', /^\d{4}$/.test(newPin) && !(await b.locator('.pos-pin-digits').count()));
+  await e.reload();
+  const loggedOut = await e.waitForSelector('.pos-login', { timeout: STEP_MS }).then(() => true, () => false);
+  const oldTry = loggedOut ? await login(e, STAFF.driver, pins[STAFF.driver], { expectApp: false }) : null;
+  check('설정: 재발급 뒤 E의 로그인이 끝나고 옛 비밀번호는 틀림', loggedOut && oldTry?.note === '비밀번호 불일치 · 재입력 필요', String(oldTry?.note));
+  await login(e, STAFF.driver, newPin);
+  // 같은 기사로 로그인해 있던 C(1호 차량 태블릿)도 로그인이 끝났다: 새 비밀번호로 다시(뒤의 기기 끊기 걸음이 C를 쓴다).
+  await c.reload();
+  const cOut = await c.waitForSelector('.pos-login', { timeout: STEP_MS }).then(() => true, () => false);
+  if (cOut) await login(c, STAFF.driver, newPin);
+  check('설정: E · C가 새 비밀번호로 다시 로그인', !(await e.locator('.pos-login').count()) && cOut && !(await c.locator('.pos-login').count()));
+  pins[STAFF.driver] = newPin;
+
+  // 카운터 A: 권한 없음(화면: 처음부터 읽기만) · FORBIDDEN(명령). 2026-09-27 점검 뒤 권한 없는 사람의 항목 판은 `권한 없음 · 관리자 확인 필요` 한 줄과
+  // 누를 수 없는 버튼뿐이라 숫자판이 열리지 않는다(초안이 생기지 않음).
+  await a.goto(APP + '#/manage/settings/pricing');
+  await a.waitForSelector('.sn-rule-card', { timeout: STEP_MS });
+  await (await settingsCellE2E(a, '스키')).click();
+  const sheetA = a.locator('[role="dialog"]').last();
+  await sheetA.waitFor({ timeout: STEP_MS });
+  const sheetLine = await sheetA.getByText('권한 없음 · 관리자 확인 필요', { exact: true }).count();
+  const padOpened = await a.locator('.sn-numpad').count();
+  const sheetEnabled = await sheetA.locator('.pos-choice-button:enabled').count();
+  await shot(a, 'a-settings-forbidden-1024x600');
+  await sheetA.getByRole('button', { name: '닫기', exact: true }).click();
+  await sheetA.waitFor({ state: 'detached', timeout: STEP_MS }).catch(() => {});
+  const footerA = ((await a.locator('.pos-footer-back').textContent()) ?? '').trim();
+  const saveOff = await a.locator('.sn-footer [data-primary="true"]').isDisabled();
+  check('설정: 카운터의 `요금 · 할인`은 읽기만(항목 판에 `권한 없음 · 관리자 확인 필요`, 숫자판 없음) · 바닥줄 같은 한 줄 · 저장 막힘',
+    sheetLine > 0 && padOpened === 0 && sheetEnabled === 0 && footerA.includes('권한 없음 · 관리자 확인 필요') && saveOff,
+    JSON.stringify({ sheetLine, padOpened, sheetEnabled, footerA, saveOff }));
+  const forbidden = await a.evaluate(async () => {
+    const session = await (await fetch('api/v2/session', { cache: 'no-store' })).json();
+    const head = await (await fetch('api/v2/head', { cache: 'no-store' })).json();
+    const t = Date.now().toString(32).toUpperCase().padStart(10, '0').slice(-10);
+    const requestId = (t + 'ABCDEFGHJKMNPQRS').replace(/[ILOU]/g, 'X').slice(0, 26);
+    const res = await fetch('api/v2/command', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-skinote-csrf': session.csrf },
+      body: JSON.stringify({ type: 'registry.update', commandVersion: 1, requestId, basis: { epoch: head.epoch, rev: head.rev }, payload: { changes: [{ op: 'price.set', productKey: 'ski', amount: 45000 }] } }),
+    });
+    return res.json();
+  });
+  check('설정: 카운터가 보낸 registry.update는 FORBIDDEN', forbidden?.error?.code === 'FORBIDDEN', JSON.stringify(forbidden?.error ?? forbidden));
+
+  // 사용 종료 → 다시 사용(B).
+  await b.goto(APP + '#/manage/settings/fleet');
+  await b.waitForSelector('.sn-rule-card', { timeout: STEP_MS });
+  let cycle = true;
+  for (const label of ['사용 종료', '다시 사용']) {
+    await (await settingsCellE2E(b, '3호 차량')).click();
+    await sheetChoiceE2E(b, label).click();
+    await saveSettingsE2E(b);
+    const now = await pageQuery(b, { name: 'shopSettings', params: { tab: 'fleet' } });
+    const van = (now.body?.cards?.[0]?.list?.items ?? []).find((i) => i.label === '3호 차량');
+    cycle &&= label === '사용 종료' ? van?.tag === '사용 종료' : van?.tag !== '사용 종료';
+  }
+  check('설정: `3호 차량` 사용 종료 → 다시 사용(같은 차량)', cycle);
+  await b.goto(APP + '#/manage/settings/rules');
+  await b.waitForSelector('.sn-rule-card', { timeout: STEP_MS });
+}
+
+/** 앞단 주소 기준 명령 하나(페이지 안에서, 쿠키 + 세션의 CSRF, 새 요청번호). 결과 { requestId, outcome }. */
+async function pageSend(page, type, payload, extra = {}) {
+  return page.evaluate(async ({ type, payload, extra }) => {
+    const session = await (await fetch('api/v2/session', { cache: 'no-store' })).json();
+    const head = await (await fetch('api/v2/head', { cache: 'no-store' })).json();
+    const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+    let t = Date.now();
+    let time = '';
+    for (let i = 0; i < 10; i += 1) { time = alphabet[t % 32] + time; t = Math.floor(t / 32); }
+    const random = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => alphabet[b % 32]).join('');
+    const requestId = time + random;
+    const res = await fetch('api/v2/command', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-skinote-csrf': session.csrf },
+      body: JSON.stringify({ type, commandVersion: 1, requestId, basis: { epoch: head.epoch, rev: head.rev }, payload, ...extra }),
+    });
+    return { requestId, outcome: await res.json() };
+  }, { type, payload, extra });
+}
+
+/** 할인 적용 창의 길(조회 → 할인 적용 → 이어진 환불, dependsOn)을 페이지 안에서. 명령마다의 결과. */
+async function discountBySheet(page, params) {
+  const sheet = await pageQuery(page, { name: 'discountSheet', params });
+  if (sheet.status !== 200 || !sheet.body?.command) return { sheet: sheet.body, outcomes: [] };
+  const outcomes = [];
+  const first = await pageSend(page, sheet.body.command.type, sheet.body.command.payload, { expect: sheet.body.expect });
+  outcomes.push(first.outcome);
+  let previous = first.requestId;
+  for (const step of sheet.body.then ?? []) {
+    if (outcomes.at(-1)?.outcome !== 'applied') break;
+    const next = await pageSend(page, step.command.type, step.command.payload, { expect: step.expect, dependsOn: [previous] });
+    outcomes.push(next.outcome);
+    previous = next.requestId;
+  }
+  return { sheet: sheet.body, outcomes };
+}
+
+/** 끝 4자리로 접수 id(오늘 장부의 첫 팀). */
+async function orderOf(page, last4) {
+  const found = await pageQuery(page, { name: 'findLast4', params: { last4 } });
+  return found.body?.matches?.[0]?.orderId ?? null;
+}
+
+/**
+ * 할인 적용(features-1 §6-6): A(카운터, 화면)가 자기 팀(현금 결제 뒤)의 `할인 적용` → `직접 입력` → 금액 5,000원 → 사유 키보드 `단골` → 주 버튼
+ * `할인 적용 · 환불 현금 5,000원` → 접수증 출처 줄(할인 · 환불), A가 미수 팀(윤서준 0028)에 10% → 미수가 줄어듦, B(관리자)가 카드로 낸 팀(김민재
+ * 0021)에 직접 입력 5,000원 · 환불 현금 → 마감 결제 수단 표에 환불 줄.
+ */
+async function discountE2E({ APP, a, b }) {
+  const orderId = await orderOf(a, TEAM.phone.slice(-4));
+  if (!orderId) { check('할인: A의 팀을 끝 4자리로 찾음', false); return; }
+  await a.goto(APP + '#/orders/' + orderId);
+  await a.waitForSelector('.sn-slip', { timeout: STEP_MS });
+  const direct = a.locator('.pos-side-actions button', { hasText: '할인 적용' });
+  if (await direct.count()) await direct.first().click();
+  else {
+    await a.locator('.pos-side-actions button', { hasText: '더 보기' }).click();
+    const choice = () => a.locator('[role="dialog"] .pos-choice-button', { hasText: '할인 적용' });
+    const next = a.locator('[role="dialog"]').getByRole('button', { name: '다음 쪽' });
+    for (let guard = 0; guard < 4 && !(await choice().count()) && await next.count() && await next.isEnabled(); guard += 1) await next.click();
+    await choice().first().click();
+  }
+  const dialog = a.locator('.pos-discount');
+  await dialog.waitFor({ timeout: STEP_MS });
+  await dialog.getByRole('group', { name: '할인', exact: true }).getByRole('button', { name: /^직접 입력/ }).click();
+  await a.locator('[role="dialog"] .pos-choice-button', { hasText: '금액' }).click();
+  const pad = a.locator('.sn-sheet-overlay .sn-numpad');
+  await pad.waitFor({ timeout: STEP_MS });
+  for (const d of ['5', '000']) await pad.getByRole('button', { name: d, exact: true }).click();
+  await pad.getByRole('button', { name: '입력', exact: true }).click();
+  const kb = a.locator('.sn-kb');
+  await kb.waitFor({ timeout: STEP_MS });
+  for (const key of ['ㄷ', 'ㅏ', 'ㄴ', 'ㄱ', 'ㅗ', 'ㄹ']) await kb.getByRole('button', { name: key, exact: true }).click();
+  await kb.locator('[data-primary="true"]').click();
+  await kb.waitFor({ state: 'detached', timeout: STEP_MS });
+  const primary = dialog.locator('[data-primary="true"]');
+  await a.waitForFunction(() => /환불/.test(document.querySelector('.pos-discount [data-primary="true"]')?.textContent ?? ''), null, { timeout: STEP_MS }).catch(() => {});
+  const label = ((await primary.textContent()) ?? '').trim();
+  await shot(a, 'a-discount-1024x600');
+  check('할인: A의 직접 입력 5,000원 · 사유 `단골` → 주 버튼 `할인 적용 · 환불 현금 5,000원`', label === '할인 적용 · 환불 현금 5,000원', label);
+  await primary.click();
+  await dialog.waitFor({ state: 'detached', timeout: STEP_MS }).catch(() => {});
+  const slip = await pageQuery(a, { name: 'orderSlip', params: { orderId } });
+  const rows = (slip.body?.adjustments ?? []).map((x) => x.parts.map((p) => p.text).join(' · ') + (x.amount !== undefined ? ' ' + x.amount : ''));
+  check('할인: 접수증 출처 줄 `장비 할인 직접 입력 · 단골 · −5,000원` · `환불 · 현금 5,000원`, 미수 없음',
+    rows.includes('장비 할인 직접 입력 · 단골 -5000') && rows.includes('환불 · 현금 5,000원') && slip.body?.money?.due === 0, rows.join(' / '));
+  await a.waitForSelector('.sn-slip-adjust', { timeout: STEP_MS }).catch(() => {});
+  await shot(a, 'a-discount-slip-1024x600');
+
+  const yoon = await orderOf(a, '0028');
+  const before = yoon ? (await pageQuery(a, { name: 'orderSlip', params: { orderId: yoon } })).body?.money?.due : null;
+  const ten = yoon ? await discountBySheet(a, { orderId: yoon, sectionKey: 'gear', choice: { ruleKey: 'ten_percent' } }) : { outcomes: [] };
+  const after = yoon ? (await pageQuery(a, { name: 'orderSlip', params: { orderId: yoon } })).body?.money?.due : null;
+  check('할인: A가 미수 팀(윤서준)에 10% → 미수가 10% 줄어듦(환불 없음)', ten.outcomes.map((o) => o.outcome).join(',') === 'applied' && typeof before === 'number' && after === before - before / 10,
+    before + ' → ' + after);
+
+  // B: 카드로 낸 팀(김민재) → 직접 입력 5,000원, 환불 줄의 수단을 현금으로 고른 창의 명령(할인 적용 → 환불).
+  const kim = await orderOf(b, '0021');
+  const choice = { manual: { kind: 'amount', value: 5000, reason: '행사' } };
+  const opened = kim ? await pageQuery(b, { name: 'discountSheet', params: { orderId: kim, sectionKey: 'gear', choice } }) : null;
+  const paymentId = opened?.body?.refunds?.[0]?.paymentId;
+  const done = kim && paymentId ? await discountBySheet(b, { orderId: kim, sectionKey: 'gear', choice, methods: { [paymentId]: 'cash' } }) : { sheet: null, outcomes: [] };
+  const closing = await pageQuery(b, { name: 'closingSheet', params: {} });
+  const refundRow = (closing.body?.methods ?? []).find((m) => m.key === 'refund');
+  check('할인: B(관리자)가 카드로 낸 팀에 직접 입력 5,000원 · 환불 현금 → 할인 적용 · 환불이 이어서 적용, 마감 결제 수단 표에 환불 줄',
+    done.sheet?.primary?.label === '할인 적용 · 환불 현금 5,000원' && done.outcomes.map((o) => o.outcome).join(',') === 'applied,applied'
+      && refundRow !== undefined && refundRow.amount <= -10000,
+    String(done.sheet?.primary?.label) + ' · ' + done.outcomes.map((o) => o.outcome + (o.error ? ':' + o.error.code : '')).join(',') + ' · ' + JSON.stringify(refundRow ?? null));
+}
+
+/** 취소 창의 길(조회 → 취소 → 이어진 환불, dependsOn)을 페이지 안에서. 명령마다의 결과. */
+async function cancelBySheet(page, params) {
+  const sheet = await pageQuery(page, { name: 'cancelSheet', params });
+  if (sheet.status !== 200 || !sheet.body?.command) return { sheet: sheet.body, outcomes: [] };
+  const outcomes = [];
+  const first = await pageSend(page, sheet.body.command.type, sheet.body.command.payload, { expect: sheet.body.expect });
+  outcomes.push(first.outcome);
+  let previous = first.requestId;
+  for (const step of sheet.body.then ?? []) {
+    if (outcomes.at(-1)?.outcome !== 'applied') break;
+    const next = await pageSend(page, step.command.type, step.command.payload, { expect: step.expect, dependsOn: [previous] });
+    outcomes.push(next.outcome);
+    previous = next.requestId;
+  }
+  return { sheet: sheet.body, outcomes };
+}
+
+/**
+ * 품목 추가 · 품목 취소 · 접수 취소(features-1 §5-6): A(카운터, 화면)가 자기 팀에 `품목 추가`(헬멧 · 현금) → 접수증 `품목 추가` 줄, 그 헬멧을 `품목 취소`
+ * · 환불 현금 → 마감 결제 수단 표의 `환불 · n건`, A가 전화 예약 최하은 팀(배달 적재 전, 계좌이체로 모두 받음)을 `연락 없음`으로 접수 취소(매장 설정이 환불 없음이라 처음 결정은
+ * 환불 없음, 직원이 환불을 고름) → 장부 줄
+ * `취소`(흐림) · 1호 차량 기사 휴대폰(E)의 배달 목록에서 빠짐.
+ */
+async function orderEditE2E({ APP, a, e }) {
+  const orderId = await orderOf(a, TEAM.phone.slice(-4));
+  if (!orderId) { check('품목 추가: A의 팀을 끝 4자리로 찾음', false); return; }
+  // 품목 추가: 접수증 옆 동작(더 보기 안일 수 있음) → ① 품목 → 헬멧 → 다음 · 결제 → 현금 → 추가 확정.
+  await a.setViewportSize({ width: 1024, height: 600 });
+  await a.goto(APP + '#/orders/' + orderId);
+  await a.waitForSelector('.sn-slip', { timeout: STEP_MS });
+  const direct = a.locator('.pos-side-actions button', { hasText: '품목 추가' });
+  if (await direct.count()) await direct.first().click();
+  else {
+    await a.locator('.pos-side-actions button', { hasText: '더 보기' }).click();
+    const choice = () => a.locator('[role="dialog"] .pos-choice-button', { hasText: '품목 추가' });
+    const next = a.locator('[role="dialog"]').getByRole('button', { name: '다음 쪽' });
+    for (let guard = 0; guard < 4 && !(await choice().count()) && await next.count() && await next.isEnabled(); guard += 1) await next.click();
+    await choice().first().click();
+  }
+  await a.waitForSelector('.pos-new-kinds', { timeout: STEP_MS });
+  const title = ((await a.locator('.sn-slip-title').textContent()) ?? '').trim();
+  await a.locator('.pos-new-kinds .sn-kind', { hasText: '헬멧' }).click();
+  const size = a.locator('.pos-new-open .sn-choice[aria-pressed="false"]:enabled').filter({ hasNotText: '더 보기' });
+  await size.first().waitFor({ timeout: STEP_MS }).catch(() => {});
+  if (await size.count()) await size.first().click();
+  const plus = a.locator('.pos-new-open').getByRole('button', { name: '수량 증가' });
+  await plus.waitFor({ timeout: STEP_MS });
+  await plus.click();
+  await a.waitForSelector('.pos-new-side [data-primary="true"]:enabled', { timeout: STEP_MS });
+  await shot(a, 'a-add-items-1024x600');
+  await a.locator('.pos-new-side [data-primary="true"]').click();
+  const dialog = a.locator('.pos-checkout');
+  await dialog.waitFor({ timeout: STEP_MS });
+  await dialog.getByRole('group', { name: '장비 결제 수단', exact: true }).getByRole('button', { name: '현금', exact: true }).click();
+  await a.waitForFunction(() => /추가 확정 · 현금/.test(document.querySelector('.pos-checkout [data-primary="true"]')?.textContent ?? ''), null, { timeout: STEP_MS }).catch(() => {});
+  const addLabel = ((await dialog.locator('[data-primary="true"]').textContent()) ?? '').trim();
+  await shot(a, 'a-add-checkout-1024x600');
+  await dialog.locator('[data-primary="true"]').click();
+  await a.waitForSelector('.sn-slip', { timeout: STEP_MS }).catch(() => {});
+  const slip = await pageQuery(a, { name: 'orderSlip', params: { orderId } });
+  const rows = (slip.body?.adjustments ?? []).map((x) => x.parts.map((p) => p.text).join(' · '));
+  const added = (slip.body?.lines ?? []).at(-1);
+  check('품목 추가: A가 자기 팀에 헬멧(현금) → 제목 `품목 추가 · 김민수 팀` · `추가 확정 · 현금 …` → 접수증 `품목 추가` 줄 · 새 줄',
+    title === '품목 추가 · ' + TEAM.name + ' 팀' && /^추가 확정 · 현금 /.test(addLabel) && rows.some((r) => r.startsWith('품목 추가 · ')) && /헬멧/.test(added?.label ?? ''),
+    title + ' · ' + addLabel + ' · ' + rows.join(' / '));
+  // 그 헬멧(지급 전)을 품목 취소 · 환불 현금.
+  const removed = added ? await cancelBySheet(a, { orderId, scope: 'lines', picked: [{ lineId: added.id, quantity: 1 }] }) : { sheet: null, outcomes: [] };
+  const closing = await pageQuery(a, { name: 'closingSheet', params: {} });
+  const refundRow = (closing.body?.methods ?? []).find((m) => m.key === 'refund');
+  check('품목 취소: 더한 헬멧 1을 환불 현금 → `품목 취소 · 헬멧 … · 환불 현금` 적용, 마감 결제 수단 표에 `환불 · n건`',
+    /^품목 취소 · 헬멧 .* · 환불 현금 /.test(removed.sheet?.primary?.label ?? '') && removed.outcomes.map((o) => o.outcome).join(',') === 'applied,applied' && refundRow !== undefined,
+    String(removed.sheet?.primary?.label) + ' · ' + removed.outcomes.map((o) => o.outcome + (o.error ? ':' + o.error.code : '')).join(',') + ' · ' + JSON.stringify(refundRow ?? null));
+  await a.goto(APP + '#/orders/' + orderId);
+  await a.waitForSelector('.sn-slip', { timeout: STEP_MS });
+  await shot(a, 'a-removed-slip-1024x600');
+
+  // 최하은(전화 예약 · 배달 적재 전 · 계좌이체로 모두 받음): 접수 취소 · 연락 없음. 앞의 운영 규칙 시험에서 B가 `당일 취소 환불`을 `환불 없음`으로
+  // 저장했으니 연락 없음의 처음 결정은 `환불 없음`(E8), 직원이 `환불`을 골라 확정한다.
+  const haeun = await orderOf(a, '0026');
+  const opened = haeun ? await pageQuery(a, { name: 'cancelSheet', params: { orderId: haeun, scope: 'order', reasonKey: 'no_show' } }) : null;
+  const first = (opened?.body?.decisions ?? []).find((d) => d.selected)?.label;
+  check('접수 취소: 매장 설정 `당일 취소 환불` · 환불 없음 → 연락 없음의 처음 결정은 `환불 없음`, 고를 수 있는 줄 환불 · 환불 없음',
+    first === '환불 없음' && (opened?.body?.decisions ?? []).some((d) => d.label === '환불'), String(first) + ' · ' + (opened?.body?.decisions ?? []).map((d) => d.label).join(','));
+  const cancelled = haeun ? await cancelBySheet(a, { orderId: haeun, scope: 'order', reasonKey: 'no_show', decision: 'refund' }) : { sheet: null, outcomes: [] };
+  const ledger = await pageQuery(a, { name: 'ledgerView', params: { viewKey: 'day_ledger' } });
+  const row = (ledger.body?.rows ?? []).find((r) => r.orderId === haeun);
+  check('접수 취소: A가 최하은 팀을 연락 없음 · 환불 → 취소 · 환불 적용, 장부 줄 `취소`(흐림 · 빨강 없음)',
+    cancelled.outcomes.map((o) => o.outcome).join(',') === 'applied,applied' && row?.statusWord === '취소' && row?.finished === true && row?.lateAt === undefined,
+    String(cancelled.sheet?.primary?.label) + ' · ' + cancelled.outcomes.map((o) => o.outcome + (o.error ? ':' + o.error.code : '')).join(',') + ' · ' + JSON.stringify({ word: row?.statusWord, finished: row?.finished }));
+  await a.goto(APP + '#/orders/' + haeun);
+  await a.waitForSelector('.sn-slip', { timeout: STEP_MS });
+  await shot(a, 'a-cancelled-slip-1024x600');
+  // E(기사 휴대폰, 1호 차량)의 배달 목록에서 빠진다.
+  const deliveries = await pageQuery(e, { name: 'ledgerView', params: { viewKey: 'delivery_list' } });
+  const still = (deliveries.body?.rows ?? []).some((r) => r.orderId === haeun);
+  check('접수 취소: 1호 차량 기사 휴대폰(E)의 배달 목록에서 최하은 팀이 빠짐', deliveries.status === 200 && !still, deliveries.status + ' · ' + still);
+}
+
+/**
+ * 즉시 교환(features-1 §7-6): A(카운터, 화면)가 김민재 팀(0021, 손님에게 있는 의류)의 `즉시 교환` 창에서 다른 사이즈(105, 이미 105면 110)를 골라
+ * 확정 → 주 버튼 `즉시 교환 · 의류 1벌` → 접수증 줄 이름이 새 사이즈 · 출처 줄 `즉시 교환 · 의류 사이즈 … → 사이즈 … · 1벌 · 시각`, 돈은 그대로.
+ * 1호 차량 기사 휴대폰(E)은 교환 창을 읽지 못한다(403, E14).
+ */
+async function exchangeE2E({ APP, a, e }) {
+  const orderId = await orderOf(a, '0021');
+  if (!orderId) { check('즉시 교환: 김민재 팀을 끝 4자리로 찾음', false); return; }
+  await a.setViewportSize({ width: 1024, height: 600 });
+  await a.goto(APP + '#/orders/' + orderId);
+  await a.waitForSelector('.sn-slip', { timeout: STEP_MS });
+  const before = (await pageQuery(a, { name: 'orderSlip', params: { orderId } })).body;
+  const direct = a.locator('.pos-side-actions button', { hasText: '즉시 교환' });
+  if (await direct.count()) await direct.first().click();
+  else {
+    await a.locator('.pos-side-actions button', { hasText: '더 보기' }).click();
+    const choice = () => a.locator('[role="dialog"] .pos-choice-button', { hasText: '즉시 교환' });
+    const next = a.locator('[role="dialog"]').getByRole('button', { name: '다음 쪽' });
+    for (let guard = 0; guard < 4 && !(await choice().count()) && await next.count() && await next.isEnabled(); guard += 1) await next.click();
+    await choice().first().click();
+  }
+  const dialog = a.locator('.pos-exchange');
+  await dialog.waitFor({ timeout: STEP_MS });
+  const item = dialog.getByRole('group', { name: '교환 품목', exact: true }).locator('button.sn-choice', { hasText: '의류' });
+  await item.first().waitFor({ timeout: STEP_MS }).catch(() => {});
+  if (await item.count() && (await item.first().getAttribute('aria-pressed')) !== 'true') await item.first().click();
+  const from = /사이즈 (\d+)/.exec(((await item.first().textContent().catch(() => '')) ?? ''))?.[1] ?? '';
+  const to = from === '105' ? '110' : '105';
+  await dialog.getByRole('group', { name: '지급 사이즈', exact: true }).getByRole('button', { name: to, exact: true }).click();
+  await a.waitForFunction(() => !document.querySelector('.pos-exchange [data-primary="true"]')?.hasAttribute('disabled'), null, { timeout: STEP_MS }).catch(() => {});
+  const label = ((await dialog.locator('[data-primary="true"]').textContent()) ?? '').trim();
+  await shot(a, 'a-exchange-1024x600');
+  await dialog.locator('[data-primary="true"]').click();
+  await dialog.waitFor({ state: 'detached', timeout: STEP_MS }).catch(() => {});
+  const slip = (await pageQuery(a, { name: 'orderSlip', params: { orderId } })).body;
+  const rows = (slip?.adjustments ?? []).map((x) => x.parts.map((p) => p.text).join(' · '));
+  const line = (slip?.lines ?? []).find((l) => /^의류/.test(l.label));
+  check('즉시 교환: A가 김민재 팀 의류 ' + from + ' → ' + to + ' · 주 버튼 `즉시 교환 · 의류 1벌` → 접수증 줄 `의류 사이즈 ' + to + '` · 출처 줄 · 돈 그대로',
+    label === '즉시 교환 · 의류 1벌' && line?.label === '의류 사이즈 ' + to
+      && rows.some((r) => new RegExp('^즉시 교환 · 의류 사이즈 ' + from + ' → 사이즈 ' + to + ' · 1벌 · \\d\\d:\\d\\d$').test(r))
+      && JSON.stringify(slip?.money) === JSON.stringify(before?.money),
+    label + ' · ' + String(line?.label) + ' · ' + rows.join(' / '));
+  await a.goto(APP + '#/orders/' + orderId);
+  await a.waitForSelector('.sn-slip-adjust', { timeout: STEP_MS }).catch(() => {});
+  await shot(a, 'a-exchange-slip-1024x600');
+  const driver = await pageQuery(e, { name: 'exchangeSheet', params: { orderId } });
+  check('즉시 교환: 기사 휴대폰(E) 세션은 교환 창을 읽지 못함(403, 카운터만)', driver.status === 403, String(driver.status));
+}
+
+/** 분실 처리 · 예비권 창(PieceSheet)의 칸 label을 plus번 올리고 minus번 내린 뒤 주 버튼 글(바뀔 때까지 기다림). */
+async function piecesE2E(page, label, { plus = 0, minus = 0, expect }) {
+  const sheet = page.locator('.pos-pieces-sheet');
+  await sheet.waitFor({ timeout: STEP_MS });
+  const piece = () => sheet.locator('.sn-piece-line', { hasText: label }).first();
+  const next = sheet.getByRole('button', { name: '다음 쪽' });
+  for (let guard = 0; guard < 6 && !(await piece().count()) && await next.count() && await next.isEnabled(); guard += 1) await next.click();
+  for (let i = 0; i < plus; i += 1) { await piece().getByRole('button', { name: '수량 증가' }).click(); await sleep(150); }
+  for (let i = 0; i < minus; i += 1) { await piece().getByRole('button', { name: '수량 감소' }).click(); await sleep(150); }
+  await page.waitForFunction((want) => {
+    const button = document.querySelector('.pos-pieces-sheet [data-primary="true"]');
+    return button && !button.hasAttribute('disabled') && (button.textContent ?? '').trim() === want;
+  }, expect, { timeout: STEP_MS }).catch(() => {});
+  return ((await sheet.locator('[data-primary="true"]').textContent()) ?? '').trim();
+}
+
+/**
+ * 리프트권(features-1 §8-5): A(카운터, 화면)가 리프트권 화면의 1호 차량 `예비권 적재` 2매 → E(기사 휴대폰)의 차량 재고가 2매 늘어남, A가 박준호 팀(0022)
+ * 을 지급(`지급 처리 · 6개 · 3매`) → 미반납 탭에서 `분실 처리` 1매(청구 없음) → 현황 미반납 2 · 분실 1, 그 팀의 수거 목록 줄은 야간권 2매 → 분실 탭
+ * `분실 회수` → 분실 0.
+ */
+async function ticketsE2E({ APP, a, e }) {
+  await a.setViewportSize({ width: 1024, height: 600 });
+  const spareOf = async () => ((await pageQuery(e, { name: 'vehicleLoad', params: { vehicleId: 'v1' } })).body?.spareTickets ?? []).find((x) => x.label === '야간권')?.qty ?? 0;
+  const base = await spareOf();
+  await a.goto(APP + '#/tickets');
+  await a.waitForSelector('.pos-tickets-table', { timeout: STEP_MS });
+  await shot(a, 'a-tickets-status-1024x600');
+  await a.locator('.pos-tickets-van', { hasText: '1호 차량' }).locator('button.pos-tickets-van-button').first().click();
+  const loadLabel = await piecesE2E(a, '야간권', { plus: 2, expect: '예비권 적재 · 야간권 2매' });
+  await shot(a, 'a-spare-load-1024x600');
+  await a.locator('.pos-pieces-sheet [data-primary="true"]').click();
+  await a.locator('.pos-pieces-sheet').waitFor({ state: 'detached', timeout: STEP_MS }).catch(() => {});
+  const after = await spareOf();
+  check('리프트권: A가 `예비권 적재 · 1호 차량` 2매 → E(기사 휴대폰)의 차량 재고 야간권 ' + base + ' → ' + (base + 2) + '매', loadLabel === '예비권 적재 · 야간권 2매' && after === base + 2, loadLabel + ' · ' + after);
+  // 박준호 팀 지급(접수증의 주 버튼 → 확인 창).
+  const orderId = await orderOf(a, '0022');
+  if (!orderId) { check('리프트권: 박준호 팀을 끝 4자리로 찾음', false); return; }
+  await a.goto(APP + '#/orders/' + orderId);
+  await a.waitForSelector('.sn-slip', { timeout: STEP_MS });
+  const issueLabel = ((await a.locator('.pos-side [data-primary="true"]').textContent()) ?? '').trim();
+  await a.locator('.pos-side [data-primary="true"]').click();
+  const confirmButton = a.locator('[role="dialog"] [data-primary="true"]');
+  await confirmButton.waitFor({ timeout: STEP_MS });
+  await confirmButton.click();
+  await a.locator('[role="dialog"]').waitFor({ state: 'detached', timeout: STEP_MS }).catch(() => {});
+  // 미반납 탭 → 박준호 `분실 처리` → 창은 0매로 열린다(2026-09-27 점검: 모두 골라진 채 열리지 않음) → 3매 중 1매.
+  await a.goto(APP + '#/tickets/unreturned');
+  await a.waitForSelector('.pos-tickets-rows', { timeout: STEP_MS });
+  const row = a.locator('.pos-tickets-line', { hasText: '박준호' });
+  await row.locator('.pos-tickets-line-actions button', { hasText: '분실 처리' }).click();
+  await a.locator('.pos-pieces-sheet').waitFor({ timeout: STEP_MS });
+  const lossStartsEmpty = await a.locator('.pos-pieces-sheet [data-primary="true"]').isDisabled();
+  const lossLabel = await piecesE2E(a, '야간권', { plus: 1, expect: '분실 처리 · 야간권 1매' });
+  const noCharge = await a.locator('.pos-pieces-sheet', { hasText: '청구 없음' }).count();
+  await shot(a, 'a-ticket-loss-1024x600');
+  await a.locator('.pos-pieces-sheet [data-primary="true"]').click();
+  await a.locator('.pos-pieces-sheet').waitFor({ state: 'detached', timeout: STEP_MS }).catch(() => {});
+  const board = (await pageQuery(a, { name: 'ticketBoard', params: { tab: 'status' } })).body;
+  const night = (board?.status ?? []).find((r) => r.label === '야간권');
+  const list = (await pageQuery(a, { name: 'ledgerView', params: { viewKey: 'collection_list', vehicleId: 'v1', deviceClass: 'pos' } })).body;
+  const task = (list?.rows ?? []).find((r) => r.orderId === orderId);
+  const ticketsLeft = (task?.cells?.items?.items ?? []).find((x) => x.label === '야간권')?.qty;
+  check('리프트권: A가 박준호 팀 지급(`' + issueLabel + '`) → 0매로 열린 창에서 `분실 처리 · 야간권 1매`(청구 없음) → 현황 미반납 2 · 분실 1, 수거 목록 줄은 야간권 2매',
+    issueLabel === '지급 처리 · 6개 · 3매' && lossStartsEmpty && lossLabel === '분실 처리 · 야간권 1매' && noCharge > 0 && night?.out === 2 && night?.lost === 1 && ticketsLeft === 2,
+    [issueLabel, 'empty ' + lossStartsEmpty, lossLabel, JSON.stringify(night), ticketsLeft].join(' · '));
+  // 분실 탭 → 분실 회수.
+  await a.goto(APP + '#/tickets/lost');
+  await a.waitForSelector('.pos-tickets-rows', { timeout: STEP_MS });
+  await shot(a, 'a-tickets-lost-1024x600');
+  await a.locator('.pos-tickets-line', { hasText: '박준호' }).locator('.pos-tickets-line-actions button', { hasText: '분실 회수' }).click();
+  const foundLabel = await piecesE2E(a, '야간권', { expect: '분실 회수 · 야간권 1매' });
+  await a.locator('.pos-pieces-sheet [data-primary="true"]').click();
+  await a.locator('.pos-pieces-sheet').waitFor({ state: 'detached', timeout: STEP_MS }).catch(() => {});
+  const again = (await pageQuery(a, { name: 'ticketBoard', params: { tab: 'status' } })).body;
+  const lost = (again?.status ?? []).find((r) => r.label === '야간권')?.lost;
+  check('리프트권: 분실 탭 `분실 회수 · 야간권 1매` → 분실 0', foundLabel === '분실 회수 · 야간권 1매' && lost === 0, foundLabel + ' · ' + lost);
+  const driverBoard = await pageQuery(e, { name: 'ticketBoard', params: {} });
+  check('리프트권: 기사 휴대폰(E) 세션은 리프트권 화면을 읽지 못함(403)', driverBoard.status === 403, String(driverBoard.status));
+}
+
+/**
+ * 인쇄 · 전화(features-1 §8-5): A의 수거 목록 `인쇄`(인쇄 창은 막아 두고 부른 수 · 인쇄 문서의 글을 남김) → 한 번 · 팀과 가린 번호(`010-****-xxxx`)만,
+ * E(기사 휴대폰)의 수거 목록 줄 `전화` → 창의 주 버튼이 `tel:` 링크, A의 접수증 `전화` → 번호만(`tel:` 없음).
+ */
+async function printCallE2E({ APP, a, e }) {
+  await a.goto(APP + '#/collections');
+  await a.waitForSelector('.sn-ledger tr.sn-row', { timeout: STEP_MS });
+  await a.evaluate(() => {
+    window.__printed = 0;
+    window.print = () => { window.__printed += 1; window.__printText = document.querySelector('.pos-print-host')?.textContent ?? ''; };
+  });
+  await a.locator('.sn-footer [data-primary="true"]').click();
+  await a.waitForFunction(() => window.__printed > 0, null, { timeout: STEP_MS }).catch(() => {});
+  const printed = await a.evaluate(() => ({ n: window.__printed, text: window.__printText ?? '' }));
+  check('인쇄: A의 수거 목록 `인쇄` → 인쇄 창 한 번 · 인쇄 문서에 가린 번호(010-****-xxxx)만',
+    printed.n === 1 && /010-\*{4}-\d{4}/.test(printed.text) && !/010-0000-(?!0000)\d{4}/.test(printed.text), printed.n + ' · ' + printed.text.slice(0, 80));
+  await e.goto(APP);
+  await e.waitForSelector('.sn-ledger tr.sn-row', { timeout: STEP_MS });
+  const call = e.locator('.sn-ledger tr.sn-row button.sn-cell-action').first();
+  let href = null;
+  if (await call.count()) {
+    await call.click();
+    await e.locator('.pos-call').waitFor({ timeout: STEP_MS }).catch(() => {});
+    href = await e.locator('.pos-call a.pos-call-link').getAttribute('href').catch(() => null);
+    await shot(e, 'e-call-360x640');
+    await e.locator('.pos-call').getByRole('button', { name: '닫기' }).click().catch(() => {});
+  }
+  check('전화: 기사 휴대폰(E)의 수거 목록 `전화` → 주 버튼이 `tel:` 링크', typeof href === 'string' && href.startsWith('tel:'), String(href));
+  const orderId = await orderOf(a, '0025');
+  await a.goto(APP + '#/orders/' + orderId);
+  await a.waitForSelector('.sn-slip', { timeout: STEP_MS });
+  const direct = a.locator('.pos-side-actions button', { hasText: '전화' });
+  if (await direct.count()) await direct.first().click();
+  else {
+    await a.locator('.pos-side-actions button', { hasText: '더 보기' }).click();
+    await a.locator('[role="dialog"] .pos-choice-button', { hasText: '전화' }).first().click();
+  }
+  await a.locator('.pos-call').waitFor({ timeout: STEP_MS }).catch(() => {});
+  const number = ((await a.locator('.pos-call .pos-call-number').textContent().catch(() => '')) ?? '').trim();
+  const tel = await a.locator('.pos-call a[href^="tel:"]').count();
+  await shot(a, 'a-call-1024x600');
+  await a.locator('.pos-call').getByRole('button', { name: '닫기' }).click().catch(() => {});
+  check('전화: A(카운터)의 접수증 `전화` → 번호만(`tel:` 링크 없음)', number === '010-0000-0025' && tel === 0, number + ' · tel ' + tel);
+}
+
+/**
+ * 확인 필요(features-1 §9-5): 견본 하루(load-sample)의 확인 필요 한 건(최은정 팀)이 A(카운터)의 `확인 필요` 화면에 있고 머리줄 메뉴에 수 → 그 줄의 `확인`
+ * → 수가 하나 줄고 처리 완료 탭에 `확인 완료 · 시각 · 김카운터` → 서버를 다시 띄워도 처리 완료 그대로, E(기사 휴대폰)는 목록을 읽지 못함(403).
+ */
+async function reviewE2E({ APP, a, e, restart }) {
+  await a.setViewportSize({ width: 1024, height: 600 });
+  const listOf = async () => (await pageQuery(a, { name: 'reviewList', params: {} })).body;
+  const before = await listOf();
+  await a.goto(APP + '#/review');
+  await a.waitForSelector('.pos-review-rows', { timeout: STEP_MS });
+  const badge = async () => ((await a.locator('.sn-header-right button', { hasText: '확인 필요' }).locator('.sn-count').textContent().catch(() => '')) ?? '').trim();
+  const row = a.locator('.pos-review-line', { hasText: '최은정 팀 스키 1대 매장 반납 완료' });
+  const shownBefore = await badge();
+  await shot(a, 'a-review-1024x600');
+  check('확인 필요: 견본 한 건(`최은정 팀 스키 1대 매장 반납 완료 · 기사 수거 기록 제외`)이 미처리에 있고 머리줄 `확인 필요`에 수',
+    (await row.count()) === 1 && shownBefore === String(before?.count) && before?.count >= 1, shownBefore + ' · ' + before?.count);
+  await row.locator('.pos-review-actions button', { hasText: /^확인$/ }).click();
+  await row.waitFor({ state: 'detached', timeout: STEP_MS }).catch(() => {});
+  await a.waitForFunction((n) => {
+    const b = [...document.querySelectorAll('.sn-header-right button')].find((x) => (x.textContent ?? '').includes('확인 필요'));
+    const c = b?.querySelector('.sn-count')?.textContent?.trim() ?? '';
+    return n === 0 ? c === '' : c === String(n);
+  }, (before?.count ?? 1) - 1, { timeout: STEP_MS }).catch(() => {});
+  const after = await listOf();
+  await a.goto(APP + '#/review/done');
+  await a.waitForSelector('.pos-review-rows', { timeout: STEP_MS });
+  const doneLine = ((await a.locator('.pos-review-line.is-done', { hasText: '최은정 팀' }).locator('.pos-review-note').textContent().catch(() => '')) ?? '').trim();
+  await shot(a, 'a-review-done-1024x600');
+  check('확인 필요: A의 `확인` → 미처리 수가 하나 줄고 처리 완료 탭에 `확인 완료 · 시각 · ' + STAFF.counter + '`',
+    after?.count === (before?.count ?? 0) - 1 && new RegExp('^확인 완료 · \\d{2}:\\d{2} · ' + STAFF.counter + '$').test(doneLine), after?.count + ' · ' + doneLine);
+  await restart();
+  await a.goto(APP + '#/review/done');
+  await a.waitForSelector('.pos-review-rows', { timeout: STEP_MS });
+  const kept = ((await a.locator('.pos-review-line.is-done', { hasText: '최은정 팀' }).locator('.pos-review-note').textContent().catch(() => '')) ?? '').trim();
+  const again = await listOf();
+  check('확인 필요: 서버를 다시 띄워도 처리 완료 그대로(누가 · 시각), 미처리 수 그대로', kept === doneLine && again?.count === after?.count, kept + ' · ' + again?.count);
+  const driverList = await pageQuery(e, { name: 'reviewList', params: {} });
+  check('확인 필요: 기사 휴대폰(E) 세션은 확인 필요를 읽지 못함(403)', driverList.status === 403, String(driverList.status));
 }
 
 async function main() {
@@ -567,6 +1151,37 @@ async function main() {
     const ledgerE = await pageQuery(e, { name: 'ledgerView', params: { viewKey: 'day_ledger' } });
     check('E: 기사 휴대폰 세션의 장부 조회는 403', ledgerE.status === 403, String(ledgerE.status));
 
+    // ── 매장 설정의 다른 탭(features-1 plan §4-6): B(관리자)가 바꾸고 A(카운터) · E(기사 휴대폰)가 본다 ──────────────
+    await settingsE2E({ APP, a, b, c, e, pins, secretsSeen });
+
+    // ── 할인 적용(features-1 plan §6-6): A(카운터, 화면) · B(관리자) ─────────────────────────
+    await discountE2E({ APP, a, b });
+
+    // ── 품목 추가 · 품목 취소 · 접수 취소(features-1 plan §5-6): A(카운터, 화면) · E(기사 휴대폰) ──────────────
+    await orderEditE2E({ APP, a, e });
+
+    // ── 즉시 교환(features-1 plan §7-6): A(카운터, 화면) · E(기사 휴대폰은 읽지 못함) ──────────────
+    await exchangeE2E({ APP, a, e });
+
+    // ── 리프트권 · 인쇄 · 전화(features-1 plan §8-5): A(카운터, 화면) · E(기사 휴대폰) ──────────────
+    await ticketsE2E({ APP, a, e });
+    await printCallE2E({ APP, a, e });
+
+    // ── 확인 필요(features-1 plan §9-5): A(카운터, 화면) · 서버 다시 띄우기 · E(기사 휴대폰은 읽지 못함) ──────────────
+    // 다시 띄우는 동안 다른 기기는 빈 주소로 두었다가(알림 연결의 오류 줄 없이) 그 화면으로 되돌린다(세션은 이어진다).
+    const restart = async () => {
+      const kept = { b: b.url(), c: c.url(), e: e.url() };
+      for (const page of [a, b, c, e]) await page.goto('about:blank');
+      await stopChild(server);
+      server = null;
+      server = await startServer();
+      for (const [page, url] of [[b, kept.b], [c, kept.c], [e, kept.e]]) {
+        await page.goto(url);
+        await page.waitForSelector('.sn-header, .sn-screen', { timeout: STEP_MS }).catch(() => {});
+      }
+    };
+    await reviewE2E({ APP, a, e, restart });
+
     // ── D: 비밀번호 잠김 ─────────────────────────────────────────────────
     const ctxD = await newContext();
     const d = await ctxD.newPage();
@@ -784,7 +1399,10 @@ async function main() {
     const openLogs = [1, 2, 3].map((n) => join(OUT, 'open-server-' + n + '.log')).filter(existsSync).map((f) => readFileSync(f, 'utf8')).join('\n');
     const logs = [1, 2, 3].map((n) => join(OUT, 'server-' + n + '.log')).filter(existsSync).map((f) => readFileSync(f, 'utf8')).join('\n')
       + '\n' + openLogs + '\n' + (existsSync(cliLog) ? readFileSync(cliLog, 'utf8') : '') + '\n' + proxyLines.join('\n');
-    const leaks = secretsSeen.filter((s) => s && logs.includes(s));
+    // 비밀은 숫자 경계로 찾는다(앞뒤가 숫자가 아닌 자리): 짧은 비밀번호가 `1234ms` 같은 기록 숫자 안에 우연히 든 것은 새지 않은 것이다(2026-09-27
+    // 점검: 경계 없는 찾기가 우연히 걸려 다시 돌리는 일이 있었다).
+    const escape = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const leaks = secretsSeen.filter((s) => s && new RegExp('(?<!\\d)' + escape(s) + '(?!\\d)(?!ms)').test(logs));
     if (openRuns > 1) {
       check('열린 등록 서버 기록: 시작의 주의 줄 · 등록마다 ALERT open_enroll 세 줄 · 끈 뒤 시작의 끊음 줄', /주의: 열린 기기 등록 켬/.test(openLogs)
         && (openLogs.match(/ALERT open_enroll e2e1open/g) ?? []).length === 3 && (openRuns < 3 || /ALERT open_enroll_cut e2e1open · 열린 등록 꺼짐\(open_enroll_off\) · 시험 기기 1대 끊음/.test(openLogs)),

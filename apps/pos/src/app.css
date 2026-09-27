@@ -37,6 +37,13 @@ html, body { margin: 0; height: 100%; overflow: hidden; }
 .pos-choice-text { display: flex; flex-direction: column; flex: 1 1 0; min-width: 0; }
 .pos-choice-note { font-size: var(--sn-font-min); font-weight: 600; color: var(--sn-ink-muted); }
 .pos-choices-foot { display: flex; align-items: center; gap: var(--sn-space-m); }
+.pos-choice-button:disabled { border-style: dashed; }
+/* 지금 값(역할 · 차량 판): 고른 것처럼 남색(막힌 점선과 다르다). */
+.pos-choice-button.is-selected { background: var(--sn-ink); color: var(--sn-paper); }
+.pos-choice-button.is-selected .pos-choice-note { color: inherit; }
+/* 항목 판의 사실 한 줄(매장 설정 `사용 종료 불가 · 미처리 수거 2건`): 버튼 위, 본문 여백 안. */
+.pos-choice-lines { display: flex; flex-direction: column; gap: var(--sn-space-s); flex: none; padding: var(--sn-space-m) var(--sn-confirm-pad) 0; min-width: 0; }
+.pos-choice-lines > .sn-dialog-line { font-weight: 900; }
 /* 목록을 읽지 못했을 때 종이 위의 한 문장(다시 읽는 중). */
 .pos-sheet-note { padding: var(--sn-space-l) 0; font-size: var(--sn-font-body); font-weight: 800; color: var(--sn-ink); }
 
@@ -140,6 +147,46 @@ html, body { margin: 0; height: 100%; overflow: hidden; }
 .pos-return-refund > .sn-form-label { flex: none; }
 .pos-return-refund > .sn-choices { flex: 1 1 0; }
 .pos-return-refund .sn-choice { min-width: var(--sn-method-min); }
+/* 할인 적용 창(features-1 §6-5): 창 = 제목 56 + 본문(위 12 + 대상 52 + 8 + 할인 두 줄(52 + 8 + 52) + 8 + 요약 32 + 8 + 환불 두 줄(52 + 8 + 52)
+   + 아래 12) + 바닥 72 = 484 ≤ 505(1024×529). 줄 자리는 모두 고정이라 고를 때마다 창 높이가 그대로다(환불 줄이 없어도 자리를 남긴다). */
+.pos-discount .sn-dialog-body { gap: var(--sn-space-s); }
+.pos-discount-grid { display: grid; grid-template-rows: var(--sn-target) var(--sn-target); gap: var(--sn-space-s); width: 100%; }
+.pos-discount-grid > .sn-choice { min-width: 0; width: 100%; }
+.pos-discount-summary { display: flex; align-items: center; flex: none; height: calc(var(--sn-font-min) * 2); font-size: var(--sn-font-body); font-weight: 700; }
+.pos-discount-summary > .sn-rich { flex: 1 1 0; }
+.pos-discount-summary.is-alert > .sn-rich { flex: 0 1 auto; padding: 0 var(--sn-space-s); border-radius: var(--sn-radius-s); background: var(--sn-now-wash); }
+.pos-discount-refunds { display: grid; grid-template-rows: var(--sn-target) var(--sn-target); gap: var(--sn-space-s); flex: none; }
+.pos-discount-refund { display: flex; align-items: center; gap: var(--sn-space-m); min-width: 0; box-shadow: inset 0 var(--sn-line) 0 var(--sn-rule-soft); }
+.pos-discount-refund.is-blank { visibility: hidden; }
+.pos-discount-refund-text { flex: 1 1 0; font-weight: 700; }
+.pos-discount-refund > .sn-choices { flex: none; }
+.pos-discount-refund .sn-choice { min-width: var(--sn-method-min); }
+/* 환불이 셋 이상이면 두 줄 자리 안에서 쪽을 넘긴다(오른쪽 쪽 넘김이 두 줄 높이를 차지, 창 높이는 그대로). */
+.pos-discount-refunds.is-paged { grid-template-columns: minmax(0, 1fr) auto; column-gap: var(--sn-space-m); }
+.pos-discount-refunds.is-paged > .pos-discount-refund { grid-column: 1; }
+.pos-discount-refund-pager { grid-column: 2; grid-row: 1 / span 2; display: flex; align-items: center; }
+
+/* 접수 취소 · 품목 취소 창(features-1 §5-4): 품목 취소 = 제목 56 + 본문(위 12 + 수량 칸(잰 창 높이로 센 줄, 1024×529는 두 줄 52 + 8 + 52) + 8 + 환불
+   52 + 8 + 환불 두 줄(52 + 8 + 52) + 8 + 요약 32 + 아래 12) + 바닥 72 = 484 ≤ 505. 접수 취소 = 구분 52 대신 수량 칸, 요약 두 줄(64) → 456. 줄 자리는
+   모두 고정이라 고를 때마다 창 높이가 그대로다(돈 줄 · 환불 줄이 없어도 자리를 남긴다). 환불 줄은 할인 창의 모양(.pos-discount-refund)을 쓴다. */
+.pos-cancel .sn-dialog-body { gap: var(--sn-space-s); }
+.pos-cancel-pieces { flex: none; }
+.pos-cancel-summary { display: grid; grid-template-rows: calc(var(--sn-font-min) * 2); flex: none; font-size: var(--sn-font-body); font-weight: 700; }
+.pos-cancel.is-order .pos-cancel-summary { grid-template-rows: calc(var(--sn-font-min) * 2) calc(var(--sn-font-min) * 2); }
+.pos-cancel-summary-line { display: flex; align-items: center; min-width: 0; }
+.pos-cancel-summary-line > .sn-rich { flex: 1 1 0; }
+.pos-cancel-summary.is-alert .pos-cancel-summary-line:first-child > .sn-rich { flex: 0 1 auto; padding: 0 var(--sn-space-s); border-radius: var(--sn-radius-s); background: var(--sn-now-wash); }
+
+/* 즉시 교환 창(features-1 §7-5): 창 = 제목 56 + 본문(위 12 + 교환 품목 52 + 8 + 수량 52 + 8 + 지급 사이즈 두 줄(52 + 8 + 52) + 8 + 요약 32 + 아래 12)
+   + 바닥 72 = 424 ≤ 505(1024×529). 줄 자리는 모두 고정이라 고를 때마다 창 높이가 그대로다(교환할 것이 없으면 빈 자리 + 요약 자리의 한 줄). */
+.pos-exchange .sn-dialog-body { gap: var(--sn-space-s); }
+.pos-exchange-qty .sn-step { width: 100%; }
+.pos-exchange-grid { display: grid; grid-template-rows: var(--sn-target) var(--sn-target); gap: var(--sn-space-s); width: 100%; }
+.pos-exchange-grid > .sn-choice { min-width: 0; width: 100%; }
+.pos-exchange-summary { display: flex; align-items: center; flex: none; height: calc(var(--sn-font-min) * 2); font-size: var(--sn-font-body); font-weight: 700; }
+.pos-exchange-summary > .sn-rich { flex: 1 1 0; }
+.pos-exchange-summary.is-alert > .sn-rich { flex: 0 1 auto; padding: 0 var(--sn-space-s); border-radius: var(--sn-radius-s); background: var(--sn-now-wash); }
+
 /* 번호가 많은 줄의 작은 창: 번호 버튼 격자(칸 수는 창 폭으로 센 값). */
 .pos-picker-grid { display: grid; grid-template-columns: repeat(var(--pos-picker-columns, 4), minmax(0, 1fr)); gap: var(--sn-space-s); }
 
@@ -468,3 +515,117 @@ html, body { margin: 0; height: 100%; overflow: hidden; }
 /* 확인 창의 수량 칸(지급 · 적재 · 배달 · 수거, 수량으로 세는 줄 여럿): 반납 창의 칸을 한 줄에 하나씩, 넘치면 칸 아래 쪽 넘김. */
 .pos-counts { display: flex; flex-direction: column; gap: var(--sn-space-s); flex: none; }
 .pos-counts > .sn-pager { align-self: center; }
+/* 비밀번호 재발급 창(features-1 E15): 새 비밀번호를 띄어서, 아래 회색 한 줄 `1회 표시 · 직원 전달`. 한 번만 보이므로 수량 숫자와 같은
+   가장 큰 숫자 글자(--sn-font-qty = 제목 + 간격, 등급 값). */
+.pos-pin-digits { font-size: var(--sn-font-qty); font-weight: 900; letter-spacing: var(--sn-space-xs); white-space: nowrap; text-align: center; margin: var(--sn-space-l) 0; }
+.pos-pin-note { font-size: var(--sn-font-body); font-weight: 700; color: var(--sn-ink-soft); white-space: nowrap; text-align: center; }
+
+/* 리프트권(features-1 §8-2): 장부형 종이. 현황 = 왼쪽 표(권종 · 지급 · 미반납 · 반납 · 분실, 줄 높이 --pos-tickets-row = 남는 높이를 나눔) + 오른쪽 차량
+   칸(폭 = 접수증 오른쪽 판, 칸 높이 --pos-tickets-van, 머리 --pos-tickets-van-head: 쪽이 넘으면 누르는 곳 높이의 쪽 넘김). 미반납 · 분실 = 폭 전체의
+   두 줄 줄(--pos-tickets-line, 긴급 줄 높이부터) + 버튼(누르는 곳 크기). 늦은 줄은 줄 앞 빨간 막대 · 반납 일정 빨강(늦은 것에만). */
+.pos-tickets-body { display: flex; gap: var(--sn-space-l); flex: 1 1 0; min-height: 0; padding: var(--sn-space-s) 0 var(--sn-space-l); }
+.pos-tickets-body.is-unreturned, .pos-tickets-body.is-lost { flex-direction: column; gap: 0; }
+.pos-tickets-left { display: flex; flex-direction: column; flex: 1 1 0; min-width: 0; }
+.pos-tickets-table { width: 100%; }
+.pos-tickets-table col.is-name { width: calc(var(--sn-target) * 2.5); }
+.pos-tickets-table .sn-row > td { height: var(--pos-tickets-row); font-size: var(--sn-font-body); font-weight: 700; }
+.pos-tickets-table .sn-row.is-total > td { font-weight: 900; box-shadow: inset 0 var(--sn-line-strong) 0 var(--sn-ink); }
+.pos-tickets-table th.align-end:last-child, .pos-tickets-table td.align-end:last-child { padding-right: var(--sn-space-s); }
+.pos-tickets-kind { font-weight: 900; white-space: nowrap; }
+.pos-tickets-count { white-space: nowrap; }
+.pos-tickets-count.is-zero { color: var(--sn-ink-muted); font-weight: 400; }
+.pos-tickets-right { display: flex; flex-direction: column; flex: none; width: var(--sn-slip-side); min-width: 0; }
+.pos-tickets-van-head {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sn-space-s); flex: none;
+  height: var(--pos-tickets-van-head); padding: 0 var(--sn-space-s); box-shadow: inset 0 calc(var(--sn-line-strong) * -1) 0 var(--sn-ink);
+}
+.pos-tickets-van-title { font-size: var(--sn-font-body); font-weight: 900; white-space: nowrap; }
+.pos-tickets-vans { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.pos-tickets-van {
+  display: flex; flex-direction: column; justify-content: center; gap: var(--sn-space-xs); flex: none; height: var(--pos-tickets-van);
+  padding: 0 var(--sn-space-s); box-shadow: inset 0 calc(var(--sn-line) * -1) 0 var(--sn-rule-soft);
+}
+.pos-tickets-van-name { font-size: var(--sn-font-body); font-weight: 900; white-space: nowrap; }
+.pos-tickets-van-stock { font-size: var(--sn-font-min); font-weight: 700; color: var(--sn-ink-soft); }
+.pos-tickets-van-buttons { display: flex; gap: var(--sn-space-s); }
+.pos-tickets-van-button { flex: 1 1 0; min-width: 0; }
+.pos-tickets-rows { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.pos-tickets-line {
+  display: flex; align-items: center; gap: var(--sn-space-m); flex: none; height: var(--pos-tickets-line); padding-right: var(--sn-space-s);
+  box-shadow: inset 0 calc(var(--sn-line) * -1) 0 var(--sn-rule-soft);
+}
+.pos-tickets-line.is-late { box-shadow: inset var(--sn-line-stamp) 0 0 var(--sn-late), inset 0 calc(var(--sn-line) * -1) 0 var(--sn-rule-soft); }
+.pos-tickets-open {
+  display: flex; flex-direction: column; justify-content: center; flex: 1 1 0; min-width: 0; height: 100%; padding: 0 var(--sn-space-m);
+  border: 0; background: none; color: inherit; font: inherit; text-align: left; line-height: 1.2; cursor: pointer;
+}
+.pos-tickets-line-main { font-size: var(--sn-font-body); font-weight: 900; }
+.pos-tickets-line-note { font-size: var(--sn-font-min); font-weight: 700; color: var(--sn-ink-soft); }
+.pos-tickets-line-note.tone-late { color: var(--sn-late); }
+.pos-tickets-line-actions { display: flex; gap: var(--sn-space-s); flex: none; }
+.pos-tickets-empty { margin: var(--sn-space-l) 0; font-size: var(--sn-font-body); font-weight: 700; color: var(--sn-ink-soft); }
+
+/* 분실 처리 · 분실 회수 · 예비권 적재 · 입고 창(features-1 §8-2): 제목 56 + 본문(위 12 + 수량 칸(잰 창 높이로 센 줄, 셋까지 52 + 8 …) + 8 + 글 줄
+   (분실 두 줄 · 예비권 한 줄, 한 줄 32) + 아래 12) + 바닥 72 ≤ 505. 줄 자리는 늘 남긴다(창 높이가 그대로). */
+.pos-pieces-sheet .sn-dialog-body { gap: var(--sn-space-s); }
+.pos-pieces-sheet-pieces { flex: none; }
+.pos-pieces-sheet-text { display: flex; flex-direction: column; gap: var(--sn-space-s); flex: none; font-size: var(--sn-font-body); font-weight: 700; }
+.pos-pieces-sheet-line { display: flex; align-items: center; height: calc(var(--sn-font-min) * 2); margin: 0; min-width: 0; }
+.pos-pieces-sheet-line > .sn-rich { flex: 1 1 0; }
+.pos-pieces-sheet-text.is-alert .pos-pieces-sheet-line:first-child > .sn-rich { flex: 0 1 auto; padding: 0 var(--sn-space-s); border-radius: var(--sn-radius-s); background: var(--sn-now-wash); }
+
+/* 전화 창(features-1 §8-4): 번호를 가장 큰 숫자 글자로(--sn-font-qty). 기사 기기의 주 버튼은 `tel:` 링크(주 버튼 모양). */
+.pos-call-number { margin: var(--sn-space-s) 0; font-size: var(--sn-font-qty); font-weight: 900; letter-spacing: var(--sn-space-xs); white-space: nowrap; text-align: center; }
+a.pos-call-link { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+/* 주 버튼은 남는 폭 안에서 줄어든다(좁으면 `전화`만: 번호는 위에 크게 있다). */
+.pos-call .pos-notice-actions { flex: 1 1 0; justify-content: flex-end; min-width: 0; }
+.pos-call .pos-notice-actions > .sn-primary { flex: 0 1 auto; min-width: 0; }
+
+/* A4 인쇄(features-1 E16): 쪽(794 × 1123, 여백 12mm)은 화면이 크기를 준다. 글자는 인쇄 등급(본문 14 · 쪽 번호 12). 인쇄 뿌리(.pos-print-host)는
+   화면에서 보이지 않고, 인쇄할 때는 그것만 보인다(쪽마다 넘김). 연결하지 않은 주소(#/print/…)의 화면은 쪽 하나를 그대로 그린다. */
+.pos-print-host { display: none; }
+.pos-print-page {
+  display: flex; flex-direction: column; box-sizing: border-box; overflow: hidden; background: var(--sn-paper); color: var(--sn-ink);
+  font-size: var(--sn-font-body); line-height: var(--sn-line-body);
+}
+.pos-print-head { flex: none; padding-bottom: var(--sn-space-s); box-shadow: inset 0 calc(var(--sn-line-strong) * -1) 0 var(--sn-ink); }
+.pos-print-shop { margin: 0; font-size: var(--sn-font-body); font-weight: 700; }
+.pos-print-title { margin: 0; font-size: var(--sn-font-title); font-weight: 900; }
+.pos-print-body { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; }
+.pos-print-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.pos-print-table th { height: var(--sn-thead-h); font-size: var(--sn-font-body); font-weight: 900; text-align: left; box-shadow: inset 0 calc(var(--sn-line) * -1) 0 var(--sn-ink); }
+.pos-print-table td { height: var(--sn-row-h); padding: 0 var(--sn-space-xs); font-size: var(--sn-font-body); font-weight: 600; box-shadow: inset 0 calc(var(--sn-line) * -1) 0 var(--sn-rule-soft); }
+.pos-print-table .align-end { text-align: right; }
+.pos-print-line { display: flex; align-items: center; height: var(--sn-row-h); margin: 0; font-size: var(--sn-font-body); font-weight: 600; }
+.pos-print-line > .sn-fit { flex: 1 1 0; }
+.pos-print-line.is-strong { font-weight: 900; }
+.pos-print-foot { display: flex; justify-content: space-between; flex: none; padding-top: var(--sn-space-s); font-size: var(--sn-font-min); color: var(--sn-ink-soft); }
+.pos-print-empty { font-size: var(--sn-font-body); font-weight: 700; }
+.pos-print-screen { display: flex; justify-content: center; }
+@media print {
+  @page { size: A4 portrait; margin: 0; }
+  body:has(> .pos-print-host) > :not(.pos-print-host) { display: none !important; }
+  .pos-print-host { display: block; }
+  .pos-print-host .pos-print-page { break-after: page; }
+  .pos-print-host .pos-print-page:last-child { break-after: auto; }
+}
+
+/* 확인 필요(features-1 §9-3 · §9-4): 장부형 종이. 폭 전체의 줄(--pos-review-line, 긴급 줄 높이 64부터 88까지 남는 높이를 나눔): 왼쪽 문장(두 줄까지, 할
+   일 조각이 먼저 빠짐) · 오른쪽 버튼 둘(누르는 곳 크기, 폭은 누르는 곳 두 배 남짓). 처리 완료 줄은 옅은 먹과 둘째 줄 `확인 완료 · 16:20 · 한가람`. 빨강 없음. */
+.pos-review-body { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; padding: var(--sn-space-s) 0 var(--sn-space-l); }
+.pos-review-rows { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.pos-review-line {
+  display: flex; align-items: center; gap: var(--sn-space-m); flex: none; height: var(--pos-review-line); padding: 0 var(--sn-space-s) 0 var(--sn-space-m);
+  box-shadow: inset 0 calc(var(--sn-line) * -1) 0 var(--sn-rule-soft);
+}
+.pos-review-text { display: flex; flex-direction: column; justify-content: center; flex: 1 1 0; min-width: 0; line-height: 1.2; }
+.pos-review-sentence { font-size: var(--sn-font-body); font-weight: 800; }
+.pos-review-note { font-size: var(--sn-font-min); font-weight: 700; color: var(--sn-ink-soft); }
+.pos-review-line.is-done .pos-review-sentence { color: var(--sn-ink-muted); font-weight: 700; }
+.pos-review-actions { display: flex; gap: var(--sn-space-s); flex: none; }
+.pos-review-button { min-width: calc(var(--sn-target) * 2.3); }
+.pos-review-empty { margin: var(--sn-space-l) 0; font-size: var(--sn-font-body); font-weight: 700; color: var(--sn-ink-soft); }
+/* 초과 수납의 환불 창(features-1 §9-3): 제목 56 + 본문(위 12 + 환불 두 줄(52 + 8 + 52) + 8 + 요약 32 + 아래 12) + 바닥 72 = 304. 할인 창의 환불 줄 모양. */
+.pos-refund .sn-dialog-body { gap: var(--sn-space-s); }
+/* 마감의 막는 단계(features-1 §9-3): 확인 창 안의 한 줄(ReviewStep). */
+.pos-closing-step { margin-top: var(--sn-space-s); }

@@ -1,6 +1,6 @@
 // FixtureClient(체험판의 서버 대역)가 시안의 하루를 그대로 돌려주는지, 명령 · 요청번호 · 저장 · 체험 시계가 약속대로 도는지.
 import {
-  defaultUiConfig, draftToEnvelope, openCommandDraft, uiDefaults, type ConfirmCommand, type ConfirmDraftView, type LedgerRow, type LedgerViewResult,
+  chainDrafts, defaultUiConfig, draftToEnvelope, openCommandDraft, uiDefaults, type ConfirmCommand, type ConfirmDraftView, type LedgerRow, type LedgerViewResult,
   type UiConfig,
 } from '@skinote/contract';
 import { openOrRestoreDraft } from '@skinote/ui';
@@ -146,7 +146,8 @@ describe('대여 접수증과 처리 현황', () => {
     const { client } = setup();
     const slip = await client.query('orderSlip', { orderId: 'o22' });
     expect(slip.receiptNo).toBe('261226-017');
-    expect(slip.fields.map((f) => f.label + ' ' + f.value)).toEqual(['날짜 12월 26일 (토)', '구분 전화 예약', '대표자 박준호', '연락처 010-0000-0022', '인원 3명']);
+    // 연락처는 가린 번호(온전한 번호는 옆 동작 `전화`의 창 phoneReveal로만, 2026-09-27 점검).
+    expect(slip.fields.map((f) => f.label + ' ' + f.value)).toEqual(['날짜 12월 26일 (토)', '구분 전화 예약', '대표자 박준호', '연락처 010-****-0022', '인원 3명']);
     expect(slip.lines).toHaveLength(4);
     for (const line of slip.lines) expect(line.cells['stamp:load']).toBeUndefined();
     // 리프트권 반납 필수(이 매장 운영 규칙): 권 줄에도 반납 칸이 있다(지급 전이라 대기).
@@ -337,7 +338,7 @@ describe('찾기 · 저장 · 체험 시계', () => {
     expect(fresh.serverTime).toBe(at(15, 40));
   });
 
-  it('매장 목록(registry)이 없는 옛 저장(도메인 패키지 전의 판 3)도 이어서 읽고, 목록은 늘 지금 견본 값이다', async () => {
+  it('매장 목록(registry) · 직원이 없는 옛 저장은 버리고 처음 자료로 시작한다(매장 설정이 목록을 바꾸므로 목록은 저장한 자료의 것이다)', async () => {
     const storage = new MemoryStorage();
     const first = setup(storage);
     await confirmAndSend(first.client, await first.client.query('confirmDraft', { orderId: 'o22', actionKey: 'stamp.issue' }));
@@ -347,12 +348,50 @@ describe('찾기 · 저장 · 체험 시계', () => {
     storage.setItem('skinote.demo.v1', JSON.stringify(saved));
     const second = setup(storage);
     const ledger = await second.client.ledgerView('day_ledger', {});
-    expect(stamp(row(ledger, 'o22'), 'stamp:issue').state).toBe('done');
+    expect(stamp(row(ledger, 'o22'), 'stamp:issue').state).toBe('todo');
     const list = await second.client.ledgerView('collection_list', { vehicleId: 'v1' });
     expect(list.vehicle?.label).toBe('1호 차량');
     expect(second.client.previewStaff()).toHaveLength(3);
-    // 기기 선택 미리 보기의 차량(체험 매장의 차량: id와 이름만).
+    // 기기 선택 미리 보기의 차량(체험 매장의 쓰는 차량: id와 이름만).
     expect(second.client.previewVehicles()).toEqual([{ id: 'v1', name: '1호 차량' }, { id: 'v2', name: '2호 차량' }]);
+  });
+
+  it('매장 설정의 바꿈은 저장되어 다시 열어도 남고, 설정 판(configRev)이 올라 매장 이름이 따라 바뀐다; 처음으로 되돌리면 견본 값', async () => {
+    const storage = new MemoryStorage();
+    const first = setup(storage);
+    const before = await first.client.config();
+    const view = await first.client.query('shopSettings', { tab: 'fleet', changes: [{ op: 'vehicle.add', ref: 'n1', label: '3호 차량' }, { op: 'staff.update', id: 'staff-5', vehicleId: 'new:n1' }] });
+    const draft = openCommandDraft(view.command!, view.basis);
+    const heads: number[] = [];
+    first.client.subscribe((head) => heads.push(head.configRev));
+    expect((await first.client.command(draftToEnvelope(draft))).outcome).toBe('applied');
+    const [next] = chainDrafts(draft, view.then);
+    expect((await first.client.command(draftToEnvelope(next!))).outcome).toBe('applied');
+    const info = await first.client.query('shopSettings', { tab: 'info', changes: [{ op: 'shop.set', name: '첫 매장' }] });
+    expect((await first.client.command(draftToEnvelope(openCommandDraft(info.command!, info.basis)))).outcome).toBe('applied');
+    expect((await first.client.config()).shopName).toBe('첫 매장');
+    expect((await first.client.config()).configRev).toBe(before.configRev + 3);
+    expect(heads.at(-1)).toBe(before.configRev + 3);
+    first.client.persist();
+    const second = setup(storage);
+    const fleet = await second.client.query('shopSettings', { tab: 'fleet' });
+    expect(fleet.cards[0]!.list!.items.map((i) => i.label)).toEqual(['1호 차량', '2호 차량', '3호 차량']);
+    expect(fleet.cards[1]!.list!.items.find((i) => i.label === '서하준')!.tag).toBe('카운터 · 3호 차량');
+    expect((await second.client.config()).shopName).toBe('첫 매장');
+    expect(second.client.previewVehicles().map((v) => v.name)).toEqual(['1호 차량', '2호 차량', '3호 차량']);
+    second.client.reset();
+    expect((await second.client.config()).shopName).toBe('우리 스키샵');
+  });
+
+  it('?viewer=counter(보는 사람 카운터): 매장 설정은 `권한 없음 · 관리자 확인 필요`, 미리 보기는 권종 열 · 장소 열둘', async () => {
+    const client = new FixtureClient({ realNow: () => DEMO_START_MS, viewer: 'counter' });
+    const view = await client.query('shopSettings', { tab: 'places', changes: [{ op: 'area.add', ref: 'n1', label: '새 구역' }] });
+    expect(view.footer).toBe('권한 없음 · 관리자 확인 필요');
+    expect(view.primary.enabled).toBe(false);
+    const many = await client.previewSettings('pricing', []);
+    expect(many.cards[1]!.list!.items).toHaveLength(10);
+    const places = await client.previewSettings('places', []);
+    expect(places.cards.find((c) => c.title === '꽃마을')!.list!.items).toHaveLength(13);
   });
 
   it('저장소가 막히거나 망가져도 처음 자료로 돈다', async () => {
@@ -389,6 +428,29 @@ describe('찾기 · 저장 · 체험 시계', () => {
     // 27일 00:10도 06:00 전이라 26일 영업일 장부다.
     expect(after.currentBusinessDate).toBe('2026-12-26');
     expect(after.activeConditions).toEqual(['after_last_return_slot']);
+  });
+
+  it('15:40에 최하은 팀을 접수 취소하고 23:30까지 시계를 돌려도 이야기(16:40 적재 · 16:57 배달 · 16:58 권 추가 · 23:05 수거)가 그 팀을 건너뛴다(features-1 E24)', async () => {
+    const { client } = setup();
+    const sheet = await client.query('cancelSheet', { orderId: 'o26', scope: 'order', reasonKey: 'no_show' });
+    expect(sheet.primary.label).toBe('접수 취소 · 환불 계좌이체 135,000원');
+    const first = openCommandDraft(sheet.command!, sheet.basis, { expect: sheet.expect! });
+    expect((await client.command(draftToEnvelope(first))).outcome).toBe('applied');
+    const [refund] = chainDrafts(first, sheet.then);
+    expect((await client.command(draftToEnvelope(refund!))).outcome).toBe('applied');
+    client.advanceClock(7 * 60 + 50);
+    const ledger = await client.ledgerView('day_ledger', {});
+    expect(ledger.serverTime).toBe(at(23, 30));
+    const r = row(ledger, 'o26');
+    expect(r.statusWord).toBe('취소');
+    expect(r.finished).toBe(true);
+    const slip = await client.query('orderSlip', { orderId: 'o26' });
+    // 이야기의 권 추가(16:58)가 건너뛰어져 줄이 그대로 둘, 청구 · 수납 0원(환불).
+    expect(slip.lines).toHaveLength(2);
+    expect(slip.money).toMatchObject({ charged: 0, paid: 0, due: 0, refunded: 135_000 });
+    expect(slip.checklist.filter((c) => c.state !== 'done')).toEqual([]);
+    const deliveries = await client.ledgerView('delivery_list', { vehicleId: 'v1' });
+    expect(deliveries.rows.map((x) => x.orderId)).not.toContain('o26');
   });
 
   it('기사 수거 목록(다음 단계가 쓸 읽기 모델): 반납 타임 묶음, 긴급 한 건', async () => {
@@ -513,7 +575,7 @@ describe('수거 목록(C3) · 긴급 · 기사 기기 연결', () => {
     expect(outcome.outcome).toBe('applied');
     expect(ids(await list(client))).not.toContain('collect:o34');
     expect(row(await client.ledgerView('day_ledger', {}), 'o34').cells['promise']).toMatchObject({ parts: [{ text: '내일 22:00 설천 주차장' }, { text: '차량' }] });
-    expect((await client.query('reviewList', {})).map((r) => r.message)).toContain('한동수 팀 고객 부재 · 재방문 내일 22:00');
+    expect((await client.query('reviewList', {})).notices.map((r) => r.message)).toContain('한동수 팀 고객 부재 · 재방문 내일 22:00');
     const bad = await client.command(plainEnvelope({ type: 'task.visit', payload: { taskId: 'collect:o35', outcomeKey: 'nope' } }, basis));
     expect(bad.outcome).toBe('rejected');
   });

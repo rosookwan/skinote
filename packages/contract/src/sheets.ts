@@ -4,8 +4,8 @@
 // (남는 일정, 돌려줄 보증금, 대납 몫, 차액은 모두 여기서 온다). 창은 연 때의 basis · 요청번호를 지키고, 다시 물어 받은 명령의
 // 본문만 초안에 덮는다(같은 종류, draftToEnvelope). 글은 문구 표(docs/design/wording.md)의 말로 서버가 쓴다.
 import type { ActionKey, DeviceClassKey, ToneKey } from './vocab.ts';
-import type { ConfirmCommand, ConfirmStep, Expect } from './client.ts';
-import type { Basis, BusinessDate, FitPart, ItemCount, LedgerCell, ReadModelHead, ReasonCode, StampCell } from './read-models.ts';
+import type { ConfirmCommand, ConfirmStep, DiscountChoice, DiscountSectionKey, Expect, ManualDiscount, SettingsOp } from './client.ts';
+import type { Basis, BusinessDate, FitPart, ItemCount, LedgerCell, ReadModelHead, ReasonCode, ReviewStepView, StampCell } from './read-models.ts';
 
 // ── 공통 조각 ─────────────────────────────────────────────────────────
 
@@ -230,6 +230,11 @@ export interface OrderDraftInput {
 
 export interface OrderDraftParams {
   draft: OrderDraftInput;
+  /**
+   * 품목 추가(features-1 §5-5): 이 접수에 더할 품목을 고르는 ① 품목만(대표자 · 일정은 그 접수의 것, 초안의 대표자 · 일정은 보지 않는다). 없으면
+   * 새 접수.
+   */
+  addTo?: string;
   /** 지금 연 종류 타일(고르는 줄 두 칸이 그 종류로). */
   openKindKey?: string;
   /** 지금 고른 규격(고르는 줄 2의 수량 칸). 묶음 종류(리프트권)는 상품(권종) key. 없으면 서버가 정한다(수가 있는 첫 규격, 없으면 없음). */
@@ -336,6 +341,8 @@ export interface OrderDraftView extends ReadModelHead {
   footer: string;
   /** 요금표로 계산한 견적(V4 order.create의 expect.quoteHash, catalog 8 QUOTE_CHANGED). 품목이 없으면 ''. */
   quoteHash: string;
+  /** 품목 추가 모드(addTo): 그 접수와 화면 제목(`품목 추가 · 박준호 팀`). 대표자 줄 · ② 일정은 없다. */
+  add?: { orderId: string; title: string };
 }
 
 // ── V4 접수 확정 창 · 칸별 수납(ui 6-4, catalog 15) ────────────────────────────
@@ -344,7 +351,7 @@ export interface OrderDraftView extends ReadModelHead {
  * 확정 창의 약속된 key(읽기 모델과 화면이 함께 쓴다): 수단 줄의 `후불`(later) · `기타`(other, 작은 창), `기타` 판의 `다른 팀 결제`
  * (other_team, 팀 찾기 숫자판), `할인 적용 ›` 판의 `할인 없음`(none), 결제 팀 줄의 이 팀(self).
  */
-export const CHECKOUT_KEYS = { later: 'later', other: 'other', otherTeam: 'other_team', noDiscount: 'none', self: 'self' } as const;
+export const CHECKOUT_KEYS = { later: 'later', other: 'other', otherTeam: 'other_team', noDiscount: 'none', self: 'self', manual: 'manual' } as const;
 
 /**
  * 새 접수(V3)의 고르기 버튼 key(읽기 모델과 화면이 함께 쓴다): 수령 방법 `매장 직접 · 즉시`(now) · `예약 · 수령일`(reserve) ·
@@ -365,7 +372,9 @@ export function dayPickOf(key: string): SlotPick['day'] | null {
 export interface CheckoutChoice {
   sectionKey: string;
   methodKey: string;
+  /** 매장 할인의 key, 또는 `manual`(직접 입력: manual에 금액 · 비율과 사유, features-1 §6-1). */
   discountKey?: string;
+  manual?: ManualDiscount;
   /**
    * 이 칸만 다른 팀이 낼 때(`기타` 판의 `다른 팀 결제`, methodKey `later`와 함께). 없으면 `후불`인 칸은 결제 팀 줄의 팀(spec 3-3:
    * 결제 팀 줄은 `후불`인 칸 모두에 걸린다).
@@ -384,7 +393,14 @@ export interface CheckoutSheetParams {
    * 한 번에 누를 수 없게).
    */
   foundPayerIds?: string[];
+  /** 품목 추가의 확정 창(features-1 §5-5): 이 접수에 더한다(order.add, 할인 고르기 없음). */
+  addTo?: string;
+  /** 품목 추가에서 `후불`인 칸을 낼 팀: 접수의 결제 팀(order, 처음 값) · 이 팀(self). 접수에 결제 팀이 있을 때만 줄이 보인다(E22). */
+  payer?: AddPayer;
 }
+
+/** 품목 추가의 결제 팀(E22): 접수의 결제 팀 그대로(order) 또는 이 팀이 낸다(self). */
+export type AddPayer = 'order' | 'self';
 
 /** 결제 칸 하나: 두 줄 칸(제목 줄 + 수단 줄) 또는 버튼 없는 한 줄 칸(보증금, 수단이 하나). */
 export interface CheckoutSection {
@@ -406,8 +422,13 @@ export interface CheckoutSection {
   /** 수단 줄(빠른 수단 + `후불` + `기타`). 없으면 한 줄 칸. */
   methods?: ChoiceOption[];
   discountable: boolean;
-  /** `할인 적용 ›` 작은 창의 선택지(`할인 없음` + 그 칸 할인 묶음의 할인, 한 묶음에 하나 — catalog 9). */
+  /**
+   * `할인 적용 ›` 작은 창의 선택지(`할인 없음` + 그 칸 할인 묶음의 할인 + `직접 입력 ›`(key `manual`, opens), 한 묶음에 하나 — catalog 9).
+   * 보는 사람에게 권한이 없는 할인은 누를 수 없고 까닭 `권한 없음 · 관리자 확인 필요`(features-1 E10).
+   */
   discounts?: ChoiceOption[];
+  /** `직접 입력`의 종류 판 · 숫자판 · 사유 키보드(권한이 있을 때). */
+  manual?: ManualDiscountSpec;
   /** `기타` 작은 창의 선택지(빠른 수단이 아닌 수단 + `다른 팀 결제`). key `other_team`은 팀 찾기 숫자판을 연다(opens). */
   others?: ChoiceOption[];
   /** 한 줄 칸의 받는 돈(`현금 20,000원`). */
@@ -425,7 +446,7 @@ export interface CheckoutSheetView {
    * 결제 팀 줄: 후불인 칸이 없으면 자리만(visible false). 선택지는 팀(이 팀 key `self` + 다른 팀들, key는 접수 id)이고
    * `다른 팀 찾기 · 끝 4자리`(숫자판)는 화면의 버튼이다. 찾은 팀은 payerOrderId로 다시 물으면 선택지에 들어온다.
    */
-  payer: { visible: boolean; label: string; options: ChoiceOption[] };
+  payer: { visible: boolean; label: string; options: ChoiceOption[]; find?: false };
   /** 받을 금액 줄(`받을 금액` · `현금 160,000원` · `= 리프트권 140,000원 + 보증금 20,000원`, 없으면 `받을 금액 없음`). */
   due: RichText;
   /** 확정할 수 없는 까닭 한 줄(그사이 반납 시각이 지남: `선택 불가 · 10분 이내`). 받을 금액 줄 자리에 보인다. */
@@ -434,6 +455,327 @@ export interface CheckoutSheetView {
   /** order.create 하나(약속 · 결제 약속 · 칸별 수납 · 보증금 입금이 함께). */
   command?: ConfirmCommand;
   expect?: Expect;
+}
+
+// ── 할인 적용(features-1 §6, 접수증 옆 동작 · V4 `할인 적용 ›`의 `직접 입력`) ─────────────────────
+
+/** 직접 입력의 한 종류(`금액` · `비율`): 숫자판(제목 · 범위 · 단위)과 보는 사람의 한도. */
+export interface ManualDiscountKind {
+  key: ManualDiscount['kind'];
+  label: string;
+  /** 숫자판(mode amount · percent, 제목 `할인 금액 · 장비` · `할인 비율 · 리프트권`, 범위 · 10원 단위). */
+  input: RuleInput;
+  /** 보는 사람(역할)의 한도(features-1 E10): 이 값을 넘으면 숫자판 아래 overLimit 한 줄, `입력`이 눌리지 않는다. 없으면 한도 없음. */
+  limit?: number;
+  /** 한도를 넘은 값의 한 줄(`한도 10,000원 · 관리자 확인 필요`: 한도를 말해 금액을 짐작하지 않게, 2026-09-27 점검). 없으면 spec.overLimit. */
+  overLimit?: string;
+}
+
+/** 직접 입력의 흐름: 종류 판(종류가 하나면 판 없이 숫자판, 리프트권 = 비율만) → 숫자판 → 사유 키보드(`할인 사유`). */
+export interface ManualDiscountSpec {
+  /** 종류 판 제목(`할인 직접 입력 · 장비`). */
+  title: string;
+  kinds: ManualDiscountKind[];
+  /** 한도를 넘은 값의 한 줄(`권한 없음 · 관리자 확인 필요`). */
+  overLimit: string;
+  reason: { title: string; maxLength: number };
+}
+
+/** 할인 적용 창의 인자: 칸 · 고른 할인 · 환불 줄마다 고른 수단(수납 id → 수단 key). 없으면 창이 처음 고른 것. */
+export interface DiscountSheetParams {
+  orderId: string;
+  sectionKey?: DiscountSectionKey;
+  choice?: DiscountChoice;
+  methods?: Record<string, string>;
+}
+
+/**
+ * 환불 한 줄(할인 · 취소 창 공용, features-1 E4b): `환불 · 계좌이체 105,000원`과 수단 버튼(그 수납의 수단 · `현금`). 카드면 뒤 조각
+ * `단말기 취소`, 환불할 수 없는 수단이면 버튼 없이 `상품권 10,000원 · 환불 불가`.
+ */
+export interface RefundLineView {
+  paymentId: string;
+  parts: FitPart[];
+  amount: number;
+  methods: ChoiceOption[];
+}
+
+export interface DiscountSheetView extends ReadModelHead {
+  /** `할인 적용 · 박준호 팀`. */
+  title: string;
+  /** 칸 줄(`장비` · `리프트권`, 품목이 있는 칸만, 하나여도 보인다). */
+  sections: ChoiceOption[];
+  /** 할인 고르기(`할인 없음` + 그 칸의 매장 할인 + `직접 입력 ›`). 지금 할인이 고름. 권한이 없는 것은 누를 수 없고 까닭이 붙는다. */
+  choices: ChoiceOption[];
+  /** `직접 입력`의 종류 판 · 숫자판 · 사유(권한이 있을 때). */
+  manual?: ManualDiscountSpec;
+  /** 요약 한 줄(`장비 225,000원 → 202,500원 · 미수 202,500원`). */
+  summary: RichText;
+  /** 환불 줄(접수가 더 낸 돈이 될 때만, 금액이 큰 것부터). 창은 두 줄 자리를 쪽으로 넘긴다. 없으면 빈 목록(창은 자리를 지킨다). */
+  refunds: RefundLineView[];
+  /** 막힌 까닭 한 줄(지금 할인을 다시 고름 `변경 없음` · `권한 없음 · 관리자 확인 필요`). 창을 막 연 때는 없다(주 버튼만 막힘). */
+  notice?: string;
+  /** 지금 고른 것(화면은 이것을 고쳐 다시 묻는다). */
+  choice: DiscountChoice;
+  sectionKey: DiscountSectionKey;
+  /** `할인 적용 · 22,500원` · `할인 적용 · 환불 현금 22,500원` · `할인 해제 · 22,500원`. */
+  primary: PrimaryLabel;
+  /** discount.apply와 그 바탕(expect.dueAmount), 이어서 보낼 환불(payment.refund, cause 'discount'). */
+  command?: ConfirmCommand;
+  expect?: Expect;
+  then?: ConfirmStep[];
+}
+
+// ── 환불(features-1 §9-1, 확인 필요 `초과 수납`의 `환불 · {금액}`) ─────────────────────────────
+
+export interface RefundSheetParams {
+  orderId: string;
+  /** 환불 줄마다 고른 수단(수납 id → 수단). 없으면 그 수납의 수단. */
+  methods?: Record<string, string>;
+}
+
+/**
+ * 초과 수납의 환불 창: 더 받은 돈을 수납에 나눈 환불 줄(할인 · 취소 창과 같은 두 줄 자리 · 쪽 넘김, 카드면 `단말기 취소`), 요약(`초과 수납 10,000원 · 환불 10,000원`),
+ * 주 버튼(`환불 · 현금 10,000원`), 명령(payment.refund, cause 'overpaid')과 바탕(expect.refundAmount). 더 받은 돈이 없으면 명령 없이 notice.
+ */
+export interface RefundSheetView extends ReadModelHead {
+  /** `환불 · 최하은 팀`. */
+  title: string;
+  refunds: RefundLineView[];
+  summary: RichText;
+  /** 막힌 까닭(`환불 대상 없음`). */
+  notice?: string;
+  primary: PrimaryLabel;
+  command?: ConfirmCommand;
+  expect?: Expect;
+}
+
+// ── 접수 취소 · 품목 취소(features-1 §5-4, 접수증 옆 동작 `접수 취소` · `품목 취소`) ─────────────────────
+
+/** 취소 범위: 접수 전체(`접수 취소`) · 품목 수량(`품목 취소`). */
+export type CancelScope = 'order' | 'lines';
+/** 취소의 구분(reason_codes cancellation): 취소 요청 · 연락 없음(노쇼). */
+export type CancelReasonKey = 'request' | 'no_show';
+/** 취소가 비운 돈의 결정(order_cancellations.refund_decision_key): 환불 · 미수 결제 · 환불 없음 · 해당 없음(비운 돈이 없음). */
+export type CancelDecision = 'refund' | 'apply_to_due' | 'no_refund' | 'not_applicable';
+
+export interface CancelSheetParams {
+  orderId: string;
+  scope: CancelScope;
+  /** 품목 취소의 줄마다 취소할 수(없으면 모두 0). 접수 취소는 보지 않는다(취소할 수 있는 수 모두). */
+  picked?: LineUnits[];
+  reasonKey?: CancelReasonKey;
+  decision?: Exclude<CancelDecision, 'not_applicable'>;
+  /** 환불 줄마다 고른 수단(수납 id → 수단 key). */
+  methods?: Record<string, string>;
+}
+
+export interface CancelSheetView extends ReadModelHead {
+  /** `접수 취소 · 박준호 팀` · `품목 취소 · 박준호 팀`. */
+  title: string;
+  scope: CancelScope;
+  /** 품목 취소의 줄(취소할 수 있는 줄마다 −/+, 반납 창의 수량 칸과 같은 모양). 접수 취소는 빈 목록. */
+  lines: ReturnPieceLine[];
+  /** 접수 취소의 `구분`(`취소 요청` · `연락 없음`). 품목 취소는 없음. */
+  reasons?: ChoiceOption[];
+  /** 돈 줄 `환불`(`환불` · `미수 결제`(비운 돈이 다른 미수에 쓰일 때만) · `환불 없음`). 비운 돈이 없으면 없음(해당 없음). */
+  decisions?: ChoiceOption[];
+  /**
+   * 환불 줄(수납마다 수단 버튼, 금액이 큰 것부터: 창이 두 줄씩 쪽으로 넘긴다) 또는 결정 한 줄(`미수 결제 · 105,000원` · `환불 없음 · 수납 유지 105,000원`),
+   * 그 뒤에 취소가 푼 보증금의 반환 줄(`보증금 반환 · 현금 15,000원`). 없으면 빈 목록.
+   */
+  refunds: RefundLineView[];
+  /** 요약(`취소 금액 225,000원 · 환불 105,000원`, 접수 취소의 둘째 줄 `이정호 팀 결제 예정 해제`). */
+  summary: RichText[];
+  /** 막힌 까닭 한 줄(`취소 불가 · 미반납 스키 2`). */
+  notice?: string;
+  /** 지금 고른 것(화면은 이것을 고쳐 다시 묻는다). */
+  picked: LineUnits[];
+  reasonKey: CancelReasonKey;
+  decision: CancelDecision;
+  /** `접수 취소 · 환불 105,000원` · `품목 취소 · 헬멧 1 · 환불 5,000원` · `접수 취소`. */
+  primary: PrimaryLabel;
+  /** order.cancel(바탕 expect.dueAmount)과 이어서 보낼 환불(payment.refund, cause 'cancellation'). */
+  command?: ConfirmCommand;
+  expect?: Expect;
+  then?: ConfirmStep[];
+}
+
+// ── 즉시 교환(features-1 §7-2, 접수증 옆 동작 `즉시 교환`) ─────────────────────────────
+
+/** 교환 창의 인자: 고른 교환 품목(줄 · 옛 사이즈 · 지급 전인지) · 수 · 지급 사이즈. 없으면 창이 처음 고른 것(첫 품목 · 1개 · 사이즈 없음). */
+export interface ExchangeSheetParams {
+  orderId: string;
+  lineId?: string;
+  from?: string;
+  planned?: boolean;
+  quantity?: number;
+  to?: string;
+}
+
+/** 교환 품목 버튼 하나(`헬멧 중 사이즈 · 2개`): 줄 · 옛 사이즈 · 지급 전(매장에 있는 것)인지. */
+export interface ExchangeItemOption extends ChoiceOption {
+  lineId: string;
+  from: string;
+  planned: boolean;
+}
+
+export interface ExchangeSheetView extends ReadModelHead {
+  /** `즉시 교환 · 박준호 팀`. */
+  title: string;
+  /** 교환 품목(손님에게 있는 것, 없으면 지급 전 것; 줄 · 사이즈마다). 고른 것이 selected. 없으면 빈 목록(notice). */
+  items: ExchangeItemOption[];
+  /** 수량 줄: 이름(`반납 사이즈` · `지급 예정 사이즈`), 둘째 줄(옛 사이즈 이름 `중 사이즈`), −/+ 범위. 품목이 없으면 없음. */
+  quantity?: { name: string; note: string; input: QuantityInput };
+  /** 지급 사이즈(그 종류의 다른 사이즈, 매장 목록 차례). 고른 것이 selected. */
+  sizes: ChoiceOption[];
+  /** 요약 한 줄(`헬멧 중 사이즈 → 대 사이즈 · 1개 · 금액 유지`). */
+  summary: RichText;
+  /** 막힌 까닭 한 줄(`교환 불가 · 교환 대상 없음`). */
+  notice?: string;
+  /** 지금 고른 것(화면은 이것을 고쳐 다시 묻는다). */
+  lineId?: string;
+  from?: string;
+  planned?: boolean;
+  to?: string;
+  /** `즉시 교환 · 헬멧 1개`(사이즈를 고르기 전에는 막힘). */
+  primary: PrimaryLabel;
+  command?: ConfirmCommand;
+}
+
+// ── 리프트권(features-1 §8-2, 머리줄 메뉴 `리프트권`) ─────────────────────────────
+
+/** 리프트권 화면의 색인 탭: 현황(그 영업일) · 미반납(모든 날) · 분실. */
+export type TicketTabKey = 'status' | 'unreturned' | 'lost';
+export const TICKET_TAB_KEYS: readonly TicketTabKey[] = ['status', 'unreturned', 'lost'];
+
+/** 차량 예비권 한 권종의 수(예비권 적재 · 입고). */
+export interface SpareUnits {
+  productKey: string;
+  quantity: number;
+}
+
+export interface TicketBoardParams {
+  /** 현황의 영업일(없으면 서버의 영업일). 미반납 · 분실 탭은 날을 가리지 않는다. */
+  date?: BusinessDate;
+  tab?: TicketTabKey;
+}
+
+/** 현황 표 한 줄(권종마다, 끝 줄은 합계): 지급(손님에게 건넴) · 미반납(아직 손님에게) · 반납(돌아온 카드, 다시 지급하지 않음) · 분실. */
+export interface TicketStatusRow {
+  key: string;
+  /** `야간권` · `합계`. */
+  label: string;
+  issued: number;
+  out: number;
+  returned: number;
+  lost: number;
+  /** 세는 말(`매`). */
+  unit: string;
+  total?: boolean;
+}
+
+/** 현황 탭 오른쪽의 차량 칸: 이름 · 예비권 재고 · `예비권 적재` · `예비권 입고`. */
+export interface TicketVehicleBlock {
+  vehicleId: string;
+  /** `1호 차량`. */
+  label: string;
+  /** `예비권 재고 야간권 6매` · `예비권 재고 없음`. */
+  stock: string;
+  load: { label: string; enabled: boolean; reason?: string };
+  unload: { label: string; enabled: boolean; reason?: string };
+}
+
+/** 미반납 · 분실 탭의 한 줄(팀마다). 줄을 누르면 그 접수증. */
+export interface TicketRow {
+  key: string;
+  orderId: string;
+  /** `최하은 · 0026`. */
+  team: string;
+  teamName: string;
+  /** 권 조각(`야간권 1매`) · 반납 일정(`반납 22:10 · 만선 티롤 앞`, 늦으면 빨강) · 분실한 날(`분실 12/26`). 좁으면 뒤 조각부터 빠진다. */
+  parts: FitPart[];
+  /** 늦은 미반납(줄 앞 늦음 막대 · 반납 일정 조각 빨강). 서버가 지금 시각으로 정했다. */
+  late: boolean;
+  /** 줄의 버튼(미반납: `분실 처리` · `전화`, 분실: `분실 회수`). */
+  actions: { key: 'loss' | 'found' | 'call'; label: string; enabled: boolean; reason?: string }[];
+}
+
+export interface TicketBoardView extends ReadModelHead {
+  date: BusinessDate;
+  /** `12월 26일 (토) 리프트권`. */
+  title: string;
+  tab: TicketTabKey;
+  /** 탭(`현황` · `미반납` · `분실`)과 수(미반납 · 분실 탭만). */
+  tabs: { key: TicketTabKey; label: string; count?: number }[];
+  /** 현황 표 머리(`권종` · `지급` · `미반납` · `반납` · `분실`). */
+  columns: { key: 'label' | 'issued' | 'out' | 'returned' | 'lost'; label: string }[];
+  /** 현황 표(권종마다 + 합계). 현황 탭이 아니면 빈 목록. */
+  status: TicketStatusRow[];
+  /** 현황 탭의 차량 칸(쓰는 차량마다). */
+  vehicles: TicketVehicleBlock[];
+  /** 미반납 · 분실 탭의 줄. */
+  rows: TicketRow[];
+  /** 줄이 없는 탭의 한 줄(`미반납 없음` · `분실 없음`). */
+  empty?: string;
+}
+
+/** 분실 처리 · 분실 회수 창(줄마다 −/+, 처음 값은 모두). */
+export interface TicketLossSheetParams {
+  orderId: string;
+  direction: 'loss' | 'found';
+  picked?: LineUnits[];
+}
+
+export interface TicketLossSheetView extends ReadModelHead {
+  /** `분실 처리 · 최하은 팀` · `분실 회수 · 최하은 팀`. */
+  title: string;
+  direction: 'loss' | 'found';
+  /** 권 줄마다 수량 칸(반납 창의 수량 칸과 같은 모양). */
+  lines: ReturnPieceLine[];
+  picked: LineUnits[];
+  /** 창의 줄(`청구 없음`, 수거가 남았으면 `22:10 만선 티롤 앞 수거 취소`). */
+  notes: RichText[];
+  /** 막힌 까닭(`분실 대상 없음`). */
+  notice?: string;
+  /** `분실 처리 · 야간권 1매` · `분실 회수 · 야간권 1매`. */
+  primary: PrimaryLabel;
+  command?: ConfirmCommand;
+}
+
+/** 예비권 적재 · 입고 창(권종마다 −/+, 처음 값 0). */
+export interface SpareSheetParams {
+  vehicleId: string;
+  direction: 'load' | 'unload';
+  picked?: SpareUnits[];
+}
+
+export interface SpareSheetView extends ReadModelHead {
+  /** `예비권 적재 · 1호 차량` · `예비권 입고 · 1호 차량`. */
+  title: string;
+  direction: 'load' | 'unload';
+  /** 권종마다 수량 칸(lineId = 상품 key, 둘째 줄 `차량 재고 6매`). */
+  lines: ReturnPieceLine[];
+  picked: SpareUnits[];
+  /** 요약(`1호 차량 예비권 재고 6매 → 12매`). */
+  summary: RichText;
+  /** 막힌 까닭(`입고 대상 없음`). */
+  notice?: string;
+  /** `예비권 적재 · 야간권 6매` · `예비권 입고 · 야간권 2매`. */
+  primary: PrimaryLabel;
+  command?: ConfirmCommand;
+}
+
+/** 전화 창(features-1 §8-4): 온전한 번호는 이 조회로만 받는다(서버가 개인정보 열람 기록을 남긴다). */
+export interface PhoneRevealParams {
+  orderId: string;
+}
+
+export interface PhoneRevealView {
+  /** `전화 · 최하은 팀`. */
+  title: string;
+  /** `010-0000-0026`. 없으면 빈 글(`전화번호 없음`). */
+  number: string;
 }
 
 // ── V5 일괄 수납 · 여러 팀(ui 6-7) ───────────────────────────────────────
@@ -596,6 +938,8 @@ export interface CarryItem {
   orderId?: string;
   /** 여러 팀이면 오늘 장부의 그 탭(`unpaid` · `return`, 화면 설정의 tab_key). */
   tabKey?: string;
+  /** 리프트권 화면의 탭(`리프트권 미반납 · 1매 · 지연` → 미반납 탭, features-1 §8-2). 있으면 접수증 · 장부 대신 그 탭. */
+  ticketTab?: TicketTabKey;
 }
 
 /** 열린 점검 판(차량 현금 점검 · 돈통 점검 · 재점검, spec 3-7): 예상 · 친 금액의 차액 · 사유 · 판의 주 버튼 · 보낼 것. */
@@ -636,6 +980,11 @@ export interface ClosingSheetView extends ReadModelHead {
   check?: ClosingCheckView;
   /** 막힘 한 줄(`1호 차량 · 전송 대기 있음`). */
   blocked?: string;
+  /**
+   * 막는 단계(features-1 §9-1, van_unsynced): 막혔을 때 주 버튼 `마감`이 여는 창 안의 한 줄 `1호 차량 기록 2건 전송 대기 · 마감 전 전송 필요`와
+   * `재확인`(주 버튼, 다시 묻기) · `닫기`. 막히지 않았으면 없다.
+   */
+  step?: ReviewStepView;
   /** 마감 뒤 한 줄(`12월 26일 마감 완료`). */
   closed?: string;
   /**
@@ -795,15 +1144,26 @@ export interface ShopRulesParams {
  * 눌리지 않는다(금액은 원, 시각은 하루의 분 — 영업일 기준 시각 00:00 ~ 11:59).
  */
 export interface RuleInput {
-  /** 넣은 값의 바꿈 key(RuleChange.key). */
+  /** 넣은 값의 바꿈 key(RuleChange.key). 매장 설정의 다른 탭(shopSettings)은 op가 있고 key는 그 줄의 key다. */
   key: string;
-  mode: 'amount' | 'time';
-  /** 숫자판 제목(이름 · 지금 값: `리프트권 보증금 · 1매 5,000원`, `영업일 기준 시각 · 06:00`). */
+  /**
+   * 금액 · 시각(운영 규칙), 매장 설정의 다른 탭은 글자(화면 키보드, maxLength) · 전화(숫자판 phone) · 분(`60분`) · 비율(`10%`)도 쓴다.
+   */
+  mode: 'amount' | 'time' | 'text' | 'phone' | 'minutes' | 'percent';
+  /** 숫자판 · 키보드 제목(이름 · 지금 값: `리프트권 보증금 · 1매 5,000원`, `영업일 기준 시각 · 06:00`). */
   title: string;
   min: number;
   max: number;
   /** 숫자판 표시 칸 아래 한 줄(`00:00 ~ 11:59`). */
   note?: string;
+  /** 금액의 단위(10원 단위면 10): 나누어떨어지지 않으면 `입력`이 눌리지 않는다. */
+  step?: number;
+  /** 글자(text)의 처음 값과 한도(글자 수). */
+  value?: string;
+  maxLength?: number;
+  /** 매장 설정(shopSettings): 넣은 값을 채울 초안 한 건(op)과 그 칸(field, 점으로 이은 자리 'value.minutes'). */
+  op?: SettingsOp;
+  field?: string;
 }
 
 /** 카드 안의 줄 하나(이름표 + 고르기 버튼, 끝에 값 버튼 `1매 5,000원 ›`). 이름표가 없는 줄은 버튼이 카드 폭을 채운다. */
@@ -812,12 +1172,19 @@ export interface RuleRow {
   key: string;
   label?: string;
   options: ChoiceOption[];
-  /** 값 버튼(고르기가 아니라 남색이 되지 않는다, 글 뒤의 '›'는 부품이 그린다): 누르면 숫자판. */
-  value?: { label: string; input: RuleInput };
+  /**
+   * 값 버튼(고르기가 아니라 남색이 되지 않는다, 글 뒤의 '›'는 부품이 그린다): 누르면 숫자판. enabled false는 읽기만 하는 사람(권한 없음): 값은 보이고
+   * 눌리지 않는다.
+   */
+  value?: { label: string; input: RuleInput; enabled?: false };
   /** 고르기 중 숫자판을 여는 버튼(`직접 입력`): 버튼 key → 숫자판. */
   inputs?: Record<string, RuleInput>;
   /** 고르기 버튼이 보낼 값(버튼 key → RuleChange.value, 열의 형: `사용` → 1). 없으면 버튼 key. */
   values?: Record<string, RuleChange['value']>;
+  /** 매장 설정(shopSettings): 고르기 버튼이 초안에 넣을 한 건(버튼 key → op). */
+  ops?: Record<string, SettingsOp>;
+  /** 줄 끝의 가는 버튼(`운영 규칙 ›`): 누르면 그 화면으로. */
+  link?: { label: string; to: SettingsLink };
 }
 
 /** 운영 규칙 카드 하나(규칙 행마다 한 장: 반납 정책을 고르는 품목 종류마다 `○○ 반납`, 보증금 규칙마다 `○○ 보증금`). */
@@ -834,14 +1201,23 @@ export interface RuleCard {
    * 조각의 tone grey는 옅은 먹.
    */
   notes: RichText[];
+  /**
+   * 매장 설정의 목록(구역의 장소 · 반납 타임 · 요금 · 할인 · 차량 · 직원): 누르는 칸의 격자(칸 수는 화면이 잰 폭으로, 줄 52 · 사이 8).
+   * 끝 칸은 더하기(`장소 추가`). 카드가 쪽보다 길면 화면이 목록 줄을 나눠 다음 카드 `{title} (계속)`로 잇는다(plan E26).
+   */
+  list?: SettingsList;
+  /** 이어지는 카드(화면이 나눈 뒤쪽): 제목 뒤 `(계속)`. */
+  continued?: boolean;
+  /** 더하기만 있는 카드(`구역 추가`): 버튼을 다른 더하기 칸(`장소 추가`)처럼 점선으로(2026-09-27 점검). */
+  adds?: true;
 }
 
-/** 저장 확인 창의 한 줄(전 → 후). */
+/** 저장 확인 창의 한 줄(전 → 후). 더하기 · 숨김처럼 전이 없는 줄은 before가 없다(`장소 추가 · 설천 매표소`). */
 export interface RuleChangeLine {
   key: string;
   /** `리프트권 반납`, `리프트권 보증금 · 입금 시점`. */
   label: string;
-  before: string;
+  before?: string;
   after: string;
 }
 
@@ -859,4 +1235,94 @@ export interface ShopRulesView extends ReadModelHead {
   command?: ConfirmCommand;
   /** 저장이 거절될 까닭(`변경 불가 · 06:00 이후 가능`): 저장 확인 창이 보이고 주 버튼을 막는다. */
   rejection?: string;
+}
+
+// ── 관리 · 매장 설정의 다른 탭(매장 정보 · 장소 · 반납 타임 · 요금 · 할인 · 차량 · 직원, plan §4-4) ─────────────────────
+
+/** 운영 규칙 밖의 매장 설정 탭. */
+export const SETTINGS_TAB_KEYS = ['info', 'places', 'slots', 'pricing', 'fleet'] as const;
+export type SettingsTabKey = (typeof SETTINGS_TAB_KEYS)[number];
+
+/** 가는 곳(줄 끝 · 항목 판의 `운영 규칙 ›` · `수거 목록 ›`). */
+export type SettingsLink = 'rules' | 'collection';
+
+/**
+ * 값을 넣는 한 단계(항목 판의 동작 · 더하기가 차례로 연다): 글자(화면 키보드) · 숫자판 · 고르기 판. 넣은 값은 op의 field 자리에 채운다
+ * (`value.minutes`처럼 점으로 이은 자리). 고르기 판의 값은 그 선택지의 value.
+ */
+export type SettingsStep =
+  | { kind: 'input'; field: string; input: RuleInput }
+  | { kind: 'choose'; field: string; title: string; options: { key: string; label: string; secondLine?: string; value: SettingsValue }[] };
+
+/** 단계가 채우는 값(글 · 수 · 참거짓 · 없음 · 결제 칸 목록). */
+export type SettingsValue = string | number | boolean | null | string[];
+
+/** 누르면 하는 일: 초안에 한 건(단계가 있으면 값을 받은 뒤), 다른 판, 가기, 서버 일(비밀번호 재발급 · 기기 막기). */
+export type SettingsRun =
+  | { kind: 'op'; op: SettingsOp; steps?: SettingsStep[] }
+  | { kind: 'sheet'; sheet: SettingsSheet }
+  | { kind: 'go'; to: SettingsLink; vehicleId?: string }
+  | { kind: 'pin'; staffId: string; name: string }
+  | { kind: 'block'; deviceId: string; label: string };
+
+/** 판의 버튼 하나(누를 수 없으면 까닭 reason). */
+export interface SettingsAction {
+  key: string;
+  label: string;
+  secondLine?: string;
+  /** 지금 값(역할 · 차량 판의 지금 역할 · 차량): 고른 것처럼 남색으로 그리고 눌러도 바꿈이 없다. 막힌 것(점선)과 다르다(2026-09-27 점검). */
+  selected?: boolean;
+  enabled: boolean;
+  reason?: string;
+  run: SettingsRun;
+}
+
+/** 항목 판(고르기 판 모양): 제목, 사실 한 줄(`사용 종료 불가 · 미처리 수거 2건`), 버튼들. */
+export interface SettingsSheet {
+  title: string;
+  lines: string[];
+  actions: SettingsAction[];
+}
+
+/** 목록 카드의 누르는 칸 하나(이름 · 둘째 줄 `숨김` · `기본` · `1일 40,000원`). 옅게(muted)는 숨긴 · 사용 종료한 것. */
+export interface SettingsListItem {
+  key: string;
+  label: string;
+  tag?: string;
+  muted?: boolean;
+  /** 카드 자신의 칸(구역 카드의 `설천 · 구역`): 장소 칸과 다른 모양(옅은 음영)이라 장소로 읽히지 않는다(2026-09-27 점검). */
+  lead?: true;
+  /** 누르면: 판(항목 판) · 바로 입력(요금). */
+  run: SettingsRun;
+}
+
+export interface SettingsList {
+  items: SettingsListItem[];
+  /** 끝 칸의 더하기(`장소 추가`). */
+  add?: SettingsListItem;
+}
+
+export interface ShopSettingsParams {
+  tab: SettingsTabKey;
+  /** 아직 저장하지 않은 초안(차례대로 적용한다). 새 행은 ref, 그 행을 가리키는 곳은 'new:<ref>'. */
+  changes?: SettingsOp[];
+}
+
+/**
+ * 매장 설정의 한 탭(V8의 카드 모양): 카드 · 바뀐 곳(전 → 후) · 바닥줄 · 주 버튼 · 저장 명령. 차량 · 직원 탭은 목록 바꿈(registry.update)
+ * 뒤에 직원 바꿈(staff.set)을 잇는다(then). 초안의 한 건이 거절되면 refused(그 차례와 한 줄): 화면은 그 건부터 뺀다.
+ */
+export interface ShopSettingsView extends ReadModelHead {
+  tab: SettingsTabKey;
+  cards: RuleCard[];
+  changes: RuleChangeLine[];
+  footer: string;
+  saveTitle?: string;
+  unsavedTitle?: string;
+  primary: PrimaryLabel;
+  command?: ConfirmCommand;
+  then?: ConfirmStep[];
+  /** 저장이 막힌 까닭(`권한 없음 · 관리자 확인 필요`): 주 버튼이 막힌다. */
+  rejection?: string;
+  refused?: { at: number; message: string };
 }

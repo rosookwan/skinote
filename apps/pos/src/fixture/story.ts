@@ -11,7 +11,8 @@ import {
 } from '@skinote/contract';
 import {
   LATER, assetId, backCount, bucketOnVan, bucketOut, checkoutPlan, collectDepositStep, collectDone, deliverTaskId, depositDueAtIssue, depositOf, fieldDue,
-  findOrder, groupPayCommand, groupPayPlan, heldAmount, heldNumbers, heldUnits, isVehiclePickup, kstAt, numbered, onVanToDeliver, orderTasks, plannedLeft,
+  findOrder, groupPayCommand, groupPayPlan, heldAmount, heldNumbers, heldUnits, isCancelledOrder, isVehiclePickup, kstAt, liveQty, numbered, onVanToDeliver, orderTasks,
+  plannedLeft,
   routeTasks, selfDue, spareTickets, taskBucket, taskOrder, ticketQuote, walletLeft, type FxLine, type FxOrder, type FxState,
 } from '@skinote/domain';
 import { DEMO_DATE } from './demo.ts';
@@ -34,10 +35,10 @@ function envelope(state: FxState, eventId: string, n: number, command: ConfirmCo
   return draftToEnvelope(openCommandDraft(command, { epoch: state.epoch, rev: state.rev }, { requestId: storyRequestId(eventId, n), ...extra }));
 }
 
-/** 아직 지급하지 않은 줄 모두(번호로 세는 줄은 준비 번호가 있으면 그 번호로). */
+/** 아직 지급하지 않은 줄 모두(번호로 세는 줄은 준비 번호가 있으면 그 번호로). 취소한 수는 빼고(features-1 E24). */
 function issueLeft(o: FxOrder): { l: FxLine; qty: number; units: { lineId: string; quantity: number; assetIds?: string[] } }[] {
   return o.lines.flatMap((l) => {
-    const qty = l.qty - l.issued;
+    const qty = liveQty(l) - l.issued;
     if (qty <= 0) return [];
     const planned = numbered(l) ? plannedLeft(l).slice(0, qty) : [];
     return [{ l, qty, units: { lineId: l.id, quantity: qty, ...(planned.length === qty ? { assetIds: planned } : {}) } }];
@@ -169,7 +170,7 @@ function loadVan(state: FxState, eventId: string, orderId: string): AnyCommandEn
   const o = findOrder(state, orderId);
   if (!o || !isVehiclePickup(o)) return [];
   const lines = o.lines.flatMap((l) => {
-    const left = l.qty - Math.max(l.loaded, l.issued);
+    const left = liveQty(l) - Math.max(l.loaded, l.issued);
     return left > 0 ? [{ lineId: l.id, quantity: left }] : [];
   });
   return lines.length ? [envelope(state, eventId, 0, { type: 'stock.load', payload: { taskId: deliverTaskId(o), lines } })] : [];
@@ -189,7 +190,8 @@ function deliverAll(state: FxState, eventId: string, orderId: string): AnyComman
  */
 function addTicketAndPay(state: FxState, eventId: string, orderId: string, productKey: string, quantity: number, methodKey: string): AnyCommandEnvelope[] {
   const o = findOrder(state, orderId);
-  if (!o || !isVehiclePickup(o) || o.lines.some((l) => l.section === 'lift')) return [];
+  // 취소한 접수에는 권을 더하지 않는다(사람이 먼저 접수 취소, features-1 E24).
+  if (!o || !isVehiclePickup(o) || isCancelledOrder(o) || o.lines.some((l) => l.section === 'lift')) return [];
   const taskId = deliverTaskId(o);
   const found = spareTickets(state, o.pickup.vehicleId ?? 'v1').find((x) => x.productKey === productKey);
   if (!found || found.quantity < quantity) return [];

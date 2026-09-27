@@ -21,7 +21,12 @@ import { PRODUCTION_LINES } from '@skinote/domain';
  * @typedef {import('@skinote/contract').CommandType} CommandType
  * @typedef {import('@skinote/store').CommandScope} CommandScope
  * @typedef {import('./shops.js').QueryScope} QueryScope
- * @typedef {{ perm: string, driverPerm?: string | null, vehicle?: boolean, leaveUnpaid?: boolean }} CommandRule
+ * @typedef {{
+ *   perm: string, driverPerm?: string | null, vehicle?: boolean, leaveUnpaid?: boolean,
+ *   extraPerm?: (envelope: AnyCommandEnvelope) => string | null,
+ *   counterOnly?: (envelope: AnyCommandEnvelope) => boolean,
+ * }} CommandRule
+ *   counterOnly: 이 모양의 본문은 카운터 일이다(기사 세션은 FORBIDDEN_SCOPE): 차량 예비권 적재 · 입고(features-1 E21).
  * @typedef {{
  *   roleKey: string,
  *   deviceKind: import('@skinote/contract').DeviceKind,
@@ -34,14 +39,20 @@ import { PRODUCTION_LINES } from '@skinote/domain';
 export const COMMAND_PERMISSIONS = Object.freeze({
   'stock.issue': { perm: 'stock.move', vehicle: true },
   'stock.direct_return': { perm: 'stock.move', vehicle: true },
-  'stock.load': { perm: 'stock.move', vehicle: true },
+  // 예비권 적재(spares, features-1 E21)는 카운터만: 기사 세션은 FORBIDDEN_SCOPE.
+  'stock.load': { perm: 'stock.move', vehicle: true, counterOnly: envelope => envelope.type === 'stock.load' && 'spares' in envelope.payload },
   'stock.collect': { perm: 'stock.move', vehicle: true },
   'stock.deliver': { perm: 'stock.move', vehicle: true },
-  'stock.receive': { perm: 'stock.receive', vehicle: true },
+  // 예비권 입고(spares)는 카운터만(E21). 수거한 것의 매장 입고는 기사도.
+  'stock.receive': { perm: 'stock.receive', vehicle: true, counterOnly: envelope => envelope.type === 'stock.receive' && (envelope.payload.spares?.length ?? 0) > 0 },
   'payment.take': { perm: 'payment.take' },
   'payment_promise.set': { perm: 'payment.take', driverPerm: 'payment.collect_field', vehicle: true, leaveUnpaid: true },
   'promise.change': { perm: 'order.promise.change' },
-  'order.create': { perm: 'order.create' },
+  // 새 접수의 직접 입력 할인은 discount.manual도(features-1 E10). 한도 · 권한이 걸린 매장 할인은 도메인이 세션의 권한 · 한도로 본다.
+  'order.create': {
+    perm: 'order.create',
+    extraPerm: envelope => (envelope.type === 'order.create' && (envelope.payload.choices ?? []).some(c => c.manual !== undefined || c.discountKey === 'manual') ? 'discount.manual' : null),
+  },
   'deposit.take': { perm: 'deposit.take' },
   'deposit.return': { perm: 'deposit.return' },
   'field.collect': { perm: 'payment.collect_field', vehicle: true },
@@ -51,6 +62,33 @@ export const COMMAND_PERMISSIONS = Object.freeze({
   'cash.transfer_confirm': { perm: 'cash.transfer.confirm' },
   'closing.close': { perm: 'closing.close' },
   'setting.set': { perm: 'settings.manage' },
+  // 매장 목록 바꿈(features-1 §4-3): 값을 바꾸는 명령(price.set)은 요금표 게시 권한도.
+  'registry.update': {
+    perm: 'settings.manage',
+    extraPerm: envelope => (envelope.type === 'registry.update' && envelope.payload.changes.some(c => c.op === 'price.set') ? 'price_list.publish' : null),
+  },
+  'staff.set': { perm: 'staff.manage' },
+  // 할인 적용(features-1 §6-4): 직접 입력이면 discount.manual도. 환불은 payment.refund. 둘 다 기사 세션은 FORBIDDEN_SCOPE(vehicle 없음).
+  'discount.apply': {
+    perm: 'discount.apply',
+    extraPerm: envelope => (envelope.type === 'discount.apply' && typeof envelope.payload.choice === 'object' && envelope.payload.choice !== null && 'manual' in envelope.payload.choice ? 'discount.manual' : null),
+  },
+  'payment.refund': { perm: 'payment.refund' },
+  // 접수 취소 · 품목 취소 · 품목 추가(features-1 §5-3 · §5-5): 카운터 · 관리자. 기사 세션은 FORBIDDEN_SCOPE(vehicle 없음, 기사 역할에 order.add가
+  // 있어도 현장 리프트권 추가만).
+  // 미수 결제(apply_to_due)는 묶인 수납을 접수 전체로 옮긴다(payment_reallocations): 수납 이동 권한도(2026-09-27 점검).
+  'order.cancel': {
+    perm: 'order.cancel',
+    extraPerm: envelope => (envelope.type === 'order.cancel' && envelope.payload.decision === 'apply_to_due' ? 'payment.reallocate' : null),
+  },
+  'order.add': { perm: 'order.add' },
+  // 즉시 교환(features-1 §7-4, E14): 카운터 · 관리자(exchange.manage). 기사 세션은 FORBIDDEN_SCOPE(vehicle 없음, 업무 판에 교환이 없다).
+  'exchange.swap': { perm: 'exchange.manage' },
+  // 분실 처리 · 분실 회수(features-1 §8-2, E20): 카운터 · 관리자(stock.correct `처리 취소`, §14 Q4). 기사 세션은 FORBIDDEN_SCOPE(vehicle 없음).
+  'stock.write_off': { perm: 'stock.correct' },
+  'asset.found': { perm: 'stock.correct' },
+  // 확인 필요 처리(features-1 §9-2): 카운터 · 관리자(review.resolve). 기사 세션은 FORBIDDEN_SCOPE(vehicle 없음, 확인 필요 목록은 카운터 화면).
+  'review.resolve': { perm: 'review.resolve' },
   'route.move': { perm: 'route.reorder', vehicle: true },
   'route.reset': { perm: 'route.reorder', vehicle: true },
   'task.pin': { perm: 'task.pin' },
@@ -76,12 +114,13 @@ export function commandGuard(who, permissions, envelope, log = () => {}) {
   const driver = isDriverSession(who);
   return scope => {
     const need = driver && rule.driverPerm !== undefined ? rule.driverPerm : rule.perm;
-    if (need !== null && !permissions.has(need)) {
+    const extra = rule.extraPerm?.(envelope) ?? null;
+    if ((need !== null && !permissions.has(need)) || (extra !== null && !permissions.has(extra))) {
       log(`명령 거절 FORBIDDEN ${envelope.type}`);
       return refusal('FORBIDDEN', PRODUCTION_LINES.forbidden);
     }
     if (!driver) return null;
-    if (!rule.vehicle) {
+    if (!rule.vehicle || rule.counterOnly?.(envelope)) {
       log(`명령 거절 FORBIDDEN_SCOPE ${envelope.type}`);
       return refusal('FORBIDDEN_SCOPE', PRODUCTION_LINES.forbiddenScope);
     }
@@ -121,6 +160,17 @@ export const DRIVER_QUERY_RULES = Object.freeze({
   returnSheet: 'deny',
   closingSheet: 'deny',
   shopRules: 'deny',
+  shopSettings: 'deny',
+  discountSheet: 'deny',
+  cancelSheet: 'deny',
+  exchangeSheet: 'deny',
+  ticketBoard: 'deny',
+  ticketLossSheet: 'deny',
+  spareSheet: 'deny',
+  // 전화 창(features-1 §8-4): 자기 차량의 업무(배달 · 수거)가 있는 접수만(도메인 queryScope).
+  phoneReveal: 'task_scope',
+  // 초과 수납의 환불 창(features-1 §9-1): 카운터 화면.
+  refundSheet: 'deny',
 });
 
 /**

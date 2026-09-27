@@ -1,7 +1,7 @@
 // ui 4-3 · 6-2 · 6-3의 높이 계산을 확인한다(숫자는 문서의 표 그대로).
 import { describe, expect, it } from 'vitest';
 import {
-  initialPage, listAreaHeight, nowLineIndex, pageOfNowLine, paginate, rowsPerPage, slipFixedHeight, slipItemRows,
+  initialPage, listAreaHeight, nowLineIndex, pageOfNowLine, paginate, printPages, rowsPerPage, slipFixedHeight, slipItemRows,
   type FlowRow, type Page,
 } from '../src/index.ts';
 
@@ -113,5 +113,21 @@ describe('접수증 품목 표(ui 6-2)', () => {
     expect(slipItemRows(600, SLIP, 52)).toBe(4);
     expect(slipItemRows(529, SLIP, 52)).toBe(3);
     expect(slipItemRows(569, SLIP, 52)).toBe(4);
+  });
+});
+
+describe('A4 인쇄 쪽(printPages, features-1 E16)', () => {
+  it('28px 줄을 한 쪽 높이에 온전히 담고, 둘째 쪽부터 `(계속)`', () => {
+    const pages = printPages(Array.from({ length: 70 }, () => 28), 900, 840);
+    expect(pages.map((p) => [p.from, p.to, p.continued])).toEqual([[0, 30, false], [30, 62, true], [62, 70, true]]);
+    for (const p of pages) expect((p.to - p.from) * 28).toBeLessThanOrEqual(p.from === 0 ? 840 : 900);
+  });
+  it('반쯤 잘린 줄이 없다: 쪽을 넘는 높은 줄(두 줄 줄 48)은 다음 쪽으로', () => {
+    const pages = printPages([28, 28, 48, 28], 90);
+    expect(pages.map((p) => [p.from, p.to])).toEqual([[0, 2], [2, 4]]);
+    expect(printPages([200, 28], 90).map((p) => [p.from, p.to])).toEqual([[0, 1], [1, 2]]);
+  });
+  it('줄이 없으면 빈 쪽 하나', () => {
+    expect(printPages([], 900)).toEqual([{ from: 0, to: 0, continued: false }]);
   });
 });

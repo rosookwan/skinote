@@ -18,5 +18,6 @@ export * from './load.ts';
 export * from './devices.ts';
 export * from './journal.ts';
 export * from './write.ts';
+export * from './pii-log.ts';
 export * from './shop-store.ts';
 export * from './control/index.ts';

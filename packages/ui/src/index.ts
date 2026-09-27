@@ -45,3 +45,4 @@ export * from './components/SelectCell.tsx';
 export * from './components/MethodGrid.tsx';
 export * from './components/BigButton.tsx';
 export * from './components/RuleCard.tsx';
+export * from './components/ReviewStep.tsx';

@@ -4,13 +4,14 @@
 // 제 폭으로 줄 끝에 둔다(누르면 숫자판: 고르기가 아니라 남색이 되지 않는다). 줄이 좁으면 ChoiceRow가 짧은 이름(`차액 청구`) → `더 보기`로 줄인다.
 // 무엇이 골라졌는지 · 어떤 줄이 보이는지는 읽기 모델이 정했다(부품은 그리기만). 카드 높이는 ruleCardHeight가 같은 값으로 센다: 화면이 카드를
 // 통째로 칸 · 쪽에 나눈다(자르지 않음, ui 4-3).
-import type { ChoiceOption, RuleCard as RuleCardView, RuleRow } from '@skinote/contract';
+import type { ChoiceOption, RuleCard as RuleCardView, RuleRow, SettingsListItem } from '@skinote/contract';
 import type { DeviceProfile } from '../device-profile.ts';
 import { t } from '../strings.ko-KR.ts';
 import { ChoiceRow } from './Choice.tsx';
 import { FormRow } from './FormRow.tsx';
 import { RichLine } from './RichLine.tsx';
 import { Tag } from './Tag.tsx';
+import type { CSSProperties } from 'react';
 
 /** 제목 줄 · 안내 줄의 높이(글자 크기의 배수). components.css의 .sn-rule-title · .sn-rule-note와 같은 값. */
 export const RULE_TITLE_LINE = 1.75;
@@ -20,15 +21,23 @@ export const RULE_NOTE_LINE = 1.375;
  * 카드 높이(px): 안 여백 · 테두리 + 제목 줄 + 버튼 줄(사이 8) + 안내 줄. 한 줄 카드는 버튼 줄 하나 높이. 부품의 CSS와 같은 값을
  * DeviceProfile로 센다(화면의 쪽 나누기가 그리기 전에 쓴다).
  */
-export function ruleCardHeight(card: Pick<RuleCardView, 'inline' | 'rows' | 'notes'>, profile: Pick<DeviceProfile, 'minFontPx' | 'minTargetPx' | 'space' | 'line'>): number {
+export function ruleCardHeight(
+  card: Pick<RuleCardView, 'inline' | 'rows' | 'notes' | 'list'>, profile: Pick<DeviceProfile, 'minFontPx' | 'minTargetPx' | 'space' | 'line'>, listColumns = 1,
+): number {
   const frame = 2 * profile.space.m + 2 * profile.line.strong;
   if (card.inline) return frame + Math.max(profile.minTargetPx, Math.ceil(profile.minFontPx * RULE_TITLE_LINE));
   const title = Math.ceil(profile.minFontPx * RULE_TITLE_LINE);
   const rows = card.rows.length ? card.rows.length * profile.minTargetPx + (card.rows.length - 1) * profile.space.s : 0;
+  const cells = ruleListCells(card.list).length;
+  const listRows = cells ? Math.ceil(cells / Math.max(1, listColumns)) : 0;
+  const list = listRows ? listRows * profile.minTargetPx + (listRows - 1) * profile.space.s : 0;
   const notes = card.notes.length ? card.notes.length * Math.ceil(profile.minFontPx * RULE_NOTE_LINE) : 0;
-  const blocks = [title, rows, notes].filter((h) => h > 0);
+  const blocks = [title, rows, list, notes].filter((h) => h > 0);
   return frame + blocks.reduce((sum, h) => sum + h, 0) + (blocks.length - 1) * profile.space.xs;
 }
+
+/** 목록 카드의 누르는 칸(항목들 뒤에 더하기). */
+export const ruleListCells = (list: RuleCardView['list']): SettingsListItem[] => (list ? [...list.items, ...(list.add ? [list.add] : [])] : []);
 
 export interface RuleCardProps {
   card: RuleCardView;
@@ -36,19 +45,46 @@ export interface RuleCardProps {
   onOption: (row: RuleRow, option: ChoiceOption) => void;
   /** 값 버튼(`1매 5,000원 ›`): 숫자판을 연다. */
   onValue: (row: RuleRow) => void;
+  /** 가는 버튼(`운영 규칙 ›`, 매장 설정의 다른 탭). */
+  onLink?: (row: RuleRow) => void;
+  /** 목록 칸(매장 설정의 다른 탭): 누르면 항목 판 · 더하기. */
+  onItem?: (item: SettingsListItem) => void;
+  /** 목록의 한 줄 칸 수(화면이 잰 카드 폭과 글 폭으로). */
+  listColumns?: number;
 }
 
-export function RuleCard({ card, onOption, onValue }: RuleCardProps) {
+export function RuleCard({ card, onOption, onValue, onLink, onItem, listColumns = 1 }: RuleCardProps) {
   const title = (
     <div className="sn-rule-title">
-      <h2>{card.title}</h2>
+      <h2>{card.continued ? card.title + ' ' + t('continued') : card.title}</h2>
       {card.changed ? <Tag text={t('changed')} /> : null}
     </div>
   );
+  const cells = ruleListCells(card.list);
+  const list = cells.length ? (
+    <div className="sn-rule-list" role="group" aria-label={card.title} style={{ '--rule-list-cols': listColumns } as CSSProperties}>
+      {cells.map((item) => (
+        <button
+          key={item.key}
+          type="button"
+          className={'sn-button sn-rule-item' + (item.muted ? ' is-muted' : '') + (item === card.list?.add ? ' is-add' : '') + (item.lead ? ' is-lead' : '')}
+          aria-label={item.tag ? item.label + ' · ' + item.tag : item.label}
+          onClick={() => onItem?.(item)}
+        >
+          <span className="sn-rule-item-label">{item.label}</span>
+          {item.tag ? <small className="sn-rule-item-tag">{item.tag}</small> : null}
+        </button>
+      ))}
+    </div>
+  ) : null;
   const row = (r: RuleRow) => {
     const value = r.value ? (
-      <button type="button" className="sn-button sn-rule-value" onClick={() => onValue(r)}>
-        {r.value.label}{' '}<span className="sn-choice-more">›</span>
+      <button type="button" className="sn-button sn-rule-value" disabled={r.value.enabled === false} onClick={() => onValue(r)}>
+        {r.value.label}{r.value.enabled === false ? null : <>{' '}<span className="sn-choice-more">›</span></>}
+      </button>
+    ) : r.link ? (
+      <button type="button" className="sn-button sn-rule-value" onClick={() => onLink?.(r)}>
+        {r.link.label}{' '}<span className="sn-choice-more">›</span>
       </button>
     ) : null;
     const choices = (
@@ -64,9 +100,10 @@ export function RuleCard({ card, onOption, onValue }: RuleCardProps) {
       : <div key={r.key} className="sn-rule-row">{choices}</div>;
   };
   return (
-    <section className={'sn-rule-card' + (card.inline ? ' is-inline' : '')} aria-label={card.title}>
+    <section className={'sn-rule-card' + (card.inline ? ' is-inline' : '') + (card.adds ? ' is-adds' : '')} aria-label={card.title}>
       {title}
       {card.rows.length ? <div className="sn-rule-rows">{card.rows.map(row)}</div> : null}
+      {list}
       {card.notes.length ? (
         <div className="sn-rule-notes">
           {card.notes.map((note, i) => <RichLine key={i} className="sn-rule-note" runs={note} />)}

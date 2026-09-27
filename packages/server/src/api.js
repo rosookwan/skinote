@@ -8,7 +8,7 @@
 // 본문은 @skinote/contract의 엄격한 검사(parseEnvelope · parseQuery)를 지난 것만 저장소 창구(ShopPort)로 간다. 행위자는 세션의 직원 ·
 // 기기이고, 권한 확인(permissions.js)은 저장소가 명령 트랜잭션 안에서 멱등 확인 뒤에 부른다.
 
-import { DomainError, parseEnvelope, parseQuery } from '@skinote/contract';
+import { DomainError, isDriverDevice, parseEnvelope, parseQuery } from '@skinote/contract';
 import { HttpError, sendJson } from './http.js';
 import { commandGuard, queryAccess } from './permissions.js';
 
@@ -26,9 +26,45 @@ function shopProblem(error) {
 }
 
 /**
- * @param {{ hub: Hub, nowMs: () => number, log?: (line: string) => void }} deps
+ * 이 조회가 남길 개인정보 열람 한 줄(없으면 null): 전화 창의 온전한 번호(phone_reveal, 접수), 인쇄 판 수거 목록(list_print, 목록 · 줄 수), 인쇄 판
+ * 대여 접수증(list_print, 접수). 그 밖의 읽기 모델에는 온전한 번호가 없다(가린 번호, domain maskPhone).
+ * @param {import('@skinote/contract').WireQuery} q @param {unknown} result
+ * @returns {{ action: 'phone_reveal' | 'list_print', subjectType: 'order' | 'list', subjectId?: string, itemCount?: number } | null}
  */
-export function createApi({ hub, nowMs, log = () => {} }) {
+export function piiOf(q, result) {
+  if (q.name === 'phoneReveal') return { action: 'phone_reveal', subjectType: 'order', subjectId: q.params.orderId };
+  // 인쇄 판 대여 접수증(A4, 손님 이름 · 가린 번호): 인쇄마다 한 줄(2026-09-27 점검: 인쇄한 접수증은 적지 않았다).
+  if (q.name === 'orderSlip' && q.params.deviceClass === 'print') return { action: 'list_print', subjectType: 'order', subjectId: q.params.orderId };
+  if (q.name === 'ledgerView' && q.viewKey === 'collection_list' && q.params.deviceClass === 'print') {
+    const rows = /** @type {{ rows?: unknown[], titleValues?: { date?: string } }} */ (result ?? {});
+    return { action: 'list_print', subjectType: 'list', subjectId: q.params.date ?? rows.titleValues?.date ?? 'today', itemCount: Math.max(1, rows.rows?.length ?? 0) };
+  }
+  return null;
+}
+
+/**
+ * 세션의 권한 역할: 기사 기기의 세션은 역할과 관계없이 기사 역할의 권한이다(임시 차량을 맡은 카운터 · 관리자, features-1 E13b). 카운터 기기는
+ * 직원의 역할.
+ * @param {SessionContext} ctx
+ */
+export const permissionRole = ctx => (isDriverDevice(ctx.device.kind) ? 'driver' : ctx.staff.roleKey);
+
+/**
+ * 읽기 모델에 넘기는 보는 사람(역할 · 권한 key · 직원 id, features-1 E11). 읽기 모델은 막힌 것을 회색 · 까닭으로 그리고, 서버의 권한 확인이 다시 막는다.
+ * @param {SessionContext} ctx
+ */
+export function viewerOf(ctx) {
+  const roleKey = permissionRole(ctx);
+  return { roleKey, permissions: [...ctx.port.permissions(roleKey).keys()], staffId: ctx.staff.id, limits: ctx.port.roleLimits(roleKey) };
+}
+
+/**
+ * @param {{
+ *   hub: Hub, nowMs: () => number, log?: (line: string) => void,
+ *   afterCommand?: (ctx: SessionContext, envelope: import('@skinote/contract').AnyCommandEnvelope, outcome: import('@skinote/contract').CommandOutcome) => void,
+ * }} deps afterCommand = 적용한 명령 뒤의 일(직원 바꿈 뒤 그 사람의 세션 · 알림 연결, features-1 §4-3)
+ */
+export function createApi({ hub, nowMs, log = () => {}, afterCommand }) {
   /** @param {() => unknown} read */
   const guarded = read => {
     try {
@@ -56,7 +92,8 @@ export function createApi({ hub, nowMs, log = () => {} }) {
     },
 
     query(req, res, { body, ctx }) {
-      const { port, who } = /** @type {SessionContext} */ (ctx);
+      const session = /** @type {SessionContext} */ (ctx);
+      const { port, who } = session;
       const now = nowMs();
       const parsed = parseQuery(body);
       if (!parsed.ok) throw new HttpError(400, parsed.code, { problems: parsed.problems.slice(0, 5) });
@@ -67,8 +104,11 @@ export function createApi({ hub, nowMs, log = () => {} }) {
       const result = guarded(() => {
         if (q.name === 'config') return port.config(now);
         if (q.name === 'ledgerView') return port.ledgerView(q.viewKey, q.params, now);
-        return port.query(q.name, q.params, now);
+        return port.query(q.name, q.params, now, { viewer: viewerOf(session), deviceId: session.device.id });
       });
+      // 개인정보 열람 기록(features-1 E16 · E17, deployment 10-4): 전화 창의 온전한 번호 · 수거 목록 인쇄. 기록이 실패하면 보이지 않는다(500).
+      const pii = piiOf(q, result);
+      if (pii) port.logPii({ actorKey: 'staff:' + session.staff.id, deviceId: session.device.id, now, ...pii });
       sendJson(req, res, 200, result);
     },
 
@@ -79,11 +119,22 @@ export function createApi({ hub, nowMs, log = () => {} }) {
       const parsed = parseEnvelope(body, { maxQuantity: limits.maxQuantity });
       if (!parsed.ok) throw new HttpError(400, parsed.code, { problems: parsed.problems.slice(0, 5) });
       const envelope = parsed.envelope;
-      const guard = commandGuard(who, port.permissions(staff.roleKey), envelope, log);
+      const guard = commandGuard(who, port.permissions(permissionRole(/** @type {SessionContext} */ (ctx))), envelope, log);
+      // 도메인이 다시 보는 권한 · 한도(할인의 권한 · 직접 입력 한도, features-1 E10): 세션 역할의 것.
+      const viewer = viewerOf(/** @type {SessionContext} */ (ctx));
+      // 기록(events.actor_role_key)은 쓴 권한의 역할(기사 기기의 관리자는 기사 권한으로 한다, E13b · 2026-09-27 점검): 누가 무엇을 할 수 있었는지가 맞게.
       const actor = {
-        key: 'staff:' + staff.id, name: staff.name, deviceId: device.id, roleKey: staff.roleKey, ...(who.vehicleId ? { vehicleId: who.vehicleId } : {}),
+        key: 'staff:' + staff.id, name: staff.name, deviceId: device.id, roleKey: viewer.roleKey, ...(who.vehicleId ? { vehicleId: who.vehicleId } : {}),
+        viewer: { permissions: viewer.permissions, limits: viewer.limits },
       };
-      const outcome = guarded(() => port.command(envelope, actor, now, guard));
+      const outcome = /** @type {import('@skinote/contract').CommandOutcome} */ (guarded(() => port.command(envelope, actor, now, guard)));
+      if (outcome.outcome === 'applied' && afterCommand) {
+        try {
+          afterCommand(/** @type {SessionContext} */ (ctx), envelope, outcome);
+        } catch (error) {
+          log(`명령 뒤의 일 실패 ${envelope.type} ${error instanceof Error ? error.name : 'Error'}`);
+        }
+      }
       sendJson(req, res, 200, outcome);
     },
 

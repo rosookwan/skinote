@@ -16,12 +16,16 @@ import type { DomainLines, FxDeposit, FxLine, FxMethodKey, FxOrder, FxPromise, S
 import { bucketOut, currentReturn, findTask, taskBucket, taskOrder, type FxTask } from './promises.ts';
 import { conflict, done, nothing, rejected, unsupported, type Result } from './result.ts';
 import {
-  backCount, bizDay, collectDone, collectLeft, deliverTaskId, fillLines, findOrder, isDeliverTaskId, isVehiclePickup, moneyLateAt, orderIdOfTask, ownDue,
-  listTasks, pendingIssue, placeLabel, promisedPayer, routeTasks, selfDue, selfLines, vehicleLabel, visitReasons,
+  backCount, bizDay, collectDone, collectLeft, deliverTaskId, fillLines, findOrder, isDeliverTaskId, isVehiclePickup, liveQty, moneyLateAt, onVanToDeliver,
+  orderIdOfTask, ownDue, listTasks, pendingIssue, placeLabel, promisedPayer, returnQty, routeTasks, selfDue, selfLines, vehicleLabel, visitReasons,
 } from './rules.ts';
+
+export { onVanToDeliver } from './rules.ts';
 import { DELIVER_WORD, driverLineStamp, figureOf, lineStamp } from './stamps.ts';
 import { bizHm, businessDateOf, dayWord, hm, iso, onBizDay, when, shopCutoff } from './time.ts';
+import { maskPhone } from './order-draft.ts';
 import type { ViewContext } from './views.ts';
+import { heldVariants, swappedLabel, variantRange } from './variants.ts';
 
 const won = (n: number) => Math.round(n).toLocaleString('ko-KR') + '원';
 
@@ -37,8 +41,9 @@ export interface FxDeliverTask {
 /** 이 차량 · 영업일의 배달 업무(배달 시각 → 접수 번호 차례). */
 export function deliverTasks(state: ShopState, vehicleId: string, date: string): FxDeliverTask[] {
   const day = { date, cutoff: shopCutoff(state.settings) };
+  // 모두 취소해 건넬 것도 건넨 것도 없는 배달은 목록에서 빠진다(features-1 E7: 차에 남은 것은 차량 재고의 `접수 취소` 줄).
   return state.orders
-    .filter((o) => isVehiclePickup(o) && o.pickup.vehicleId === vehicleId && onBizDay(o.pickup.at, day))
+    .filter((o) => isVehiclePickup(o) && o.pickup.vehicleId === vehicleId && onBizDay(o.pickup.at, day) && o.lines.some((l) => liveQty(l) > 0 || l.issued > 0))
     .map((o) => ({ id: deliverTaskId(o), order: o, promise: o.pickup }))
     .sort((a, b) => a.promise.at - b.promise.at || a.order.receiptNo.localeCompare(b.order.receiptNo));
 }
@@ -51,10 +56,8 @@ export function findDeliverTask(state: ShopState, taskId: string): FxDeliverTask
 
 /** 배달이 끝났는지(모두 건넴). */
 export const deliverDone = (o: FxOrder) => !pendingIssue(o);
-/** 차에 실려 아직 건네지 않은 수. */
-export const onVanToDeliver = (l: FxLine) => Math.max(l.loaded, l.issued) - l.issued;
-/** 아직 싣지 않은 수. */
-const toLoad = (l: FxLine) => l.qty - Math.max(l.loaded, l.issued);
+/** 아직 싣지 않은 수(살아 있는 수까지). */
+const toLoad = (l: FxLine) => Math.max(0, liveQty(l) - Math.max(l.loaded, l.issued));
 
 /** 업무 판이 그리는 업무(배달 · 수거). view는 그 업무의 몫만 비춘 접수(수거는 taskOrder, 배달은 접수 그대로). */
 export type FxAnyTask =
@@ -210,8 +213,8 @@ function returnPlan(state: ShopState, o: FxOrder): string[] {
   const today = bizDay(state);
   const where = p.mode === 'store' ? '매장' : placeLabel(state.registry, p.placeId);
   const first = [dayWord(p.at, today.date, today.cutoff) + ' ' + bizHm(p.at, today.cutoff), where, ...(p.mode === 'vehicle' ? [vehicleLabel(state.registry, p.vehicleId)] : [])].join(' · ');
-  const tickets = o.lines.filter((l) => l.returnable && l.section === 'lift' && l.qty - backCount(l) > 0);
-  const units = tickets.reduce((n, l) => n + l.qty - backCount(l), 0);
+  const tickets = o.lines.filter((l) => l.returnable && l.section === 'lift' && returnQty(l) - backCount(l) > 0);
+  const units = tickets.reduce((n, l) => n + returnQty(l) - backCount(l), 0);
   if (units === 0) return [first];
   const rule = heldRule(state);
   const dep = rule ? depositOf(state, o.id, rule.key) : undefined;
@@ -240,7 +243,8 @@ export function taskSheet(ctx: ViewContext, params: TaskSheetParams): TaskSheetV
   const stampColumns: { key: string; label: string; step: StampStepRow | undefined; driver: boolean }[] = deliver
     ? [{ key: 'load', label: loadStep?.label ?? '', step: loadStep, driver: false }, { key: 'deliver', label: DELIVER_WORD, step: issueStep, driver: true }]
     : [{ key: 'collect', label: collectStep?.label ?? '', step: collectStep, driver: false }];
-  const shownLines = deliver ? x.lines : x.lines.filter((l) => l.returnable);
+  // 배달 판은 건넬 것 · 건넨 것이 있는 줄만(모두 취소한 줄은 빠진다).
+  const shownLines = deliver ? x.lines.filter((l) => liveQty(l) > 0 || l.issued > 0) : x.lines.filter((l) => l.returnable);
   const lines = shownLines.map((l) => {
     const cells: Record<string, LedgerCell> = {};
     for (const c of stampColumns) {
@@ -248,7 +252,9 @@ export function taskSheet(ctx: ViewContext, params: TaskSheetParams): TaskSheetV
       const cell = (c.driver ? driverLineStamp : lineStamp)(state.registry, x, l, c.step, all, today);
       if (cell) cells[c.key] = { renderer: 'stamp', stamp: pendingCell(cell, pending && c.key !== 'load') };
     }
-    return { lineId: l.id, label: l.label, qtyText: l.qty + (l.countWord ?? l.unit ?? '개'), cells };
+    // 즉시 교환한 줄은 지금 사이즈(배달은 건넬 것, 수거는 손님에게 있는 것: 기사가 찾을 사이즈, features-1 §7-1).
+    const label = swappedLabel(state.registry, l, deliver ? variantRange(l, l.issued, Math.max(0, liveQty(l) - l.issued)) : heldVariants(l)) ?? l.label;
+    return { lineId: l.id, label, qtyText: liveQty(l) + (l.countWord ?? l.unit ?? '개'), cells };
   });
 
   const finished = deliver ? deliverDone(o) : collectDone(x);
@@ -310,8 +316,9 @@ export function taskSheet(ctx: ViewContext, params: TaskSheetParams): TaskSheetV
     team: o.teamName + ' · ' + o.last4,
     teamName: o.teamName,
     last4: o.last4,
-    contact: [o.phone, o.party > 0 ? o.party + '명' : ''].filter(Boolean).join(' · '),
-    ...(o.phone ? { phone: o.phone } : {}),
+    // 가린 번호: 기사는 `전화`의 창(phoneReveal: 자기 차량 업무만, 열람 기록)으로 온전한 번호를 받아 건다(2026-09-27 점검, 잃어버린 휴대폰).
+    contact: [o.phone ? maskPhone(o.phone) : '', o.party > 0 ? o.party + '명' : ''].filter(Boolean).join(' · '),
+    ...(o.phone ? { phone: maskPhone(o.phone) } : {}),
     columns: [{ key: 'item', label: '품목' }, { key: 'qty', label: '수량' }, ...stampColumns.map((c) => ({ key: c.key, label: c.label }))],
     lines,
     ...(money ? { money } : {}),
@@ -502,7 +509,10 @@ export function fieldCollect(state: ShopState, envelope: CommandEnvelope<'field.
     if (amount > due) return rejected('초과 수납 · 받을 금액 ' + won(due));
   }
   const drawer = methodKey === 'cash' ? { drawerId: vanDrawer(vehicleOf(t)) } : {};
-  const lines = fillLines(t.order, selfLines(t.order), amount);
+  // 이 팀 줄에 묶는다. 보냄 대기로 온 돈이 받을 돈보다 많으면(초과 수납) 줄에 묶지 않고 접수 전체 돈으로 둔다: 줄 배분의 합 = 몫(저장소
+  // payment_allocations)이고, 넘친 몫은 확인 필요 `초과 수납`의 환불이 돌려준다.
+  const bound = fillLines(t.order, selfLines(t.order), amount);
+  const lines = bound.reduce((sum, x) => sum + x.amount, 0) === amount ? bound : [];
   state.paymentGroups.push({ id: envelope.requestId, purpose: 'driver_field', amount, methodKey, at: now, ...drawer });
   t.order.payments.push({ id: envelope.requestId + ':0', amount, methodKey, at: now, groupId: envelope.requestId, ...drawer, ...(lines.length ? { lines } : {}) });
   return done;

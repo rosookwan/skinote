@@ -1,14 +1,18 @@
 // 해시 경로(GitHub Pages의 /skinote/ 아래에서도, base './'로 어디에 올려도 돈다). 경로 모양은 sys_screens의 route와 같다
 // (/ledger/:date, /orders/:orderId, /orders/new, /collections/:date, /closing/:date, /driver/:date, /driver/tasks/:taskId, /manage).
 // #/ledger는 오늘 장부, #/collection/:date는 수거 목록의 줄임 주소(같은 화면). 화면 안의 하위 경로(sys_screens에 따로 없음):
-// #/orders/new/schedule 새 접수 ② 일정, #/orders/:orderId/pay 일괄 수납(접수증의 수납), #/driver/:date/deliveries 배달 목록,
-// #/manage/settings/:tab 매장 설정(탭, 기본 운영 규칙). 체험판 전용 경로: #/ 처음 화면, #/exit 나가기(?from=driver면 기사 기기의
+// #/orders/new/schedule 새 접수 ② 일정, #/orders/:orderId/pay 일괄 수납(접수증의 수납), #/orders/:orderId/add 품목 추가(접수증 옆 동작),
+// #/driver/:date/deliveries 배달 목록,
+// #/manage/settings/:tab 매장 설정(탭, 기본 운영 규칙), #/tickets · #/tickets/unreturned · #/tickets/lost 리프트권(머리줄 메뉴, features-1 §8-2),
+// #/review · #/review/done 확인 필요(머리줄 메뉴, features-1 §9-3: 미처리 · 처리 완료 탭),
+// #/print/collections/:date?vehicle=v1 · #/print/orders/:orderId 인쇄 문서(A4, 연결하지 않은 주소 — 규칙 검사기가 인쇄 등급으로 잰다). 체험판 전용 경로: #/ 처음 화면, #/exit 나가기(?from=driver면 기사 기기의
 // 나가기), 기사 화면의 ?device=phone 휴대폰 모양으로 보기, 미리 보기 #/preview/keyboard · enroll · choose · login · offline · exit(화면
-// 키보드, 서버 모드의 기기 등록 · 기기 선택(시험 매장의 열린 등록) · 로그인 · 연결 끊김 · 나가기 화면. 어디에도 연결하지 않은 주소 —
+// 키보드, 서버 모드의 기기 등록 · 기기 선택(시험 매장의 열린 등록) · 로그인 · 연결 끊김 · 나가기 화면, 비밀번호 재발급 창 · 권종 · 장소가 많은
+// 매장 설정 탭(?tab=pricing · places)). 어디에도 연결하지 않은 주소 —
 // 규칙 검사기가 기기 크기마다 재려고 연다. ?device=phone · tablet이면 기사 기기, 없으면 카운터. 로그인 · 기기 선택 미리 보기의 ?many는
 // 쪽 넘김을 보려고 예시 이름 · 차량을 여러 번 늘어놓는다).
 // 온 곳(장부의 탭 · 쪽 · 고른 줄)은 브라우저 기록 상태에 넣어, 접수증의 '‹ 장부'가 그 쪽 그 줄로 돌아간다(ui 3-6, N9).
-import type { ScreenKey } from '@skinote/contract';
+import type { ReviewTabKey, ScreenKey, TicketTabKey } from '@skinote/contract';
 import { useSyncExternalStore } from 'react';
 
 export type DeviceShape = 'tablet' | 'phone';
@@ -16,12 +20,12 @@ export type DeviceShape = 'tablet' | 'phone';
 /** 새 접수의 단계(① 품목 · ② 일정). ③ 결제는 ② 위의 확인 창(V4)이라 경로가 없다. */
 export type NewOrderStep = 'items' | 'schedule';
 
-/** 매장 설정의 색인 탭(V8). 운영 규칙만 만들었고 나머지 탭은 준비 중인 화면이다. */
+/** 매장 설정의 색인 탭(V8 운영 규칙과 features-1의 매장 정보 · 장소 · 반납 타임 · 요금 · 할인 · 차량 · 직원). */
 export const SETTINGS_TABS = ['info', 'places', 'slots', 'pricing', 'fleet', 'rules'] as const;
 export type SettingsTab = (typeof SETTINGS_TABS)[number];
 
 /** 체험판 전용 미리 보기(계획 6-3): 화면 키보드, 서버 모드의 기기 등록 · 로그인 · 연결 끊김 · 나가기(로그아웃) 화면(규칙 검사기가 잰다). */
-export const PREVIEW_VIEWS = ['keyboard', 'enroll', 'choose', 'login', 'offline', 'exit'] as const;
+export const PREVIEW_VIEWS = ['keyboard', 'enroll', 'choose', 'login', 'offline', 'exit', 'pin', 'settings-many'] as const;
 export type PreviewView = (typeof PREVIEW_VIEWS)[number];
 
 export type Route =
@@ -33,20 +37,29 @@ export type Route =
   | { name: 'newOrder'; step: NewOrderStep }
   /** 일괄 수납(V5): 다른 팀 몫까지 받을 팀의 접수증에서. */
   | { name: 'groupPay'; orderId: string }
+  /** 품목 추가(features-1 §5-5): 접수증 옆 동작 `품목 추가`의 ① 품목(새 접수 화면의 품목 추가 모드). */
+  | { name: 'addItems'; orderId: string }
   /** 하루 마감(V6). date가 null이면 서버의 영업일. */
   | { name: 'closing'; date: string | null }
   /** 관리(머리줄 `관리`): 매장 설정 · 마감으로 가는 카드. */
   | { name: 'manage' }
   /** 매장 설정(V8은 운영 규칙 탭). */
   | { name: 'shopSettings'; tab: SettingsTab }
-  /** 카운터의 수거 목록(N3). date가 null이면 오늘. */
-  | { name: 'collection'; date: string | null }
+  /** 카운터의 수거 목록(N3). date가 null이면 오늘. vehicleId는 그 차량의 목록(`?vehicle=v2`, 매장 설정 차량 판의 `수거 목록 ›`), 없으면 1호 차량. */
+  | { name: 'collection'; date: string | null; vehicleId?: string }
   | { name: 'exit'; from?: 'driver' }
   | { name: 'driver'; date: string; device: DeviceShape }
   /** 기사 배달 목록(아침 · 낮, ui 6-5). */
   | { name: 'deliveries'; date: string; device: DeviceShape }
   /** 기사 업무 판(V7): 배달 · 수거 한 팀. */
   | { name: 'task'; taskId: string; device: DeviceShape }
+  /** 리프트권(머리줄 메뉴 `리프트권`, features-1 §8-2): 현황 · 미반납 · 분실 탭. */
+  | { name: 'tickets'; tab: TicketTabKey }
+  /** 확인 필요(머리줄 메뉴 `확인 필요`, features-1 §9-3): 미처리 · 처리 완료 탭. */
+  | { name: 'review'; tab: ReviewTabKey }
+  /** 인쇄 문서(A4, features-1 §8-3): 수거 목록(그날 · 차량) · 대여 접수증. 인쇄 창이 쓰는 문서를 화면에 그대로(규칙 검사기가 잰다). */
+  | { name: 'printCollection'; date: string; vehicleId: string | null; page: number }
+  | { name: 'printSlip'; orderId: string; page: number }
   /** 체험판 전용 미리 보기. device가 있으면 기사 기기(휴대폰 · 태블릿), 없으면 카운터. */
   | { name: 'preview'; view: PreviewView; device: DeviceShape | null }
   | { name: 'unknown' };
@@ -75,18 +88,31 @@ export function parseHash(hash: string): Route {
   if (head === 'orders' && arg === 'new' && third === 'schedule' && parts.length === 3) return { name: 'newOrder', step: 'schedule' };
   if (head === 'orders' && arg && parts.length === 2) return { name: 'slip', orderId: arg };
   if (head === 'orders' && arg && arg !== 'new' && third === 'pay' && parts.length === 3) return { name: 'groupPay', orderId: arg };
+  if (head === 'orders' && arg && arg !== 'new' && third === 'add' && parts.length === 3) return { name: 'addItems', orderId: arg };
   if (head === 'closing' && parts.length === 1) return { name: 'closing', date: null };
   if (head === 'closing' && arg && DATE.test(arg) && parts.length === 2) return { name: 'closing', date: arg };
   if (head === 'manage' && parts.length === 1) return { name: 'manage' };
   if (head === 'manage' && arg === 'settings' && parts.length === 2) return { name: 'shopSettings', tab: 'rules' };
   if (head === 'manage' && arg === 'settings' && isSettingsTab(third) && parts.length === 3) return { name: 'shopSettings', tab: third };
-  if ((head === 'collections' || head === 'collection') && parts.length === 1) return { name: 'collection', date: null };
-  if ((head === 'collections' || head === 'collection') && arg && DATE.test(arg) && parts.length === 2) return { name: 'collection', date: arg };
+  const listVehicle = new URLSearchParams(query).get('vehicle');
+  const withVehicle = listVehicle ? { vehicleId: listVehicle } : {};
+  if ((head === 'collections' || head === 'collection') && parts.length === 1) return { name: 'collection', date: null, ...withVehicle };
+  if ((head === 'collections' || head === 'collection') && arg && DATE.test(arg) && parts.length === 2) return { name: 'collection', date: arg, ...withVehicle };
   if (head === 'exit' && parts.length === 1) return new URLSearchParams(query).get('from') === 'driver' ? { name: 'exit', from: 'driver' } : { name: 'exit' };
   if (head === 'driver' && arg === 'tasks' && third && parts.length === 3) return { name: 'task', taskId: third, device: deviceOf(query) };
   if (head === 'driver' && arg && DATE.test(arg) && parts.length === 2) return { name: 'driver', date: arg, device: deviceOf(query) };
   if (head === 'driver' && arg && DATE.test(arg) && third === 'deliveries' && parts.length === 3) return { name: 'deliveries', date: arg, device: deviceOf(query) };
   if (head === 'preview' && isPreviewView(arg) && parts.length === 2) return { name: 'preview', view: arg, device: previewDevice(query) };
+  if (head === 'tickets' && parts.length === 1) return { name: 'tickets', tab: 'status' };
+  if (head === 'tickets' && (arg === 'unreturned' || arg === 'lost') && parts.length === 2) return { name: 'tickets', tab: arg };
+  if (head === 'review' && parts.length === 1) return { name: 'review', tab: 'open' };
+  if (head === 'review' && arg === 'done' && parts.length === 2) return { name: 'review', tab: 'done' };
+  // 인쇄 문서의 쪽(?page=2, 1부터).
+  const printPage = Math.max(1, Math.floor(Number(new URLSearchParams(query).get('page') ?? '1')) || 1);
+  if (head === 'print' && arg === 'collections' && third && DATE.test(third) && parts.length === 3) {
+    return { name: 'printCollection', date: third, vehicleId: new URLSearchParams(query).get('vehicle'), page: printPage };
+  }
+  if (head === 'print' && arg === 'orders' && third && parts.length === 3) return { name: 'printSlip', orderId: third, page: printPage };
   return { name: 'unknown' };
 }
 
@@ -97,15 +123,23 @@ export function hrefFor(route: Route): string {
     case 'slip': return '#/orders/' + encodeURIComponent(route.orderId);
     case 'newOrder': return route.step === 'schedule' ? '#/orders/new/schedule' : '#/orders/new';
     case 'groupPay': return '#/orders/' + encodeURIComponent(route.orderId) + '/pay';
+    case 'addItems': return '#/orders/' + encodeURIComponent(route.orderId) + '/add';
     case 'closing': return route.date ? '#/closing/' + route.date : '#/closing';
     case 'manage': return '#/manage';
     case 'shopSettings': return '#/manage/settings/' + route.tab;
-    case 'collection': return route.date ? '#/collections/' + route.date : '#/collections';
+    case 'collection': return (route.date ? '#/collections/' + route.date : '#/collections') + (route.vehicleId ? '?vehicle=' + encodeURIComponent(route.vehicleId) : '');
     case 'exit': return route.from === 'driver' ? '#/exit?from=driver' : '#/exit';
     case 'driver': return '#/driver/' + route.date + deviceQuery(route.device);
     case 'deliveries': return '#/driver/' + route.date + '/deliveries' + deviceQuery(route.device);
     case 'task': return '#/driver/tasks/' + encodeURIComponent(route.taskId) + deviceQuery(route.device);
     case 'preview': return '#/preview/' + route.view + (route.device ? '?device=' + route.device : '');
+    case 'tickets': return route.tab === 'status' ? '#/tickets' : '#/tickets/' + route.tab;
+    case 'review': return route.tab === 'open' ? '#/review' : '#/review/done';
+    case 'printCollection': {
+      const q = new URLSearchParams({ ...(route.vehicleId ? { vehicle: route.vehicleId } : {}), ...(route.page > 1 ? { page: String(route.page) } : {}) }).toString();
+      return '#/print/collections/' + route.date + (q ? '?' + q : '');
+    }
+    case 'printSlip': return '#/print/orders/' + encodeURIComponent(route.orderId) + (route.page > 1 ? '?page=' + route.page : '');
     case 'unknown': return '#/';
   }
 }
@@ -122,6 +156,8 @@ export function screenRoute(screen: ScreenKey, params: { date?: string | null; o
     case 'closing': return { name: 'closing', date: params.date ?? null };
     case 'collection_list': return { name: 'collection', date: params.date ?? null };
     case 'management': return { name: 'manage' };
+    case 'lift_tickets': return { name: 'tickets', tab: 'status' };
+    case 'review_list': return { name: 'review', tab: 'open' };
     default: return null;
   }
 }

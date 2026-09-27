@@ -7,7 +7,7 @@ import type { CommandEnvelope, Expect } from '@skinote/contract';
 import type { FxDeposit, FxDepositEntry, FxDepositRule, FxLine, FxMethodKey, FxOrder, ShopState } from './model.ts';
 import { heldNumbers } from './assets.ts';
 import { conflict, done, rejected, type Result } from './result.ts';
-import { backCount, fillLines, selfDue, selfLines } from './rules.ts';
+import { backCount, fillLines, liveQty, returnQty, selfDue, selfLines } from './rules.ts';
 
 const SIGN: Record<FxDepositEntry['kind'], number> = { take: 1, restore: 1, refund: -1, apply: -1, keep: -1 };
 
@@ -149,7 +149,7 @@ export function takeDeposit(state: ShopState, envelope: CommandEnvelope<'deposit
     const l = o.lines.find((x) => x.id === entry.lineId);
     if (!l || depositRuleFor(state, l)?.key !== rule.key) return rejected('보증금 입금 불가 · 권 매수 없음');
     const quantity = Math.max(0, Math.floor(entry.quantity));
-    const room = l.qty - (l.returned + l.collected) - heldUnits(existing, l.id);
+    const room = returnQty(l) - (l.returned + l.collected) - heldUnits(existing, l.id);
     if (quantity > room) return rejected('보증금 입금 불가 · 권 매수 초과');
     if (quantity > 0) takes.push({ l, quantity });
   }
@@ -189,7 +189,7 @@ export function planRefunds(o: FxOrder, dep: FxDeposit, lines: readonly { lineId
     if (!l) return { error: '보증금 반환 불가 · 권 매수 없음' };
     if (quantity === 0) continue;
     if (quantity > heldUnits(dep, l.id)) return { error: '보증금 반환 불가 · 권 매수 초과' };
-    if (quantity > backCount(l) - settledUnits(dep, l.id)) return { error: '보증금 반환 불가 · 리프트권 미반납' };
+    if (quantity > depositReturnable(l, dep)) return { error: '보증금 반환 불가 · 리프트권 미반납' };
     const settled = new Set(dep.entries.filter((e) => e.lineId === l.id && e.kind !== 'take').flatMap((e) => e.assetIds ?? []));
     const back = (l.backAssetIds ?? []).filter((id) => !settled.has(id));
     const asked = [...new Set(entry.assetIds ?? [])].filter((id) => back.includes(id));
@@ -201,6 +201,15 @@ export function planRefunds(o: FxOrder, dep: FxDeposit, lines: readonly { lineId
   const total = units * dep.unitAmount;
   if (amount !== total) return { error: '보증금 금액 불일치' };
   return { refunds, amount: total };
+}
+
+/**
+ * 보증금을 돌려줄 수 있는 매수: 돌아온 권 + 지급하지 않은 채 취소한 권(features-1 E5 · 2026-09-27 점검: 접수 때 맡은 보증금은 취소한 권만큼 돌려준다)
+ * − 이미 정리한 매수. 취소한 권 중 지급했다 돌아온 것은 돌아온 권으로 이미 센다.
+ */
+export function depositReturnable(l: FxLine, dep: FxDeposit): number {
+  const cancelledUnissued = Math.max(0, (l.cancelled ?? 0) - Math.max(0, l.issued - liveQty(l)));
+  return backCount(l) + cancelledUnissued - settledUnits(dep, l.id);
 }
 
 /** 이 줄에서 보증금을 이미 정리한 매수(반환 · 미수 차감 · 몰수 − 몰수 취소). */

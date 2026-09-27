@@ -63,7 +63,8 @@ export function withChoices(command: ConfirmCommand, qty: number | null, method:
     case 'payment.take': return method ? { type: command.type, payload: { ...command.payload, methodKey: method } } : command;
     case 'stock.issue': return { type: command.type, payload: withQuantity(command.payload, qty) };
     case 'stock.direct_return': return { type: command.type, payload: withQuantity(command.payload, qty) };
-    case 'stock.load': return { type: command.type, payload: withQuantity(command.payload, qty) };
+    // 예비권 적재(spares)는 이 창을 지나지 않는다(리프트권 화면의 예비권 창, features-1 E21).
+    case 'stock.load': return 'lines' in command.payload ? { type: command.type, payload: withQuantity(command.payload, qty) } : command;
     case 'stock.collect': return { type: command.type, payload: withQuantity(command.payload, qty) };
     case 'stock.deliver': return { type: command.type, payload: withQuantity(command.payload, qty) };
     default: return command;

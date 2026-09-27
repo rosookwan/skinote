@@ -17,7 +17,8 @@
 //   SKINOTE_RULES_SIZES(크기를 쉼표로, 예: 1024x529,360x640), SKINOTE_RULES_JOBS(동시에 도는 크기 수, 기본 4),
 //   SKINOTE_RULES_PORT(미리보기 서버 포트, 기본 5183 — 여러 작업이 함께 돌 때 겹치지 않게, 예: 5190),
 //   SKINOTE_RULES_OUT(화면 · report.json을 남길 폴더, 기본 work/screens/rules — 함께 돌 때 서로 지우지 않게),
-//   SKINOTE_RULES_SHOP=numbered(견본 매장 걸음을 모든 크기에서; 없으면 가장 좁은 크기 1024×529 · 1024×569 · 875×600 · 1024×520 · 360×640만).
+//   SKINOTE_RULES_SHOP=numbered(견본 매장 걸음을 모든 크기에서; 없으면 가장 좁은 크기 1024×529 · 1024×569 · 875×600 · 1024×520 · 360×640만),
+//   SKINOTE_RULES_FLOW(카운터 크기에서 이 흐름만: discount · orderEdit · exchange · tickets · print · review · closing, 고치는 동안만 — 끝의 검사는 없이 돈다).
 // 체험판 기본은 첫 매장(번호 · 보증금 없음)이고, 번호 · 권 보증금을 켠 견본 매장(?shop=numbered)은 그 크기들에서 따로 걷는다(numberedCounter ·
 // numberedDriver: V2 `보증금 · 별도` · V4 보증금 칸 · V6 `보증금 보관 중` · 이월 두 쪽 · V7 권 추가 · 수거 보증금에 닿지 않으면 어긋남).
 import { spawn } from 'node:child_process';
@@ -104,6 +105,12 @@ class Walk {
     this.returnWalked = { plain: false, deposit: false };
     /** 접수 확정 창(V4)을 이 크기에서 모두 걸었는지(첫 창만 모두, 나머지는 열어 재기만). */
     this.checkoutWalked = false;
+    /** 할인 적용 창(features-1 §6)을 이 크기에서 모두 걸었는지(첫 창만 모두, 나머지는 열어 재기만). */
+    this.discountWalked = false;
+    /** 접수 취소 · 품목 취소 창(features-1 §5-4)을 이 크기에서 범위마다 모두 걸었는지(첫 창만 모두, 나머지는 열어 재기만). */
+    this.cancelWalked = { order: false, lines: false };
+    /** 즉시 교환 창(features-1 §7-5)을 이 크기에서 모두 걸었는지(첫 창만 모두, 나머지는 열어 재기만). */
+    this.exchangeWalked = false;
     /** 화면 키보드를 모두 걸은 판 제목(제목마다 첫 판만 모두, 나머지는 열어 재기만). */
     this.keyboardWalked = new Set();
     /** 견본 매장(번호 · 보증금) 걸음에서 닿은 보증금 변형(numberedCounter · numberedDriver가 모두 닿았는지 본다). */
@@ -182,6 +189,26 @@ class Walk {
     });
   }
 
+  /**
+   * 환불 줄 자리(할인 · 취소 · 초과 수납 환불 창)의 쪽을 넘기며(셋 이상이면) 재고, 모든 쪽의 환불 줄 글을 모은다: 환불의 금액 · 수단이 숨지 않는지
+   * (2026-09-27 점검). 첫 쪽으로 돌아온다.
+   */
+  async refundPages(dialog, measure, tag) {
+    const area = dialog.locator('.pos-discount-refunds');
+    const texts = [];
+    const collect = async () => { for (const x of await area.locator('.pos-discount-refund:not(.is-blank) .pos-discount-refund-text').allTextContents()) texts.push(x.trim()); };
+    await collect();
+    const next = area.locator('.pos-discount-refund-pager').getByRole('button', { name: '다음 쪽' });
+    for (let p = 2; p <= 6 && await next.count() && await next.isEnabled(); p += 1) {
+      await this.click(next);
+      if (measure) await measure(tag + '-refund-p' + p);
+      await collect();
+    }
+    const prev = area.locator('.pos-discount-refund-pager').getByRole('button', { name: '이전 쪽' });
+    for (let guard = 0; guard < 6 && await prev.count() && await prev.isEnabled(); guard += 1) await this.click(prev);
+    return texts;
+  }
+
   /** 맨 위 창을 닫는다(닫기 · 이전, 없으면 Esc). n개가 남을 때까지. */
   async closeTo(n) {
     for (let guard = 0; guard < 12 && (await this.dialogCount()) > n; guard += 1) {
@@ -237,6 +264,30 @@ class Walk {
     }
     if (await top.evaluate((el) => el.classList.contains('pos-checkout'))) {
       await this.checkoutWalk(name);
+      return;
+    }
+    if (await top.evaluate((el) => el.classList.contains('pos-discount'))) {
+      await this.discountWalk(name);
+      return;
+    }
+    if (await top.evaluate((el) => el.classList.contains('pos-cancel'))) {
+      await this.cancelWalk(name);
+      return;
+    }
+    if (await top.evaluate((el) => el.classList.contains('pos-exchange'))) {
+      await this.exchangeWalk(name);
+      return;
+    }
+    if (await top.evaluate((el) => el.classList.contains('pos-pieces-sheet'))) {
+      await this.piecesWalk(name);
+      return;
+    }
+    if (await top.evaluate((el) => el.classList.contains('pos-refund'))) {
+      await this.refundWalk(name);
+      return;
+    }
+    if (await top.evaluate((el) => el.classList.contains('pos-call'))) {
+      await this.callWalk(name);
       return;
     }
     if (await top.evaluate((el) => el.classList.contains('pos-partial'))) {
@@ -498,9 +549,18 @@ class Walk {
         const discount = dialog().getByRole('button', { name: label + ' 할인 적용', exact: true });
         if (await click(discount)) {
           await this.scene(name + '-v4-s' + (i + 1) + '-discount', 'dialog');
-          await this.click(this.top().locator('.pos-choice-button').last());
+          // 매장 할인(끝의 `직접 입력` 앞), 그다음 직접 입력(종류 판 → 숫자판 → 사유 키보드, features-1 §6-5).
+          const choices = this.top().locator('.pos-choice-button');
+          await this.click(choices.nth(Math.max(0, (await choices.count()) - 2)));
           await measure('-v4-s' + (i + 1) + '-discounted');
           await this.click(discount);
+          const manual = this.top().locator('.pos-choice-button', { hasText: '직접 입력' });
+          if (await manual.count() && await manual.first().isEnabled()) {
+            await this.click(manual);
+            if (await this.manualWalk(name + '-v4-s' + (i + 1) + '-manual')) await measure('-v4-s' + (i + 1) + '-manual');
+            else await this.closeTo(1);
+            await this.click(discount);
+          }
           await this.click(this.top().locator('.pos-choice-button').first());
         }
       }
@@ -541,6 +601,257 @@ class Walk {
     if (heights.size > 1) this.fail(name + '-v4', '접수 확정 창 높이가 바뀜: ' + [...heights].join(' · '));
     const tallest = Math.max(...heights);
     if (tallest > limit + 0.5) this.fail(name + '-v4', '접수 확정 창 ' + tallest + 'px > 한도 ' + limit + 'px');
+  }
+
+  /**
+   * 직접 입력 할인의 흐름(features-1 §6-5): 종류 판(종류가 둘이면 재고 첫 종류 `금액`) → 숫자판(금액 5,000원 · 비율 15%) → 사유 키보드(`단골`).
+   * over를 주면 한도 밖 값을 쳐 `한도 {금액} · 관리자 확인 필요` 한 줄과 막힌 `입력`을 보고 흐름을 닫는다. 키보드까지 입력했으면 true.
+   */
+  async manualWalk(name, { over = null } = {}) {
+    const base = await this.dialogCount();
+    if (await this.top().locator('.pos-choice-button').count()) {
+      await this.scene(name + '-kind', 'dialog');
+      await this.click(this.top().locator('.pos-choice-button').first());
+    }
+    if (!(await this.top().locator('.sn-numpad').count())) { this.fail(name, '직접 입력의 숫자판이 열리지 않음'); await this.closeTo(base - 1); return false; }
+    const title = (await this.topKey()).replace(/^\d+:/, '');
+    const percent = /비율/.test(title);
+    const enter = () => this.top().getByRole('button', { name: '입력', exact: true });
+    if (over) {
+      await padKeys(this, over);
+      await this.scene(name + '-over', 'dialog');
+      // 한도 밖 값은 한도를 말한다(`한도 10,000원 · 관리자 확인 필요`, 2026-09-27 점검).
+      if (!(await this.top().getByText(/^한도 \S+ · 관리자 확인 필요$/).count())) this.fail(name + '-over', '한도 밖 값에 `한도 {금액} · 관리자 확인 필요` 한 줄이 없음');
+      if (await enter().isEnabled()) this.fail(name + '-over', '한도 밖 값인데 입력을 누를 수 있음');
+      await this.closeTo(base - 1);
+      return false;
+    }
+    await padKeys(this, percent ? ['1', '5'] : ['5', '000']);
+    await this.scene(name + '-pad', 'dialog');
+    await padEnter(this, name + '-pad');
+    if (!(await this.page.locator('.sn-kb').count())) { this.fail(name, '숫자판 뒤 사유 키보드가 뜨지 않음'); await this.closeTo(base - 1); return false; }
+    return this.keyboardWalk(name + '-reason', { submit: ['ㄷ', 'ㅏ', 'ㄴ', 'ㄱ', 'ㅗ', 'ㄹ'] });
+  }
+
+  /**
+   * 할인 적용 창(features-1 §6-5, 접수증 옆 동작): 칸(장비 · 리프트권) · 할인 고르기(매장 할인 · `직접 입력`) · 환불 줄의 수단을 누르며 잰다. 창 높이는
+   * 모든 상태에서 같고 한도(1024×529에서 505) 안이어야 한다. 첫 창만 모두 걷고, 확정하지 않는다.
+   */
+  async discountWalk(name, { full = !this.discountWalked } = {}) {
+    const dialog = () => this.page.locator('.pos-discount');
+    const heights = new Set();
+    const limit = this.confirmLimit();
+    const measure = async (suffix) => {
+      await this.scene(name + suffix, 'dialog');
+      const box = await dialog().boundingBox();
+      if (box) heights.add(Math.round(box.height));
+    };
+    await measure('-discount');
+    if (full) {
+      this.discountWalked = true;
+      const sections = () => dialog().getByRole('group', { name: '대상', exact: true }).locator('button.sn-choice');
+      const grid = () => dialog().getByRole('group', { name: '할인', exact: true }).locator('button.sn-choice');
+      const sectionCount = await sections().count();
+      for (let s = 0; s < Math.max(1, sectionCount); s += 1) {
+        if (sectionCount > 1) { await this.click(sections().nth(s)); await measure('-discount-s' + (s + 1)); }
+        for (let c = 0, n = await grid().count(); c < n; c += 1) {
+          const button = grid().nth(c);
+          if (!(await button.isEnabled())) continue;
+          const text = ((await button.textContent()) ?? '').trim();
+          await this.click(button);
+          const tag = '-discount-s' + (s + 1) + 'c' + (c + 1);
+          if (/^직접 입력/.test(text)) {
+            if (await this.manualWalk(name + tag + '-manual')) await measure(tag);
+            else await this.closeTo(1);
+          } else await measure(tag);
+          const methods = dialog().getByRole('group', { name: '환불', exact: true }).locator('button.sn-choice');
+          for (let m = 0, mn = await methods.count(); m < mn; m += 1) {
+            if ((await methods.nth(m).getAttribute('aria-pressed')) === 'true') continue;
+            await this.click(methods.nth(m));
+            await measure(tag + '-m' + (m + 1));
+          }
+        }
+      }
+      const next = dialog().locator('.sn-dialog-foot').getByRole('button', { name: '다음 쪽' });
+      if (await next.count()) {
+        for (let p = 2; await next.isEnabled(); p += 1) { await this.click(next); await measure('-discount-p' + p); }
+      }
+      await this.refundPages(dialog(), measure, '-discount');
+    }
+    if (heights.size > 1) this.fail(name + '-discount', '할인 적용 창 높이가 바뀜: ' + [...heights].join(' · '));
+    const tallest = Math.max(...heights);
+    if (tallest > limit + 0.5) this.fail(name + '-discount', '할인 적용 창 ' + tallest + 'px > 한도 ' + limit + 'px');
+  }
+
+  /**
+   * 접수 취소 · 품목 취소 창(features-1 §5-4, 접수증 옆 동작): 품목 취소는 줄마다 +(한 번씩, 쪽마다), 접수 취소는 구분(`연락 없음`), 둘 다 돈 줄의
+   * 결정(환불 · 미수 결제 · 환불 없음)과 환불 줄의 수단(`현금`)을 누르며 잰다. 창 높이는 모든 상태에서 같고 한도(1024×529에서 505) 안이어야 한다.
+   * 범위마다 첫 창만 모두 걷고, 확정하지 않는다(고른 것은 창을 닫으면 버려진다).
+   */
+  async cancelWalk(name, { full } = {}) {
+    const dialog = () => this.page.locator('.pos-cancel');
+    const scope = (await dialog().evaluate((el) => el.classList.contains('is-order'))) ? 'order' : 'lines';
+    const walkAll = full ?? !this.cancelWalked[scope];
+    const heights = new Set();
+    const limit = this.confirmLimit();
+    const measure = async (suffix) => {
+      await this.scene(name + suffix, 'dialog');
+      const box = await dialog().boundingBox();
+      if (box) heights.add(Math.round(box.height));
+    };
+    await measure('-cancel-' + scope);
+    if (walkAll) {
+      this.cancelWalked[scope] = true;
+      if (scope === 'lines') {
+        // 품목 칸의 쪽 넘김은 바닥줄(환불 줄 자리 안의 쪽 넘김과 다르다).
+        const next = dialog().locator('.sn-dialog-foot').getByRole('button', { name: '다음 쪽' });
+        for (let p = 1; p <= 10; p += 1) {
+          const plus = dialog().locator('.pos-cancel-pieces').getByRole('button', { name: '수량 증가' });
+          for (let i = 0, n = await plus.count(); i < n; i += 1) {
+            if (!(await plus.nth(i).isEnabled())) continue;
+            await this.click(plus.nth(i));
+            await measure('-cancel-p' + p + 'l' + (i + 1));
+          }
+          if (!(await next.count()) || !(await next.isEnabled())) break;
+          await this.click(next);
+          await measure('-cancel-page' + (p + 1));
+        }
+      } else {
+        const reasons = dialog().getByRole('group', { name: '구분', exact: true }).locator('button.sn-choice');
+        for (let i = 0, n = await reasons.count(); i < n; i += 1) {
+          if ((await reasons.nth(i).getAttribute('aria-pressed')) === 'true') continue;
+          await this.click(reasons.nth(i));
+          await measure('-cancel-r' + (i + 1));
+        }
+      }
+      const decisions = () => dialog().getByRole('group', { name: '환불', exact: true }).first().locator('button.sn-choice');
+      for (let d = 0, dn = await decisions().count(); d < dn; d += 1) {
+        await this.click(decisions().nth(d));
+        await measure('-cancel-d' + (d + 1));
+        const methods = dialog().locator('.pos-discount-refund').getByRole('button', { name: '현금', exact: true });
+        if (await methods.count() && (await methods.first().getAttribute('aria-pressed')) !== 'true') {
+          await this.click(methods.first());
+          await measure('-cancel-d' + (d + 1) + '-cash');
+        }
+      }
+      await this.refundPages(dialog(), measure, '-cancel');
+    }
+    if (heights.size > 1) this.fail(name + '-cancel', '취소 창 높이가 바뀜: ' + [...heights].join(' · '));
+    const tallest = Math.max(...heights);
+    if (tallest > limit + 0.5) this.fail(name + '-cancel', '취소 창 ' + tallest + 'px > 한도 ' + limit + 'px');
+  }
+
+  /**
+   * 즉시 교환 창(features-1 §7-5, 접수증 옆 동작): 교환 품목마다(줄의 `더 보기`까지) 수량 +, 지급 사이즈를 쪽마다 하나씩 누르며 잰다. 창 높이는 모든
+   * 상태에서 같고 한도(1024×529에서 505) 안이어야 한다. 첫 창만 모두 걷고, 확정하지 않는다(고른 것은 창을 닫으면 버려진다).
+   */
+  async exchangeWalk(name, { full = !this.exchangeWalked } = {}) {
+    const dialog = () => this.page.locator('.pos-exchange');
+    const heights = new Set();
+    const limit = this.confirmLimit();
+    const measure = async (suffix) => {
+      await this.scene(name + suffix, 'dialog');
+      const box = await dialog().boundingBox();
+      if (box) heights.add(Math.round(box.height));
+    };
+    await measure('-exchange');
+    if (full) {
+      this.exchangeWalked = true;
+      const items = () => dialog().getByRole('group', { name: '교환 품목', exact: true }).locator('button.sn-choice');
+      const sizes = () => dialog().getByRole('group', { name: '지급 사이즈', exact: true }).locator('button.sn-choice');
+      const next = () => dialog().getByRole('button', { name: '다음 쪽' });
+      for (let i = 0, n = await items().count(); i < n; i += 1) {
+        const button = items().nth(i);
+        if (((await button.textContent()) ?? '').trim() === '더 보기') { await this.click(button); await measure('-exchange-more'); break; }
+        if ((await button.getAttribute('aria-pressed')) !== 'true') { await this.click(button); await measure('-exchange-i' + (i + 1)); }
+        const plus = dialog().getByRole('button', { name: '수량 증가' });
+        if (await plus.count() && await plus.first().isEnabled()) { await this.click(plus.first()); await measure('-exchange-i' + (i + 1) + '-plus'); }
+        for (let p = 1; p <= 6; p += 1) {
+          // 쪽마다 첫 사이즈 · 마지막 사이즈를 눌러 본다(요약 · 주 버튼 글이 바뀐 창).
+          const count = await sizes().count();
+          for (const k of [...new Set([0, count - 1])].filter((x) => x >= 0)) { await this.click(sizes().nth(k)); await measure('-exchange-i' + (i + 1) + 'p' + p + 's' + (k + 1)); }
+          if (!(await next().count()) || !(await next().isEnabled())) break;
+          await this.click(next());
+          await measure('-exchange-i' + (i + 1) + '-page' + (p + 1));
+        }
+      }
+    }
+    if (heights.size > 1) this.fail(name + '-exchange', '즉시 교환 창 높이가 바뀜: ' + [...heights].join(' · '));
+    const tallest = Math.max(...heights);
+    if (tallest > limit + 0.5) this.fail(name + '-exchange', '즉시 교환 창 ' + tallest + 'px > 한도 ' + limit + 'px');
+  }
+
+  /**
+   * 분실 처리 · 분실 회수 · 예비권 적재 · 입고 창(features-1 §8-2, PieceSheet): 쪽마다 첫 칸의 + · −를 눌러 잰다. 창 높이는 모든 상태에서 같고 한도
+   * (1024×529에서 505) 안이어야 한다. 확정하지 않는다(고른 것은 창을 닫으면 버려진다).
+   */
+  async piecesWalk(name) {
+    const dialog = () => this.page.locator('.pos-pieces-sheet');
+    const heights = new Set();
+    const limit = this.confirmLimit();
+    const measure = async (suffix) => {
+      await this.scene(name + suffix, 'dialog');
+      const box = await dialog().boundingBox();
+      if (box) heights.add(Math.round(box.height));
+    };
+    await measure('-pieces');
+    const next = () => dialog().getByRole('button', { name: '다음 쪽' });
+    for (let p = 1; p <= 6; p += 1) {
+      const plus = dialog().getByRole('button', { name: '수량 증가' });
+      if (await plus.count() && await plus.first().isEnabled()) { await this.click(plus.first()); await measure('-pieces-p' + p + '-plus'); }
+      const minus = dialog().getByRole('button', { name: '수량 감소' });
+      if (await minus.count() && await minus.first().isEnabled()) { await this.click(minus.first()); await measure('-pieces-p' + p + '-minus'); }
+      if (!(await next().count()) || !(await next().isEnabled())) break;
+      await this.click(next());
+      await measure('-pieces-page' + (p + 1));
+    }
+    if (heights.size > 1) this.fail(name + '-pieces', '분실 처리 · 예비권 창 높이가 바뀜: ' + [...heights].join(' · '));
+    const tallest = Math.max(...heights);
+    if (tallest > limit + 0.5) this.fail(name + '-pieces', '분실 처리 · 예비권 창 ' + tallest + 'px > 한도 ' + limit + 'px');
+  }
+
+  /**
+   * 초과 수납의 환불 창(features-1 §9-3, RefundDialog): 환불 줄의 수단(원래 수단 · 현금)을 눌러 가며 잰다. 창 높이는 그대로이고 확인 창 한도 안.
+   * 환불하지 않는다(확정은 reviewFlow가 한다).
+   */
+  async refundWalk(name) {
+    const dialog = () => this.page.locator('.pos-refund');
+    const heights = new Set();
+    const limit = this.confirmLimit();
+    const measure = async (suffix) => {
+      await this.scene(name + suffix, 'dialog');
+      const box = await dialog().boundingBox();
+      if (box) heights.add(Math.round(box.height));
+    };
+    await measure('-refund');
+    const methods = () => dialog().locator('.pos-discount-refund button.sn-choice');
+    for (let i = 0, n = await methods().count(); i < n; i += 1) {
+      if ((await methods().nth(i).getAttribute('aria-pressed')) === 'true') continue;
+      await this.click(methods().nth(i));
+      await measure('-refund-m' + (i + 1));
+    }
+    await this.refundPages(dialog(), measure, '-refund');
+    if (heights.size > 1) this.fail(name + '-refund', '환불 창 높이가 바뀜: ' + [...heights].join(' · '));
+    const tallest = Math.max(...heights);
+    if (tallest > limit + 0.5) this.fail(name + '-refund', '환불 창 ' + tallest + 'px > 한도 ' + limit + 'px');
+  }
+
+  /**
+   * 전화 창(features-1 §8-4, CallDialog): 번호를 크게. 기사 기기(휴대폰 · 태블릿)는 주 버튼 `전화 · 번호`(체험판은 막힘, `tel:` 링크 없음), 카운터는 번호와
+   * `닫기`만(주 버튼 없음).
+   */
+  async callWalk(name) {
+    await this.scene(name + '-call', 'dialog');
+    const top = this.top();
+    const number = ((await top.locator('.pos-call-number').textContent().catch(() => '')) ?? '').trim();
+    const primary = top.locator('[data-primary="true"]');
+    if (this.role === 'driver' && number) {
+      const label = ((await primary.first().textContent().catch(() => '')) ?? '').trim();
+      if (!(await primary.count())) this.fail(name + '-call', '기사 기기의 전화 창에 `전화 · 번호` 주 버튼이 없음');
+      else if (label !== '전화 · ' + number && label !== '전화') this.fail(name + '-call', '전화 창 주 버튼이 `전화 · ' + number + '`이 아님: ' + label);
+    }
+    if (this.role !== 'driver' && (await primary.count())) this.fail(name + '-call', '카운터 전화 창에 주 버튼이 있음(번호와 닫기만)');
+    if (await top.locator('a[href^="tel:"]').count()) this.fail(name + '-call', '체험판 전화 창에 `tel:` 링크가 있음(가짜 번호로 걸지 않음)');
   }
 
   /**
@@ -684,7 +995,7 @@ class Walk {
    * 가장 넓은 글자 뷁을 실제 자판(두벌식 글쇠 자리)으로 한도 + 1번(한도에서 멈춤) → 숫자 쪽 → 한글 쪽. submit(자모 키 이름들)이 있으면
    * 끝에 비우고 그 키로 쳐서 `입력`(판이 닫힘, true), 없으면 `닫기`.
    */
-  async keyboardWalk(name, { submit = null } = {}) {
+  async keyboardWalk(name, { submit = null, then = false } = {}) {
     const page = this.page;
     const sheet = () => page.locator('.sn-kb');
     const key = (label) => sheet().getByRole('button', { name: label, exact: true });
@@ -780,6 +1091,13 @@ class Walk {
       await clear();
       await press(submit);
       await this.click(enter());
+      // then: 입력 뒤 다음 창(다음 단계 숫자판 · 고르기 판, 거절 한 줄 창)이 키보드 자리에 뜨는 흐름. 키보드는 닫히고 창 수는 그대로여야 한다.
+      if (then) {
+        await this.settle();
+        if (await sheet().count()) { this.fail(name, '입력 뒤에도 화면 키보드가 닫히지 않음'); await this.closeTo(before - 1); return false; }
+        if ((await this.dialogCount()) !== before) { this.fail(name, '입력 뒤 다음 창이 뜨지 않음(창 ' + (await this.dialogCount()) + '개)'); return false; }
+        return true;
+      }
       if ((await this.dialogCount()) >= before) { this.fail(name, '입력 뒤에도 화면 키보드가 닫히지 않음'); await this.closeTo(before - 1); return false; }
       return true;
     }
@@ -1047,8 +1365,21 @@ async function rowBarWalk(w, name) {
   }
 }
 
+/** SKINOTE_RULES_FLOW(고치는 동안만): 카운터 크기에서 이 흐름들만 걷는다(끝의 전체 검사에는 쓰지 않는다). */
+const COUNTER_FLOWS = {
+  discount: (w) => discountFlow(w), orderEdit: (w) => orderEditFlow(w), exchange: (w) => exchangeFlow(w), tickets: (w) => ticketsFlow(w), print: (w) => printWalk(w),
+  review: (w) => reviewFlow(w), closing: (w) => closingDay(w),
+};
+const FLOWS = (process.env.SKINOTE_RULES_FLOW ?? '').split(',').map((s) => s.trim()).filter((s) => s in COUNTER_FLOWS);
+
 async function counterWalk(w) {
   w.route('counter');
+  if (FLOWS.length) {
+    await w.visit('#/ledger', '.sn-ledger tr.sn-row', 'counter');
+    w.date = /^#\/ledger\/(\d{4}-\d{2}-\d{2})$/.exec(await w.hash())?.[1] ?? '2026-12-26';
+    for (const flow of FLOWS) await COUNTER_FLOWS[flow](w);
+    return;
+  }
   await w.visit('#/', '.pos-card', 'counter');
   await w.scene('start');
   await w.visit('#/orders/none', '.pos-card');
@@ -1132,6 +1463,845 @@ async function v2CounterRoutes(w) {
   await conflictWalks(w);
   await closingDay(w);
   await rulesWalk(w);
+  await settingsWalk(w);
+  await discountFlow(w);
+  await orderEditFlow(w);
+  await exchangeFlow(w);
+  await ticketsFlow(w);
+  await printWalk(w);
+  await reviewFlow(w);
+}
+
+// ── 리프트권 · 인쇄 · 전화(features-1 §8) ─────────────────────────────────
+
+/** 분실 처리 · 예비권 창(PieceSheet)에서 칸 label의 수를 plus번 올리고 minus번 내린 뒤 주 버튼으로 확정한다. 창이 닫히면 true. */
+async function piecesCommit(w, name, { label = null, plus = 0, minus = 0 } = {}) {
+  const dialog = w.page.locator('.pos-pieces-sheet');
+  await dialog.waitFor({ timeout: 5000 }).catch(() => {});
+  if (!(await dialog.count())) { w.fail(name, '분실 처리 · 예비권 창이 열리지 않음'); return false; }
+  const piece = () => (label ? dialog.locator('.sn-piece-line', { hasText: label }) : dialog.locator('.sn-piece-line')).first();
+  const next = dialog.getByRole('button', { name: '다음 쪽' });
+  for (let guard = 0; guard < 10 && !(await piece().count()) && await next.count() && await next.isEnabled(); guard += 1) await w.click(next);
+  if (!(await piece().count())) { w.fail(name, '창에 `' + label + '` 칸이 없음'); await w.closeTo(0); return false; }
+  for (let i = 0; i < plus; i += 1) await w.click(piece().getByRole('button', { name: '수량 증가' }));
+  for (let i = 0; i < minus; i += 1) await w.click(piece().getByRole('button', { name: '수량 감소' }));
+  await w.scene(name, 'dialog');
+  const primary = dialog.locator('[data-primary="true"]');
+  if (!(await primary.isEnabled())) { w.fail(name, '분실 처리 · 예비권 창의 주 버튼이 막힘'); await w.closeTo(0); return false; }
+  await w.click(primary);
+  await w.page.waitForSelector('.pos-pieces-sheet', { state: 'detached', timeout: 10_000 }).catch(() => {});
+  await w.settle();
+  if (await w.page.locator('.pos-pieces-sheet').count()) { w.fail(name, '확정 뒤에도 창이 남음'); await w.closeTo(0); return false; }
+  return true;
+}
+
+/** 리프트권 현황 탭의 차량 칸: 쪽마다 칸마다 누를 수 있는 `예비권 적재` · `예비권 입고`를 열어 잰다. */
+async function ticketVans(w, name) {
+  const panel = () => w.page.locator('.pos-tickets-right');
+  const next = () => panel().getByRole('button', { name: '다음 쪽' });
+  for (let p = 1; p <= 6; p += 1) {
+    const buttons = () => panel().locator('button.pos-tickets-van-button');
+    for (let i = 0, n = await buttons().count(); i < n; i += 1) {
+      if (!(await buttons().nth(i).isEnabled())) continue;
+      await w.probe(buttons().nth(i), name + '-p' + p + '-' + (i + 1));
+      await w.closeTo(0);
+    }
+    if (!(await next().count()) || !(await next().isEnabled())) break;
+    await w.click(next());
+    await w.scene(name + '-page' + (p + 1));
+  }
+}
+
+/** 미반납 · 분실 탭의 첫 쪽 줄마다 누를 수 있는 버튼(분실 처리 · 전화 · 분실 회수)을 열어 재고, 첫 줄의 글을 누르면 그 접수증. */
+async function ticketRows(w, name) {
+  const rows = () => w.page.locator('.pos-tickets-line');
+  for (let i = 0, n = await rows().count(); i < n; i += 1) {
+    const buttons = () => rows().nth(i).locator('.pos-tickets-line-actions button');
+    for (let j = 0, m = await buttons().count(); j < m; j += 1) {
+      if (!(await buttons().nth(j).isEnabled())) continue;
+      await w.probe(buttons().nth(j), name + '-r' + (i + 1) + 'b' + (j + 1));
+      await w.closeTo(0);
+    }
+  }
+  if (await rows().count()) {
+    const opened = await w.probe(rows().first().locator('button.pos-tickets-open'), name + '-open', {
+      back: async () => { await w.page.goBack(); await w.page.waitForSelector('.pos-tickets-rows', { timeout: 10_000 }); await w.settle(); },
+    });
+    if (opened !== 'route') w.fail(name + '-open', '미반납 · 분실 줄을 눌러도 접수증이 열리지 않음');
+  }
+}
+
+/**
+ * 리프트권(features-1 §8-5 rules walk `ticketsWalk`): 16:10(박준호 지급 뒤) 현황 · 세 탭 · 차량 칸의 예비권 적재 · 입고 창, 1호 차량에 예비권 2매 적재
+ * → `야간권 8매`, 미반납 줄의 분실 처리 · 전화 창 · 접수증, 박준호 1매 분실 처리 → 분실 탭 → 분실 회수, 접수증 옆 동작 `분실 처리`, 23:50 최하은 팀 권의
+ * 늦은 줄(빨강), 마감 이월 `리프트권 미반납` → 미반납 탭. 폭 전체의 미반납 줄은 875×600에서도 잰다. 끝에 체험 자료를 처음으로 되돌린다.
+ */
+async function ticketsFlow(w) {
+  const page = w.page;
+  await resetTo(w, 30);
+  await w.visit('#/tickets', '.pos-tickets-table');
+  await w.scene('tickets-status');
+  if (!/리프트권$/.test(((await page.locator('.sn-title').first().textContent()) ?? '').trim())) w.fail('tickets-status', '리프트권 화면 제목이 `… 리프트권`이 아님');
+  if (await page.locator('.sn-footer [data-primary="true"]').count()) w.fail('tickets-status', '리프트권 화면에 주 버튼이 있음(장부형, 주 버튼 없음)');
+  await w.tabs('tickets');
+  await w.visit('#/tickets', '.pos-tickets-table');
+  await ticketVans(w, 'tickets-van');
+  // 예비권 적재 2매 → 1호 차량 `야간권 8매`.
+  await w.click(page.locator('.pos-tickets-van', { hasText: '1호 차량' }).locator('button.pos-tickets-van-button').first());
+  if (await piecesCommit(w, 'tickets-load-commit', { label: '야간권', plus: 2 })) {
+    await w.scene('tickets-after-load');
+    if (!(await page.locator('.pos-tickets-van', { hasText: '1호 차량' }).getByText(/야간권 8매/).count())) w.fail('tickets-after-load', '예비권 2매 적재 뒤 1호 차량 칸이 `야간권 8매`가 아님');
+  }
+  // 미반납 탭: 줄의 버튼 · 접수증.
+  await w.visit('#/tickets/unreturned', '.pos-tickets-rows');
+  await w.scene('tickets-unreturned');
+  await ticketRows(w, 'tickets-unreturned');
+  // 박준호 3매 중 1매 분실 처리 → 분실 탭 → 분실 회수.
+  const park = page.locator('.pos-tickets-line', { hasText: '박준호' });
+  if (await park.count()) {
+    await w.click(park.locator('.pos-tickets-line-actions button').first());
+    // 분실 처리 창은 0매로 연다(2026-09-27 점검): 한 매를 고른다.
+    if (await piecesCommit(w, 'tickets-loss-commit', { label: '야간권', plus: 1 })) {
+      await w.visit('#/tickets/lost', '.pos-tickets-rows');
+      await w.scene('tickets-lost');
+      if (!(await page.locator('.pos-tickets-line', { hasText: '박준호' }).count())) w.fail('tickets-lost', '분실 처리한 박준호 팀이 분실 탭에 없음');
+      await ticketRows(w, 'tickets-lost');
+      await w.click(page.locator('.pos-tickets-line', { hasText: '박준호' }).locator('.pos-tickets-line-actions button').first());
+      if (await piecesCommit(w, 'tickets-found-commit')) {
+        await w.scene('tickets-lost-empty');
+        if (!(await page.locator('.pos-tickets-empty', { hasText: '분실 없음' }).count())) w.fail('tickets-lost-empty', '분실 회수 뒤 분실 탭이 `분실 없음`이 아님');
+      }
+    }
+  } else w.fail('tickets-unreturned', '16:10 미반납 탭에 박준호 팀이 없음');
+  // 접수증 옆 동작 `분실 처리`(박준호).
+  await w.visit('#/orders/o22', '.sn-slip');
+  if (await openSlipAction(w, '분실 처리', 'tickets-slip-loss', '.pos-pieces-sheet')) {
+    await w.piecesWalk('tickets-slip-loss');
+    await w.closeTo(0);
+  }
+  // 23:50: 최하은 팀 권(16:58 추가, 23:05 못 받음)은 늦은 줄. 마감 이월 `리프트권 미반납` → 미반납 탭.
+  await resetTo(w, 8 * 60 + 10);
+  await w.visit('#/tickets/unreturned', '.pos-tickets-rows');
+  await w.scene('tickets-unreturned-late');
+  if (!(await page.locator('.pos-tickets-line.is-late', { hasText: '최하은' }).count())) w.fail('tickets-unreturned-late', '23:50 최하은 팀 권이 늦은 줄(빨강)이 아님');
+  await ticketRows(w, 'tickets-late');
+  await w.visit('#/closing/' + w.date, '.pos-closing-table');
+  const carry = page.locator('.pos-closing-carry button.pos-closing-carry-press', { hasText: '리프트권 미반납' });
+  if (await carry.count()) {
+    await w.click(carry.first());
+    await page.waitForSelector('.pos-tickets-rows', { timeout: 10_000 }).catch(() => {});
+    if ((await w.hash()) !== '#/tickets/unreturned') w.fail('tickets-carry', '마감 이월 `리프트권 미반납`이 리프트권 미반납 탭을 열지 않음: ' + (await w.hash()));
+    else await w.scene('tickets-from-closing');
+  } else w.fail('tickets-carry', '23:50 마감 이월에 `리프트권 미반납`이 없음');
+  await resetTo(w, 0);
+}
+
+// ── 확인 필요(features-1 §9) ─────────────────────────────────────────
+
+/**
+ * 확인 필요 줄의 버튼(지금 쪽 p): `확인`은 누르면 끝나므로 여기서는 누르지 않고, 다른 버튼(접수증 · 수거 목록 · 리프트권 → 경로, 환불 · 예비권 적재 → 창)은
+ * 열어 재고 돌아온다. 경로에서 돌아오면 화면이 첫 쪽으로 새로 열리므로 그 쪽 p로 다시 넘긴다(아니면 다음 줄은 첫 쪽의 줄이다).
+ */
+async function reviewRows(w, name, p = 1) {
+  const rows = () => w.page.locator('.pos-review-line');
+  for (let i = 0, n = await rows().count(); i < n; i += 1) {
+    const buttons = () => rows().nth(i).locator('.pos-review-actions button');
+    for (let j = 0, m = await buttons().count(); j < m; j += 1) {
+      const button = buttons().nth(j);
+      if (!(await button.isEnabled()) || ((await button.textContent()) ?? '').trim() === '확인') continue;
+      await w.probe(button, name + '-r' + (i + 1) + 'b' + (j + 1), {
+        back: async () => { await w.page.goBack(); await w.page.waitForSelector('.pos-review-body', { timeout: 10_000 }); await w.settle(); await w.toPage(p); },
+      });
+      await w.closeTo(0);
+    }
+  }
+}
+
+/**
+ * 확인 필요 화면의 쪽: 지금 탭의 쪽을 모두 넘기며 재고 버튼을 열어 본다. 쪽 수와 쪽마다의 줄(읽는 이름): 한 쪽에 드는 줄 수는 잰 높이가
+ * 정한다(1024×600 여섯 · 1024×529 넷 · 1024×768 한 쪽에 모두).
+ */
+async function reviewPages(w, name) {
+  const [, total] = await w.pageInfo();
+  const pageRows = [];
+  for (let p = 1; p <= total; p += 1) {
+    await w.toPage(p);
+    await w.scene(name + '-p' + p);
+    pageRows.push(await w.page.locator('.pos-review-line').evaluateAll((els) => els.map((el) => el.getAttribute('aria-label') ?? '')));
+    await reviewRows(w, name + '-p' + p, p);
+  }
+  await w.toPage(1);
+  return { total, pageRows };
+}
+
+/** 머리줄 `확인 필요`의 수(좁으면 `더 보기`에 합친 수)가 n인지. */
+async function reviewBadge(w, name, n) {
+  const header = w.page.locator('.sn-header-right');
+  const menu = header.locator('button', { hasText: '확인 필요' });
+  const holder = (await menu.count()) ? menu : header.locator('button[aria-label^="더 보기"]');
+  const shown = ((await holder.locator('.sn-count, .sn-badge').first().textContent().catch(() => '')) ?? '').trim();
+  if (shown !== String(n)) w.fail(name, '머리줄 `확인 필요`의 수가 ' + n + '이 아님(' + ((await menu.count()) ? '메뉴' : '더 보기') + ': `' + shown + '`)');
+  if (!(await menu.count())) await w.scene(name + '-more');
+}
+
+/**
+ * 확인 필요(features-1 §9-5 rules walk `reviewWalk`): 15:40 견본 한 건(머리줄 수 1, 좁은 포스는 `더 보기`의 수) → 화면 · 탭 · 줄 버튼(접수증) → 16:10에 기사
+ * 기기 연결 끊김 중 김민재 · 이수진 수거와 박준호 현장 수납 · 리프트권 추가 1매(보냄 대기) → 다른 카운터가 김민재 · 이수진 매장 반납 · 박준호 수납 · 1호 차량
+ * 예비권 입고 6매 → 다시 연결: 이미 반납된 수거 넷 · 초과 수납 · 예비권 기록 부족(두 쪽) → 쪽마다 버튼(환불 창 · 예비권 창 · 경로) → `확인` 한 번 →
+ * 처리 완료 탭 → 환불 확정 · 예비권 적재 확정(그 줄이 사라짐) → 23:50 미입고 줄(수거 목록 · 접수증). 끝에 체험 자료를 처음으로.
+ */
+async function reviewFlow(w) {
+  const page = w.page;
+  const task = (id) => '#/driver/tasks/' + encodeURIComponent(id);
+  const rows = () => page.locator('.pos-review-line');
+  const count = async () => Number(/(\d+)/.exec((await page.locator('.sn-index-tab, [role="tab"]', { hasText: '미처리' }).first().textContent().catch(() => '')) ?? '')?.[1] ?? -1);
+  await resetTo(w, 0);
+  await w.visit('#/ledger/' + w.date, '.sn-ledger tr.sn-row');
+  await reviewBadge(w, 'review-badge', 1);
+  await w.visit('#/review', '.pos-review-rows');
+  await w.scene('review-open');
+  if (((await page.locator('.sn-title').first().textContent()) ?? '').trim() !== '확인 필요') w.fail('review-open', '확인 필요 화면 제목이 `확인 필요`가 아님');
+  if (await page.locator('.sn-footer [data-primary="true"]').count()) w.fail('review-open', '확인 필요 화면에 주 버튼이 있음(장부형, 주 버튼 없음)');
+  if (!(await rows().filter({ hasText: '최은정 팀 스키 1대 매장 반납 완료' }).count())) w.fail('review-open', '15:40 견본 확인 필요(최은정 팀)가 없음');
+  await w.tabs('review');
+  await w.visit('#/review', '.pos-review-rows');
+  await reviewRows(w, 'review-open');
+
+  // 16:10: 기사 기기 연결 끊김 중 수거 둘 · 현장 수납 · 리프트권 추가(보냄 대기).
+  await resetTo(w, 30);
+  await w.visit('#/exit?from=driver', '.pos-card', 'driver');
+  await w.click(page.getByRole('button', { name: '연결 해제', exact: true }));
+  for (const id of ['collect:o21', 'collect:o23']) {
+    await w.visit(task(id), '.pos-task-sheet', 'driver');
+    await w.click(page.locator('.sn-footer [data-primary="true"]'));
+    if (await w.dialogCount()) await w.click(w.top().locator('[data-primary="true"]'));
+    await w.closeTo(0);
+  }
+  await w.visit(task('collect:o22'), '.pos-task-sheet', 'driver');
+  const fieldPay = page.locator('.pos-task-actions button', { hasText: '현장 수납' });
+  if (await fieldPay.count() && await fieldPay.isEnabled()) {
+    await w.click(fieldPay);
+    await w.click(page.locator('.pos-field-pay [data-primary="true"]'));
+  } else w.fail('review-queue', '16:10 박준호 팀 업무 판에 `현장 수납`이 없음');
+  const addTicket = page.locator('.pos-task-actions button', { hasText: '리프트권 추가' });
+  if (await addTicket.count() && await addTicket.isEnabled()) {
+    await w.click(addTicket);
+    await w.click(page.locator('.pos-add-ticket [data-primary="true"]'));
+    if (await page.locator('.pos-field-pay').count()) { await page.keyboard.press('Escape'); await w.settle(); }
+  } else w.fail('review-queue', '16:10 박준호 팀 업무 판에 `리프트권 추가`가 없음');
+  await w.closeTo(0);
+  // 다른 카운터: 김민재 · 이수진 매장 반납, 박준호 수납, 1호 차량 예비권 입고 6매.
+  for (const id of ['o21', 'o23']) {
+    await otherCounter(w, '#/orders/' + id, '.sn-slip', async (other) => {
+      await other.locator('.pos-side .sn-check-press', { hasText: '반납' }).first().click();
+      const store = other.locator('[role="dialog"]').getByRole('button', { name: '매장 반납 처리', exact: true });
+      if (await store.count()) await store.click();
+      await other.waitForSelector('.pos-return [data-primary="true"]:enabled');
+      await other.waitForTimeout(300);
+      await other.locator('.pos-return [data-primary="true"]').click();
+      await other.waitForSelector('.pos-return', { state: 'detached', timeout: 10_000 });
+    });
+  }
+  await otherCounter(w, '#/orders/o22', '.sn-slip', async (other) => {
+    await other.locator('.pos-side [data-primary="true"]').click();
+    await other.waitForSelector('[role="dialog"] [data-primary="true"]');
+    await other.waitForTimeout(300);
+    await other.locator('[role="dialog"] [data-primary="true"]').last().click();
+    await other.waitForSelector('[role="dialog"]', { state: 'detached', timeout: 10_000 }).catch(() => {});
+  });
+  await otherCounter(w, '#/tickets', '.pos-tickets-table', async (other) => {
+    await other.locator('.pos-tickets-van', { hasText: '1호 차량' }).locator('button.pos-tickets-van-button', { hasText: '예비권 입고' }).click();
+    const sheet = other.locator('.pos-pieces-sheet');
+    await sheet.waitFor();
+    for (let i = 0; i < 6; i += 1) { await sheet.locator('.sn-piece-line', { hasText: '야간권' }).getByRole('button', { name: '수량 증가' }).click(); await other.waitForTimeout(120); }
+    await sheet.locator('[data-primary="true"]').click();
+    await other.waitForSelector('.pos-pieces-sheet', { state: 'detached', timeout: 10_000 }).catch(() => {});
+  });
+  await w.visit('#/exit?from=driver', '.pos-card', 'driver');
+  await w.click(page.getByRole('button', { name: /^재연결/ }));
+  w.route('counter');
+
+  // 미처리 일곱(견본 · 이미 반납된 수거 넷 · 초과 수납 · 예비권 기록 부족): 1024×600은 한 쪽 여섯 줄 · 1024×529는 넷(두 쪽), 1024×768 · 1366×768은 한 쪽.
+  await w.visit('#/review', '.pos-review-rows');
+  await w.scene('review-many');
+  const many = await count();
+  if (many !== 7) w.fail('review-many', '보냄 대기 뒤 미처리 수가 7이 아님: ' + many);
+  await reviewBadge(w, 'review-badge-many', many);
+  // 쪽을 모두 넘기면 미처리 수만큼의 줄이 한 번씩 나온다. 첫 쪽에 다 들지 않으면 쪽을 넘긴다(쪽 수 = 올림(줄 수 / 첫 쪽 줄 수)).
+  const { total: pages, pageRows } = await reviewPages(w, 'review-many');
+  const labels = pageRows.flat();
+  if (labels.length !== many || new Set(labels).size !== labels.length) w.fail('review-many', '쪽을 모두 넘긴 줄이 미처리 ' + many + '줄과 다름: ' + pageRows.map((r) => r.length).join(' + '));
+  const perPage = pageRows[0]?.length ?? 0;
+  if (!perPage || pages !== Math.ceil(many / perPage) || pageRows.slice(0, -1).some((r) => r.length !== perPage)) w.fail('review-many', '미처리 ' + many + '줄의 쪽 나눔이 어긋남: ' + pageRows.map((r) => r.length).join(' + ') + ' · ' + pages + '쪽');
+  for (const text of ['김민재 팀 스키 2대 매장 반납 완료', '이수진 팀 의류 2벌 매장 반납 완료']) {
+    if (!labels.some((label) => label.startsWith(text))) w.fail('review-many', '`' + text + '` 줄이 없음');
+  }
+
+  // `확인` 한 번 → 처리 완료 탭(`확인 완료 · …`).
+  const first = rows().first();
+  const firstText = ((await first.getAttribute('aria-label')) ?? '').trim();
+  await w.click(first.locator('.pos-review-actions button', { hasText: /^확인$/ }));
+  await w.settle();
+  await w.scene('review-resolved');
+  if ((await count()) !== many - 1) w.fail('review-resolved', '`확인` 뒤 미처리 수가 줄지 않음');
+  await w.visit('#/review/done', '.pos-review-rows');
+  await w.scene('review-done');
+  const done = page.locator('.pos-review-line.is-done', { hasText: '확인 완료 · ' });
+  if (!(await done.count()) || !(await page.locator('.pos-review-line.is-done[aria-label="' + firstText + '"]').count())) w.fail('review-done', '처리 완료 탭에 끝낸 줄(`확인 완료 · 시각`)이 없음');
+
+  // 초과 수납의 환불 확정 · 예비권 적재 확정: 그 줄이 사라진다.
+  await w.visit('#/review', '.pos-review-rows');
+  const overpaid = () => page.locator('.pos-review-line', { hasText: '박준호 팀 초과 수납' });
+  for (let p = 1; p <= 3 && !(await overpaid().count()); p += 1) { const [now, total] = await w.pageInfo(); if (now >= total) break; await w.toPage(now + 1); }
+  if (await overpaid().count()) {
+    await w.click(overpaid().locator('.pos-review-actions button', { hasText: /^환불/ }));
+    const dialog = page.locator('.pos-refund');
+    await dialog.waitFor({ timeout: 5000 }).catch(() => {});
+    await w.scene('review-refund', 'dialog');
+    const primary = dialog.locator('[data-primary="true"]');
+    if (!/^환불 · /.test(((await primary.textContent()) ?? '').trim())) w.fail('review-refund', '환불 창의 주 버튼이 `환불 · …`이 아님');
+    await w.click(primary);
+    await page.waitForSelector('.pos-refund', { state: 'detached', timeout: 10_000 }).catch(() => {});
+    await w.settle();
+    await w.visit('#/review', '.pos-review-rows');
+    if (await page.locator('.pos-review-line[aria-label*="초과 수납"]').count()) w.fail('review-refund', '환불 뒤에도 `초과 수납` 줄이 남음');
+  } else w.fail('review-refund', '미처리에 박준호 팀 `초과 수납` 줄이 없음');
+  const shortfall = () => page.locator('.pos-review-line', { hasText: '재고 기록 부족' });
+  for (let p = 1; p <= 3 && !(await shortfall().count()); p += 1) { const [now, total] = await w.pageInfo(); if (now >= total) break; await w.toPage(now + 1); }
+  if (await shortfall().count()) {
+    await w.click(shortfall().locator('.pos-review-actions button', { hasText: '예비권 적재' }));
+    if (await piecesCommit(w, 'review-spare-commit', { label: '야간권', plus: 1 })) {
+      await w.visit('#/review', '.pos-review-rows');
+      if (await page.locator('.pos-review-line[aria-label*="재고 기록 부족"]').count()) w.fail('review-spare-commit', '예비권 적재 뒤에도 `재고 기록 부족` 줄이 남음');
+    }
+  } else w.fail('review-spare', '미처리에 `1호 차량 야간권 재고 기록 부족` 줄이 없음');
+  await w.scene('review-after-fix');
+
+  // 23:50: 23:48 입고 뒤 차에 남은 헬멧(미입고) → `수거 목록` · `접수증`.
+  await resetTo(w, 8 * 60 + 10);
+  await w.visit('#/review', '.pos-review-rows');
+  await w.scene('review-night');
+  if (!(await page.locator('.pos-review-line', { hasText: '김민수 팀 헬멧 1개 미입고' }).count())) w.fail('review-night', '23:50 미처리에 `김민수 팀 헬멧 1개 미입고`가 없음');
+  await reviewPages(w, 'review-night');
+  await resetTo(w, 0);
+}
+
+/** 인쇄 창(막아 둔 window.print)을 부른 수와 그때 인쇄 문서의 글. */
+const printed = (page) => page.evaluate(() => ({ n: window.__skinotePrinted ?? 0, text: window.__skinotePrintText ?? '' }));
+
+/** A4 한 쪽의 인쇄 규칙(E16): 쪽 794 × 1123, 본문 14px 이상 · 쪽 번호와 인쇄 시각 12px 이상, 반쯤 잘린 줄 없음. */
+async function printChecks(w, name) {
+  const problems = await w.page.evaluate(() => {
+    const out = [];
+    const sheet = document.querySelector('.pos-print-page');
+    if (!sheet) return ['인쇄 쪽이 없음'];
+    const box = sheet.getBoundingClientRect();
+    if (Math.round(box.width) !== 794 || Math.round(box.height) !== 1123) out.push('쪽 크기 ' + Math.round(box.width) + '×' + Math.round(box.height) + '(A4 794×1123이 아님)');
+    const body = sheet.querySelector('.pos-print-body')?.getBoundingClientRect();
+    for (const tr of sheet.querySelectorAll('.pos-print-table tbody tr')) {
+      const b = tr.getBoundingClientRect();
+      if (body && b.bottom > body.bottom + 0.5) out.push('반쯤 잘린 줄: ' + (tr.textContent ?? '').trim().slice(0, 30));
+    }
+    const walker = document.createTreeWalker(sheet, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (!(node.textContent ?? '').trim() || !node.parentElement) continue;
+      const size = parseFloat(getComputedStyle(node.parentElement).fontSize);
+      const min = node.parentElement.closest('.pos-print-foot') ? 12 : 14;
+      if (size < min - 0.01) out.push('글자 ' + size + 'px < ' + min + 'px: ' + (node.textContent ?? '').trim().slice(0, 20));
+    }
+    return out;
+  });
+  for (const text of [...new Set(problems)].slice(0, 6)) w.fail(name, text);
+}
+
+/**
+ * A4 인쇄(features-1 §8-5 rules walk `printWalk`): 카운터 수거 목록의 `인쇄`와 접수증 옆 동작 `인쇄`가 인쇄 창을 한 번 열고 인쇄 문서에 가린 번호
+ * (`010-****-0025`)만 있는지, 인쇄 문서 화면(#/print/…, 794 × 1123, 인쇄 매체)을 인쇄 등급으로 재는지(쪽마다: 화면 규칙 + printChecks).
+ */
+async function printWalk(w) {
+  const page = w.page;
+  await resetTo(w, 0);
+  await w.visit('#/collections/' + w.date, '.sn-ledger tr.sn-row');
+  const before = (await printed(page)).n;
+  await w.click(page.locator('.sn-footer [data-primary="true"]'));
+  await page.waitForFunction((n) => (window.__skinotePrinted ?? 0) > n, before, { timeout: 10_000 }).catch(() => {});
+  const list = await printed(page);
+  if (list.n !== before + 1) w.fail('print-collection', '수거 목록 `인쇄`가 인쇄 창을 한 번 열지 않음(' + (list.n - before) + '번)');
+  if (!/김민수/.test(list.text) || !/010-\*{4}-0025/.test(list.text)) w.fail('print-collection', '인쇄 수거 목록에 팀 · 가린 번호가 없음');
+  // 손님 번호는 가린 것뿐(머리의 매장 전화 010-0000-0000은 손님 정보가 아니다).
+  if (/010-0000-(?!0000)\d{4}/.test(list.text)) w.fail('print-collection', '인쇄 수거 목록에 온전한 번호가 있음');
+  await w.settle();
+  if (await page.locator('.pos-print-host').count()) w.fail('print-collection', '인쇄 창 뒤에도 인쇄 문서가 남음');
+  await w.scene('print-collection-after');
+  // 접수증 옆 동작 `인쇄`(김민수 팀).
+  await w.visit('#/orders/o25', '.sn-slip');
+  const slipBefore = (await printed(page)).n;
+  const direct = page.locator('.pos-side-actions button', { hasText: '인쇄' });
+  if (await direct.count()) await w.click(direct.first());
+  else {
+    await w.click(page.locator('.pos-side-actions button', { hasText: '더 보기' }));
+    const choice = () => w.top().locator('.pos-choice-button', { hasText: '인쇄' });
+    const next = w.top().getByRole('button', { name: '다음 쪽' });
+    while (!(await choice().count()) && await next.count() && await next.isEnabled()) await w.click(next);
+    if (await choice().count()) await w.click(choice().first());
+  }
+  await page.waitForFunction((n) => (window.__skinotePrinted ?? 0) > n, slipBefore, { timeout: 10_000 }).catch(() => {});
+  const slip = await printed(page);
+  if (slip.n !== slipBefore + 1) w.fail('print-slip', '접수증 `인쇄`가 인쇄 창을 한 번 열지 않음');
+  if (!/대여 접수증/.test(slip.text) || !/010-\*{4}-0025/.test(slip.text) || /010-0000-(?!0000)\d{4}/.test(slip.text)) w.fail('print-slip', '인쇄 접수증에 제목 · 가린 번호가 없거나 온전한 번호가 있음');
+  await w.closeTo(0);
+  // 인쇄 문서 화면(A4, 인쇄 매체): 인쇄 등급으로 쪽마다 잰다.
+  const sheet = await w.context.newPage();
+  const saved = { page: w.page, sizeClass: w.sizeClass, allowed: w.allowed };
+  try {
+    await sheet.setViewportSize({ width: 794, height: 1123 });
+    await sheet.emulateMedia({ media: 'print' });
+    w.page = sheet;
+    w.sizeClass = 'print';
+    w.allowed = ['print'];
+    for (const [hash, name] of [['#/print/collections/' + w.date + '?vehicle=v1', 'print-a4-collection'], ['#/print/orders/o25', 'print-a4-slip'], ['#/print/orders/o22', 'print-a4-slip-0022']]) {
+      await sheet.goto(w.base() + hash);
+      await sheet.waitForSelector('.pos-print-page', { timeout: 10_000 });
+      await w.settle();
+      const text = (await sheet.locator('.pos-print-foot').first().textContent()) ?? '';
+      const total = Number(/\d+\s*\/\s*(\d+)쪽/.exec(text)?.[1] ?? 1);
+      for (let p = 1; p <= total; p += 1) {
+        if (p > 1) {
+          await sheet.goto(w.base() + hash + (hash.includes('?') ? '&' : '?') + 'page=' + p);
+          await sheet.waitForSelector('.pos-print-page', { timeout: 10_000 });
+          await w.settle();
+        }
+        await w.scene(name + '-p' + p);
+        await printChecks(w, name + '-p' + p);
+      }
+    }
+  } finally {
+    w.page = saved.page;
+    w.sizeClass = saved.sizeClass;
+    w.allowed = saved.allowed;
+    await sheet.close();
+  }
+}
+
+/** 교환 창에서 고르고(품목 · 수량 + · 지급 사이즈) 주 버튼으로 확정한다. 사이즈를 주지 않으면 고르지 않은 첫 사이즈. 창이 닫히면 true. */
+async function exchangeCommit(w, name, { item = null, plus = 0, size = null } = {}) {
+  const dialog = w.page.locator('.pos-exchange');
+  if (item) {
+    const button = dialog.getByRole('group', { name: '교환 품목', exact: true }).locator('button.sn-choice', { hasText: item });
+    if (!(await button.count())) { w.fail(name, '교환 품목에 `' + item + '`이 없음'); await w.closeTo(0); return false; }
+    if ((await button.first().getAttribute('aria-pressed')) !== 'true') await w.click(button.first());
+  }
+  for (let i = 0; i < plus; i += 1) await w.click(dialog.getByRole('button', { name: '수량 증가' }).first());
+  const sizes = dialog.getByRole('group', { name: '지급 사이즈', exact: true });
+  const pick = size ? sizes.getByRole('button', { name: size, exact: true }) : sizes.locator('button.sn-choice[aria-pressed="false"]');
+  if (!(await pick.count())) { w.fail(name, '지급 사이즈에 `' + (size ?? '다른 사이즈') + '`이 없음'); await w.closeTo(0); return false; }
+  await w.click(pick.first());
+  await w.scene(name, 'dialog');
+  const primary = dialog.locator('[data-primary="true"]');
+  if (!(await primary.isEnabled())) { w.fail(name, '즉시 교환 주 버튼이 막힘'); await w.closeTo(0); return false; }
+  await w.click(primary);
+  await w.page.waitForSelector('.pos-exchange', { state: 'detached', timeout: 10_000 }).catch(() => {});
+  await w.settle();
+  if (await w.page.locator('.pos-exchange').count()) { w.fail(name, '확정 뒤에도 교환 창이 남음'); await w.closeTo(0); return false; }
+  return true;
+}
+
+/**
+ * 즉시 교환(features-1 §7-6 rules walk `exchangeWalk`): 김민재 의류(손님에게 있음) 창을 모두 걷고 사이즈 110으로 교환 → 접수증 줄 이름 · 출처 줄,
+ * 박준호 헬멧(예약, 지급 전: 수량 줄 `지급 예정 사이즈`) 2개 교환 → 출처 줄, 김민재에 부츠 2개를 품목 추가(현금) · 지급한 뒤 부츠의 지급 사이즈 쪽
+ * (17 사이즈)을 넘기며 잰다, 막힌 한 줄(이수진 창을 연 채 다른 카운터가 모두 반납 → `교환 불가 · 교환 대상 없음`), 번호 매장의 김민재 접수증에는
+ * `즉시 교환`이 없다. 끝에 체험 자료를 처음으로 되돌린다.
+ */
+async function exchangeFlow(w) {
+  const page = w.page;
+  await resetTo(w, 0);
+  const open = async (orderId, name) => {
+    await w.visit('#/orders/' + orderId, '.sn-slip');
+    return openSlipAction(w, '즉시 교환', name, '.pos-exchange');
+  };
+  // ① 김민재 의류: 모두 걸은 뒤 닫고, 새로 열어 110으로.
+  if (await open('o21', 'exchange-0021')) {
+    await w.exchangeWalk('exchange-0021', { full: true });
+    await w.closeTo(0);
+  }
+  if (await open('o21', 'exchange-0021') && await exchangeCommit(w, 'exchange-0021-commit', { item: '의류', size: '110' })) {
+    await slipAdjustment(w, 'exchange-slip-0021', '즉시 교환');
+    if (!(await page.locator('.sn-slip', { hasText: '의류 사이즈 110' }).count())) w.fail('exchange-slip-0021', '접수증 품목 표에 지금 사이즈 `의류 사이즈 110`이 없음');
+  }
+  // ② 박준호 헬멧(지급 전): 수량 줄 `지급 예정 사이즈`, 2개.
+  if (await open('o22', 'exchange-0022')) {
+    await w.scene('exchange-0022-planned', 'dialog');
+    if (!(await page.locator('.pos-exchange').getByText('지급 예정 사이즈', { exact: true }).count())) w.fail('exchange-0022-planned', '지급 전 교환의 수량 줄에 `지급 예정 사이즈`가 없음');
+    if (await exchangeCommit(w, 'exchange-0022-commit', { plus: 1 })) await slipAdjustment(w, 'exchange-slip-0022', '즉시 교환');
+  }
+  // ③ 부츠(17 사이즈): 김민재에 부츠 2개 품목 추가(현금) → 지급 → 교환 창의 부츠 사이즈 쪽.
+  await w.visit('#/orders/o21/add', '.pos-new-kinds');
+  await w.click(page.locator('.pos-new-kinds .sn-kind', { hasText: '부츠' }));
+  const variant = page.locator('.pos-new-pick button.sn-choice').first();
+  if (await variant.count()) await w.click(variant);
+  const plusBoots = page.locator('.pos-new-pick').getByRole('button', { name: '수량 증가' }).last();
+  await w.click(plusBoots);
+  await w.click(plusBoots);
+  await w.click(page.locator('.pos-new-go'));
+  if (await page.locator('.pos-checkout').count()) {
+    const cash = w.top().locator('.sn-method-buttons').getByRole('button', { name: '현금', exact: true });
+    if (await cash.count()) await w.click(cash.first());
+    await w.click(w.top().locator('[data-primary="true"]'));
+    await page.waitForSelector('.sn-slip', { timeout: 10_000 }).catch(() => {});
+    await w.settle();
+    const issue = page.locator('.pos-side [data-primary="true"]');
+    if (await issue.count()) {
+      await w.click(issue);
+      const ok = w.top().locator('[data-primary="true"]');
+      if (await ok.count() && await ok.isEnabled()) await w.click(ok);
+      await w.closeTo(0);
+    }
+    if (await open('o21', 'exchange-boots')) {
+      const boots = page.locator('.pos-exchange').getByRole('group', { name: '교환 품목', exact: true }).locator('button.sn-choice', { hasText: '부츠' });
+      if (await boots.count()) {
+        await w.click(boots.first());
+        w.exchangeWalked = false;
+        await w.exchangeWalk('exchange-boots', { full: true });
+        const pager = page.locator('.pos-exchange').getByRole('button', { name: '다음 쪽' });
+        if (!(await pager.count())) w.fail('exchange-boots', '부츠 17 사이즈인데 지급 사이즈에 쪽 넘김이 없음');
+      } else w.fail('exchange-boots', '교환 품목에 부츠가 없음(품목 추가 · 지급 뒤)');
+      await w.closeTo(0);
+    }
+  } else w.fail('exchange-boots', '부츠 품목 추가의 확정 창이 열리지 않음');
+  // ④ 막힌 한 줄: 이수진 창을 연 채 다른 카운터가 모두 매장 반납 → 이 창에서 확정.
+  if (await open('o23', 'exchange-0023')) {
+    const size = page.locator('.pos-exchange').getByRole('group', { name: '지급 사이즈', exact: true }).locator('button.sn-choice[aria-pressed="false"]');
+    await w.click(size.first());
+    await otherCounter(w, '#/orders/o23', '.sn-slip', async (other) => {
+      await other.locator('.pos-side .sn-check-press', { hasText: '반납' }).first().click();
+      const store = other.locator('[role="dialog"]').getByRole('button', { name: '매장 반납 처리', exact: true });
+      if (await store.count()) await store.click();
+      await other.waitForSelector('.pos-return [data-primary="true"]:enabled');
+      await other.waitForTimeout(300);
+      await other.locator('.pos-return [data-primary="true"]').click();
+      await other.waitForSelector('.pos-return', { state: 'detached', timeout: 10_000 });
+    });
+    await w.click(page.locator('.pos-exchange [data-primary="true"]'));
+    await w.settle();
+    await w.scene('exchange-0023-refused', 'dialog');
+    if (!(await page.locator('.pos-exchange .is-alert', { hasText: '교환 불가 · 교환 대상 없음' }).count())) w.fail('exchange-0023-refused', '그사이 반납된 교환인데 창에 `교환 불가 · 교환 대상 없음`이 없음');
+    await w.closeTo(0);
+  }
+  // ⑤ 번호 매장(번호 줄): 김민재 접수증의 옆 동작 · 더 보기에 `즉시 교환`이 없다.
+  w.shop = 'numbered';
+  try {
+    await resetTo(w, 0);
+    await w.visit('#/orders/o21', '.sn-slip');
+    await w.scene('exchange-numbered-slip');
+    let found = await page.locator('.pos-side-actions button', { hasText: '즉시 교환' }).count();
+    const more = page.locator('.pos-side-actions button', { hasText: '더 보기' });
+    if (await more.count()) {
+      await w.click(more);
+      const next = w.top().getByRole('button', { name: '다음 쪽' });
+      for (let guard = 0; guard < 6; guard += 1) {
+        found += await w.top().locator('.pos-choice-button', { hasText: '즉시 교환' }).count();
+        if (!(await next.count()) || !(await next.isEnabled())) break;
+        await w.click(next);
+      }
+      await w.closeTo(0);
+    }
+    if (found) w.fail('exchange-numbered-slip', '번호로 세는 줄뿐인 접수증에 `즉시 교환`이 있음');
+  } finally {
+    w.shop = 'first';
+  }
+  await resetTo(w, 0);
+}
+
+/** 취소 창에서 고르고(구분 · 결정 · 환불 수단 · 품목 수) 주 버튼으로 확정한다. 창이 닫히면 true. */
+async function cancelCommit(w, name, { reason = null, decision = null, method = null, plus = [] } = {}) {
+  const dialog = w.page.locator('.pos-cancel');
+  for (const label of plus) {
+    // 품목 칸이 쪽으로 나뉘면(1024×600은 두 개씩) 그 품목이 있는 쪽까지 넘긴다.
+    const piece = () => dialog.locator('.sn-piece-line', { hasText: label }).getByRole('button', { name: '수량 증가' });
+    const next = dialog.locator('.sn-dialog-foot').getByRole('button', { name: '다음 쪽' });
+    for (let guard = 0; guard < 10 && !(await piece().count()) && await next.count() && await next.isEnabled(); guard += 1) await w.click(next);
+    if (!(await piece().count())) { w.fail(name, '품목 취소 칸에 `' + label + '`이 없음'); await w.closeTo(0); return false; }
+    if (!(await piece().first().isEnabled())) { w.fail(name, '`' + label + '`의 수량 증가가 막힘'); await w.closeTo(0); return false; }
+    await w.click(piece().first());
+  }
+  const press = async (group, label) => {
+    const button = dialog.getByRole('group', { name: group, exact: true }).first().getByRole('button', { name: label, exact: true });
+    if (!(await button.count())) { w.fail(name, '`' + group + '` 줄에 `' + label + '`이 없음'); return false; }
+    await w.click(button.first());
+    return true;
+  };
+  if (reason && !(await press('구분', reason))) { await w.closeTo(0); return false; }
+  if (decision && !(await press('환불', decision))) { await w.closeTo(0); return false; }
+  if (method) {
+    // 환불 줄이 셋 이상이면 환불 줄 자리의 쪽마다 그 수단을 누른다(첫 쪽으로 돌아온다).
+    const refundNext = dialog.locator('.pos-discount-refund-pager').getByRole('button', { name: '다음 쪽' });
+    for (let p = 0; p < 6; p += 1) {
+      const methods = dialog.locator('.pos-discount-refund').getByRole('button', { name: method, exact: true });
+      for (let i = 0, n = await methods.count(); i < n; i += 1) if ((await methods.nth(i).getAttribute('aria-pressed')) !== 'true') await w.click(methods.nth(i));
+      if (!(await refundNext.count()) || !(await refundNext.isEnabled())) break;
+      await w.click(refundNext);
+    }
+    const refundPrev = dialog.locator('.pos-discount-refund-pager').getByRole('button', { name: '이전 쪽' });
+    for (let guard = 0; guard < 6 && await refundPrev.count() && await refundPrev.isEnabled(); guard += 1) await w.click(refundPrev);
+  }
+  await w.scene(name, 'dialog');
+  const primary = dialog.locator('[data-primary="true"]');
+  if (!(await primary.isEnabled())) { w.fail(name, '취소 창 주 버튼이 막힘'); await w.closeTo(0); return false; }
+  await w.click(primary);
+  await w.page.waitForSelector('.pos-cancel', { state: 'detached', timeout: 10_000 }).catch(() => {});
+  await w.settle();
+  if (await w.page.locator('.pos-cancel').count()) { w.fail(name, '확정 뒤에도 취소 창이 남음'); await w.closeTo(0); return false; }
+  return true;
+}
+
+/** 오늘 장부의 쪽을 넘기며 그 끝 4자리의 줄을 찾아(보이는 쪽에서) 재고, 그 줄의 시각 칸 글에 word가 있는지 본다. */
+async function ledgerRowWord(w, name, last4, word) {
+  await w.visit('#/ledger/' + w.date, '.sn-ledger tr.sn-row');
+  const [, total] = await w.pageInfo();
+  for (let p = 1; p <= total; p += 1) {
+    await w.toPage(p);
+    const row = w.page.locator('.sn-ledger tr.sn-row', { hasText: last4 });
+    if (!(await row.count())) continue;
+    await w.scene(name);
+    if (!(await row.first().getByText(word, { exact: true }).count())) w.fail(name, last4 + ' 줄에 `' + word + '`이 없음');
+    if (!(await row.first().evaluate((el) => el.classList.contains('is-finished')))) w.fail(name, last4 + ' 줄이 흐리지 않음');
+    await w.toPage(1);
+    return;
+  }
+  w.fail(name, '장부에 ' + last4 + ' 줄이 없음');
+}
+
+/**
+ * 품목 추가 · 접수 취소 · 품목 취소(features-1 §5-6 rules walk `orderEditWalk`): 품목 추가 화면 ① 품목(김민재 · 이서연: 결제 팀 줄이 있는 확정 창)을
+ * 재고 헬멧을 더해 확정 → 출처 줄 `품목 추가`, 최하은 팀에 두 번 더해(현금 · 카드) 수납 셋 → 접수 취소 창(환불 셋, 두 줄 자리 + 쪽 넘김) · 연락
+ * 없음 · 현금 → 출처 줄 · 장부 `취소` 흐린 줄 · 마감 환불 줄, 박준호 팀 리프트권 품목 취소(미수 결제 · 환불 없음 · 환불), 16:40 적재 뒤 최하은 팀 접수
+ * 취소 → 차량 재고의 `접수 취소` 줄 · 마감 `확인 필요`. 끝에 체험 자료를 처음으로 되돌린다.
+ */
+async function orderEditFlow(w) {
+  const page = w.page;
+  await resetTo(w, 0);
+  // 품목 추가 ① 품목과 확정 창(김민재: 결제 팀 없음).
+  const addFlow = async (orderId, name, methods) => {
+    for (const method of methods) {
+      await w.visit('#/orders/' + orderId + '/add', '.pos-new-kinds');
+      await w.scene(name + '-add');
+      await w.click(page.locator('.pos-new-kinds .sn-kind', { hasText: '헬멧' }));
+      const variant = page.locator('.pos-new-pick button.sn-choice').first();
+      if (await variant.count()) await w.click(variant);
+      await w.click(page.locator('.pos-new-pick').getByRole('button', { name: '수량 증가' }).last());
+      await w.scene(name + '-add-picked');
+      await w.click(page.locator('.pos-new-go'));
+      if (!(await page.locator('.pos-checkout').count())) { w.fail(name + '-add', '품목 추가의 확정 창이 열리지 않음'); return false; }
+      await w.checkoutWalk(name + '-add-checkout');
+      const methodButton = w.top().locator('.sn-method-buttons').getByRole('button', { name: method, exact: true });
+      if (await methodButton.count()) await w.click(methodButton.first());
+      await w.scene(name + '-add-' + method, 'dialog');
+      const primary = w.top().locator('[data-primary="true"]');
+      if (!(await primary.isEnabled())) { w.fail(name + '-add', '품목 추가 확정이 막힘'); await w.closeTo(0); return false; }
+      await w.click(primary);
+      await page.waitForSelector('.sn-slip', { timeout: 10_000 }).catch(() => {});
+      await w.settle();
+      if ((await w.hash()) !== '#/orders/' + orderId) { w.fail(name + '-add', '품목 추가 뒤 접수증이 아님: ' + (await w.hash())); return false; }
+    }
+    return true;
+  };
+  if (await addFlow('o21', 'edit-0021', ['현금'])) await slipAdjustment(w, 'edit-slip-0021-added', '품목 추가');
+  // 이서연(결제 팀 이정호): 확정 창의 결제 팀 줄(`이정호 팀` · `이 팀`)을 잰다(확정하지 않는다).
+  await w.visit('#/orders/o36/add', '.pos-new-kinds');
+  await w.click(page.locator('.pos-new-kinds .sn-kind', { hasText: '스키' }));
+  await w.click(page.locator('.pos-new-pick').getByRole('button', { name: '수량 증가' }).last());
+  await w.click(page.locator('.pos-new-go'));
+  if (await page.locator('.pos-checkout').count()) {
+    await w.click(w.top().locator('.sn-method-buttons').getByRole('button', { name: '후불', exact: true }));
+    await w.scene('edit-0036-add-payer', 'dialog');
+    if (!(await w.top().getByRole('button', { name: '이 팀', exact: true }).count())) w.fail('edit-0036-add-payer', '결제 팀 줄에 `이 팀`이 없음');
+    else { await w.click(w.top().getByRole('button', { name: '이 팀', exact: true })); await w.scene('edit-0036-add-self', 'dialog'); }
+    await w.closeTo(0);
+  } else w.fail('edit-0036-add-payer', '품목 추가의 확정 창이 열리지 않음');
+
+  // 최하은: 수납 셋(계좌이체 선입금 + 현금 + 카드) → 접수 취소(환불 셋: 두 줄 자리 + 쪽 넘김, 연락 없음, 현금) → 출처 줄 · 장부 · 마감.
+  if (await addFlow('o26', 'edit-0026', ['현금', '카드'])) {
+    await w.visit('#/orders/o26', '.sn-slip');
+    // 창을 한 번 다 걸어 잰 뒤(구분 · 결정을 모두 누름) 닫고, 새로 열어 처음 결정(환불)의 줄을 보고 확정한다.
+    if (await openSlipAction(w, '접수 취소', 'edit-0026-cancel', '.pos-cancel')) {
+      await w.cancelWalk('edit-0026-cancel', { full: true });
+      await w.closeTo(0);
+    }
+    if (await openSlipAction(w, '접수 취소', 'edit-0026-cancel', '.pos-cancel')) {
+      // 환불 셋(계좌이체 · 현금 · 카드)은 모두 금액 · 수단을 가진 줄이다: 두 줄 자리를 쪽으로 넘기며 모은다(2026-09-27 점검, 숨긴 `외 1건`이 없다).
+      const texts = await w.refundPages(page.locator('.pos-cancel'), (suffix) => w.scene('edit-0026-cancel' + suffix, 'dialog'), '');
+      const refundLines = texts.filter((x) => /^환불 · \S+ [\d,]+원/.test(x));
+      if (refundLines.length < 3) w.fail('edit-0026-cancel', '수납 셋의 환불 줄이 셋이 아님(쪽마다 금액 · 수단): ' + texts.join(' | '));
+      if (texts.some((x) => x.includes('외 '))) w.fail('edit-0026-cancel', '환불 줄에 금액 없는 `외 {n}건`이 남음');
+      if (await cancelCommit(w, 'edit-0026-cancel-commit', { reason: '연락 없음', decision: '환불', method: '현금' })) {
+        await slipAdjustment(w, 'edit-slip-0026-cancelled', '접수 취소');
+        await slipAdjustment(w, 'edit-slip-0026-refund', '환불 · 현금');
+        await cancelledSlip(w, 'edit-slip-0026-state');
+        await ledgerRowWord(w, 'edit-ledger-0026', '0026', '취소');
+        await w.visit('#/closing/' + w.date, '.pos-closing-table');
+        await w.scene('edit-closing');
+        if (!(await page.locator('.pos-closing-table', { hasText: '환불' }).count())) w.fail('edit-closing', '마감 결제 수단 표에 환불 줄이 없음');
+      }
+    }
+  }
+  // 박준호 리프트권 품목 취소: 미수 결제 · 환불 없음 · 환불을 모두 재고 미수 결제로 확정 → 출처 줄.
+  await w.visit('#/orders/o22', '.sn-slip');
+  if (await openSlipAction(w, '품목 취소', 'edit-0022-remove', '.pos-cancel')) {
+    await w.cancelWalk('edit-0022-remove', { full: true });
+    await w.closeTo(0);
+  }
+  if (await openSlipAction(w, '품목 취소', 'edit-0022-remove', '.pos-cancel')) {
+    if (await cancelCommit(w, 'edit-0022-remove-commit', { plus: ['야간권', '야간권', '야간권'], decision: '미수 결제' })) {
+      await slipAdjustment(w, 'edit-slip-0022-removed', '품목 취소');
+      await slipAdjustment(w, 'edit-slip-0022-due', '미수 결제');
+    }
+  }
+  // 16:40 적재 뒤(이야기) 최하은 팀 접수 취소 → 차량 재고의 `접수 취소` 줄 · 마감 `확인 필요`(미입고).
+  await resetTo(w, 60);
+  await w.visit('#/orders/o26', '.sn-slip');
+  if (await openSlipAction(w, '접수 취소', 'edit-0026-loaded', '.pos-cancel') && await cancelCommit(w, 'edit-0026-loaded-commit', { decision: '환불 없음' })) {
+    await w.visit('#/closing/' + w.date, '.pos-closing-table');
+    await w.scene('edit-closing-leftover');
+    if (!(await page.getByText(/확인 필요/).count())) w.fail('edit-closing-leftover', '마감 이월 항목에 차에 남은 것의 `확인 필요`가 없음');
+    // 기사 기기의 수거 목록: 주 버튼 `매장 입고`의 창에 `최하은 팀 … · 접수 취소` 줄, 입고하면 차에 남은 것이 없다.
+    await w.visit('#/driver/' + w.date, '.sn-ledger', 'driver');
+    const receive = page.locator('.sn-footer [data-primary="true"]');
+    if (await receive.count() && await receive.isEnabled()) {
+      await w.click(receive);
+      await w.scene('edit-van-leftover', 'dialog');
+      if (!(await w.top().getByText(/접수 취소/).count())) w.fail('edit-van-leftover', '매장 입고 창에 `접수 취소` 줄이 없음');
+      const ok = w.top().locator('[data-primary="true"]');
+      if (await ok.count() && await ok.isEnabled()) await w.click(ok);
+      await w.closeTo(0);
+      await w.scene('edit-van-received');
+    } else w.fail('edit-van-leftover', '기사 수거 목록의 매장 입고를 누를 수 없음');
+    w.route('counter');
+  }
+  await resetTo(w, 0);
+}
+
+/** 접수증 옆 동작을 연다(바로 보이거나 `더 보기` 판 안: 쪽을 넘겨 찾는다). opens(창의 선택자, 기본 할인 적용 창)가 열리면 true. */
+async function openSlipAction(w, label, name, opens = '.pos-discount') {
+  const direct = w.page.locator('.pos-side-actions button', { hasText: label });
+  if (await direct.count()) await w.click(direct.first());
+  else {
+    const more = w.page.locator('.pos-side-actions button', { hasText: '더 보기' });
+    if (!(await more.count())) { w.fail(name, '접수증 옆 동작에 `' + label + '`이 없음'); return false; }
+    await w.click(more);
+    const choice = () => w.top().locator('.pos-choice-button', { hasText: label });
+    const next = w.top().getByRole('button', { name: '다음 쪽' });
+    while (!(await choice().count()) && await next.count() && await next.isEnabled()) await w.click(next);
+    if (!(await choice().count())) { w.fail(name, '더 보기에 `' + label + '`이 없음'); await w.closeTo(0); return false; }
+    await w.click(choice().first());
+  }
+  // 따로 받는 창(분실 처리)은 묶음을 받은 뒤 뜬다: 잠깐 기다린다.
+  await w.page.waitForSelector(opens, { timeout: 5000 }).catch(() => {});
+  if (!(await w.page.locator(opens).count())) { w.fail(name, '`' + label + '` 창이 열리지 않음'); await w.closeTo(0); return false; }
+  return true;
+}
+
+/** 할인 적용 창에서 고르고(할인 · 환불 수단) 주 버튼으로 확정한다. 창이 닫히면 true. */
+async function discountCommit(w, name, choice, refundMethod = null, section = '장비') {
+  const dialog = w.page.locator('.pos-discount');
+  // 칸(창을 모두 걸은 뒤에는 마지막 칸이 골라져 있다).
+  const tab = dialog.getByRole('group', { name: '대상', exact: true }).getByRole('button', { name: section, exact: true });
+  if (await tab.count() && (await tab.getAttribute('aria-pressed')) !== 'true') await w.click(tab);
+  const button = dialog.getByRole('group', { name: '할인', exact: true }).locator('button.sn-choice', { hasText: choice });
+  if (!(await button.count())) { w.fail(name, '할인 고르기에 `' + choice + '`이 없음'); await w.closeTo(0); return false; }
+  await w.click(button.first());
+  if (refundMethod) {
+    const method = dialog.getByRole('group', { name: '환불', exact: true }).getByRole('button', { name: refundMethod, exact: true });
+    if (!(await method.count())) { w.fail(name, '환불 줄에 `' + refundMethod + '` 버튼이 없음'); await w.closeTo(0); return false; }
+    await w.click(method.first());
+  }
+  await w.scene(name, 'dialog');
+  const primary = dialog.locator('[data-primary="true"]');
+  if (!(await primary.isEnabled())) { w.fail(name, '할인 적용 주 버튼이 막힘'); await w.closeTo(0); return false; }
+  await w.click(primary);
+  await w.page.waitForSelector('.pos-discount', { state: 'detached', timeout: 10_000 }).catch(() => {});
+  await w.settle();
+  if (await w.page.locator('.pos-discount').count()) { w.fail(name, '확정 뒤에도 할인 적용 창이 남음'); await w.closeTo(0); return false; }
+  return true;
+}
+
+/** 접수증 품목 표(쪽을 넘기며)에 그 글의 출처 줄이 있는지. 찾으면 그 쪽을 재고 첫 쪽으로. */
+/**
+ * 모두 취소한 접수증(2026-09-27 점검): 머리의 `취소`, 옆 동작 · 더 보기에 `일정 변경` · `긴급 요청`이 없다(진행 중 접수만).
+ */
+async function cancelledSlip(w, name) {
+  const page = w.page;
+  if (!(await page.locator('.sn-slip-status', { hasText: '취소' }).count())) w.fail(name, '모두 취소한 접수증 머리에 `취소`가 없음');
+  await w.scene(name);
+  const banned = ['일정 변경', '긴급 요청'];
+  for (const label of banned) {
+    if (await page.locator('.pos-side-actions button', { hasText: label }).count()) w.fail(name, '모두 취소한 접수증 옆 동작에 `' + label + '`이 있음');
+  }
+  const more = page.locator('.pos-side-actions button', { hasText: '더 보기' });
+  if (await more.count()) {
+    await w.click(more);
+    const next = w.top().getByRole('button', { name: '다음 쪽' });
+    for (let guard = 0; guard < 6; guard += 1) {
+      for (const label of banned) {
+        if (await w.top().locator('.pos-choice-button', { hasText: label }).count()) w.fail(name, '모두 취소한 접수증 더 보기에 `' + label + '`이 있음');
+      }
+      if (!(await next.count()) || !(await next.isEnabled())) break;
+      await w.click(next);
+    }
+    await w.closeTo(0);
+  }
+}
+
+async function slipAdjustment(w, name, text) {
+  const footer = w.page.locator('.sn-footer');
+  const [, total] = await w.pageInfo(footer);
+  let found = false;
+  for (let p = 1; p <= Math.max(1, total) && !found; p += 1) {
+    await w.toPage(p, footer);
+    if (await w.page.locator('.sn-slip-adjust', { hasText: text }).count()) { found = true; await w.scene(name); }
+  }
+  await w.toPage(1, footer);
+  if (!found) w.fail(name, '접수증에 출처 줄 `' + text + '`이 없음');
+}
+
+/**
+ * 할인 적용(features-1 §6-5 · §6-6 rules walk): 박준호 팀(장비 미수)의 창을 모두 걷고 10% 적용 → 출처 줄 `장비 10% 할인`, 해제 → `장비 할인
+ * 해제`, 김민재 팀(카드 결제 뒤) 10% → 환불 줄을 현금으로 → 출처 줄 `환불 · 현금 …` · 마감 결제 수단의 환불 줄, 카운터(?viewer=counter)의 한도 밖
+ * 숫자판. 끝에 체험 자료를 처음으로 되돌린다.
+ */
+async function discountFlow(w) {
+  const page = w.page;
+  await resetTo(w, 0);
+  const open = async (orderId, name) => {
+    await w.visit('#/orders/' + orderId, '.sn-slip');
+    return openSlipAction(w, '할인 적용', name);
+  };
+  if (await open('o22', 'discount-0022')) {
+    await w.discountWalk('discount-0022', { full: true });
+    if (await discountCommit(w, 'discount-0022-apply', '10% 할인')) await slipAdjustment(w, 'discount-slip-0022-applied', '장비 10% 할인');
+  }
+  if (await open('o22', 'discount-0022-off') && await discountCommit(w, 'discount-0022-off', '할인 없음')) {
+    await slipAdjustment(w, 'discount-slip-0022-off', '장비 할인 해제');
+  }
+  if (await open('o21', 'discount-0021') && await discountCommit(w, 'discount-0021-refund', '10% 할인', '현금')) {
+    await slipAdjustment(w, 'discount-slip-0021-refund', '환불 · 현금');
+    await w.visit('#/closing/' + w.date, '.pos-closing-table');
+    await w.scene('discount-closing');
+    if (!(await page.locator('.pos-closing-table', { hasText: '환불' }).count())) w.fail('discount-closing', '마감 결제 수단 표에 환불 줄이 없음');
+  }
+  // 카운터(?viewer=counter, 직접 입력 한도 10,000원): 한도 밖 값의 숫자판.
+  w.route('counter');
+  await page.goto(BASE + '?viewer=counter#/orders/o22');
+  await page.waitForSelector('.sn-slip', { timeout: 10_000 });
+  await w.settle();
+  if (await openSlipAction(w, '할인 적용', 'discount-viewer')) {
+    const manual = page.locator('.pos-discount').getByRole('group', { name: '할인', exact: true }).locator('button.sn-choice', { hasText: '직접 입력' });
+    if (await manual.count() && await manual.first().isEnabled()) {
+      await w.click(manual);
+      await w.manualWalk('discount-viewer-manual', { over: ['2', '0', '000'] });
+    } else w.fail('discount-viewer', '카운터의 할인 적용 창에 누를 수 있는 `직접 입력`이 없음');
+    await w.closeTo(0);
+  }
+  await resetTo(w, 0);
 }
 
 /** 체험 자료를 처음(15:40)으로 되돌리고 체험 시계를 minutes만큼(나가기 화면의 +1시간 · +10분). */
@@ -1378,6 +2548,359 @@ async function rulesWalk(w) {
   if (await w.dialogCount()) await w.click(w.top().getByRole('button', { name: '저장 안 함', exact: true }));
   if (!/^#\/manage$/.test(await w.hash())) w.fail('v8-discard', '저장 안 함이 관리로 가지 않음: ' + (await w.hash()));
   // 체험 자료를 처음으로(바꾼 운영 규칙 · 기준 시각이 뒤 걸음에 남지 않게).
+  await w.visit('#/exit', '.pos-card');
+  await w.click(page.getByRole('button', { name: '체험 자료 초기화', exact: true }));
+  await w.click(w.top().getByRole('button', { name: '초기화', exact: true }));
+  await w.closeTo(0);
+}
+
+// ── 매장 설정의 다른 탭(features-1 plan §4-4 · §4-6: settingsWalk) ───────────────────────────────
+
+/** 정규식 글자 막기. */
+const reEscape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** 목록 칸(이름이 label인 칸, 바닥줄 쪽을 넘겨 찾는다). 없으면 null. */
+async function settingsCell(w, label) {
+  const target = typeof label === 'function' ? () => label(w.page)
+    : () => w.page.locator('.sn-rule-item').filter({ has: w.page.locator('.sn-rule-item-label', { hasText: new RegExp('^' + reEscape(label) + '$') }) });
+  await w.toPage(1);
+  for (let guard = 0; guard < 8; guard += 1) {
+    if (await target().count()) return target().first();
+    const next = w.page.locator('.sn-footer').getByRole('button', { name: '다음 쪽' });
+    if (!(await next.count()) || !(await next.isEnabled())) break;
+    await w.click(next);
+  }
+  return null;
+}
+
+/** 목록 칸을 누른다(없으면 실패로 적고 false). */
+async function pressCell(w, name, label) {
+  const cell = await settingsCell(w, label);
+  if (!cell) { w.fail(name, '매장 설정 목록에 칸이 없음: ' + label); return false; }
+  await w.click(cell);
+  return true;
+}
+
+/** 맨 위 고르기 판의 버튼(첫 줄 글이 label). */
+const sheetChoice = (w, label) => w.top().locator('.pos-choice-button').filter({ has: w.page.locator('.pos-choice-text > .sn-fit:first-child', { hasText: new RegExp('^' + reEscape(label) + '$') }) });
+
+/** 고르기 판에서 누른다(없거나 막혔으면 실패로 적고 false). */
+async function pressChoice(w, name, label) {
+  const choice = sheetChoice(w, label);
+  if (!(await choice.count())) { w.fail(name, '항목 판에 버튼이 없음: ' + label); return false; }
+  if (!(await choice.first().isEnabled())) { w.fail(name, '항목 판의 버튼이 막힘: ' + label); return false; }
+  await w.click(choice);
+  return true;
+}
+
+/** 숫자판에 친다(숫자 · 000). */
+async function padKeys(w, digits) {
+  for (const d of digits) await w.click(w.top().getByRole('button', { name: d, exact: true }));
+}
+
+/** 숫자판의 입력(막혔으면 실패로 적는다). */
+async function padEnter(w, name) {
+  const enter = w.top().getByRole('button', { name: '입력', exact: true });
+  if (!(await enter.isEnabled())) { w.fail(name, '받는 값인데 숫자판의 입력이 막힘'); return; }
+  await w.click(enter);
+}
+
+/** 바닥줄 굵은 요약. */
+const footerSummary = async (w) => ((await w.page.locator('.pos-footer-back .sn-fit').first().textContent().catch(() => '')) ?? '').trim();
+
+/** 초안을 버리고 그 탭을 새로 연다(초안은 화면에만 있다: 새로 읽으면 없다). */
+async function settingsFresh(w, tab) {
+  await w.visit('#/manage/settings/' + tab, '.sn-rule-card');
+  await w.page.reload();
+  await w.page.waitForSelector('.sn-rule-card', { timeout: 10_000 });
+  await w.settle();
+}
+
+/** 항목 판 · 더하기 판에서 다른 창을 여는 버튼(초안에 바로 넣는 버튼 — 숨김 · 위로 · 사용 종료 …은 따로 걷는다). */
+const OPENS = /^(이름 변경|시각 변경|역할|차량|할인 비율 · |할인 금액 · |비율|금액|관리자|카운터|기사|비밀번호 재발급|수거 목록 ›)/;
+
+/**
+ * 한 탭의 모든 목록 칸: 칸을 눌러 열린 창(항목 판 · 숫자판 · 화면 키보드)을 재고, 항목 판이면 다른 창을 여는 버튼마다 그 창(화면 키보드는 제목마다 첫
+ * 판을 모두 걷는다)을 잰 뒤 닫는다. 초안을 바꾸지 않는다.
+ */
+async function settingsCellsWalk(w, name) {
+  const page = w.page;
+  const [, total] = await w.pageInfo();
+  for (let p = 1; p <= total; p += 1) {
+    await w.toPage(p);
+    const count = await page.locator('.sn-rule-item').count();
+    for (let i = 0; i < count; i += 1) {
+      const cellName = name + '-p' + p + 'c' + (i + 1);
+      await w.toPage(p);
+      await w.click(page.locator('.sn-rule-item').nth(i));
+      if (!(await w.dialogCount())) { w.fail(cellName, '목록 칸을 눌렀는데 창이 열리지 않음'); continue; }
+      if (await page.locator('.sn-kb-overlay').count()) { await w.keyboardWalk(cellName); await w.closeTo(0); continue; }
+      await w.scene(cellName, 'dialog');
+      const choices = w.top().locator('.pos-choice-button');
+      const labels = [];
+      for (let j = 0, m = await choices.count(); j < m; j += 1) {
+        const text = ((await choices.nth(j).locator('.pos-choice-text > .sn-fit').first().textContent()) ?? '').trim();
+        if (OPENS.test(text) && await choices.nth(j).isEnabled()) labels.push(text);
+      }
+      await w.closeTo(0);
+      for (const [j, label] of labels.entries()) {
+        await w.toPage(p);
+        await w.click(page.locator('.sn-rule-item').nth(i));
+        const before = await w.hash();
+        await w.click(sheetChoice(w, label));
+        const opened = cellName + '-o' + (j + 1);
+        if ((await w.hash()) !== before) {
+          await w.scene(opened);
+          await w.page.goBack();
+          await page.waitForSelector('.sn-rule-card', { timeout: 10_000 });
+          await w.settle();
+          continue;
+        }
+        if (await page.locator('.sn-kb-overlay').count()) await w.keyboardWalk(opened);
+        else if (await w.dialogCount()) await w.scene(opened, 'dialog');
+        await w.closeTo(0);
+      }
+    }
+  }
+  await w.toPage(1);
+}
+
+/**
+ * 매장 설정의 색인 탭(2026-09-27 점검): 어느 탭에서든 모든 탭에 닿는다(보이거나 `더 보기` 판에), 넘친 탭이 있으면 `더 보기`가 늘 있고, 보이는 탭은 설정의
+ * 차례 그대로다(켜진 탭이 더 보기 자리에 이름으로 들어가지 않는다).
+ */
+async function settingsTabsReachable(w) {
+  const all = ['매장 정보', '장소', '반납 타임', '요금 · 할인', '차량 · 직원', '운영 규칙'];
+  for (const route of ['info', 'places', 'slots', 'pricing', 'fleet', 'rules']) {
+    await w.visit('#/manage/settings/' + route, '.sn-rule-card');
+    const name = 'set-tabs-' + route;
+    const shown = (await w.page.locator('.sn-tabs [role="tab"]:not(.is-more)').allTextContents()).map((x) => x.trim());
+    const more = w.page.locator('.sn-tabs .sn-tab.is-more');
+    let listed = [];
+    if (await more.count()) {
+      if (((await more.textContent()) ?? '').trim() !== '더 보기') w.fail(name, '넘친 탭이 있는데 `더 보기`가 아님: ' + (await more.textContent()));
+      await w.click(more);
+      await w.scene(name + '-more', 'dialog');
+      listed = (await w.top().locator('.pos-choice-button').allTextContents()).map((x) => x.trim());
+      await w.closeTo(0);
+    }
+    const missing = all.filter((label) => !shown.includes(label) && !listed.some((x) => x.startsWith(label)));
+    if (missing.length) w.fail(name, '이 탭에서 닿지 않는 탭: ' + missing.join(' · '));
+    const order = shown.map((x) => all.indexOf(x)).filter((i) => i >= 0);
+    if (order.some((v, i) => i > 0 && v < order[i - 1])) w.fail(name, '탭 차례가 바뀜: ' + shown.join(' · '));
+  }
+}
+
+/**
+ * 매장 설정의 다른 탭(features-1 plan §4-4 · §4-6): 탭마다 쪽마다 재고, 모든 목록 칸의 항목 판과 그 판이 여는 창(화면 키보드 · 숫자판 · 고르기 판)을
+ * 잰다(settingsCellsWalk). 그 뒤 상태를 만들어 잰다 — 매장 정보(이름 키보드 → `변경됨` · 전화 숫자판 · `운영 규칙 ›`), 장소(겹치는 이름 →
+ * `이름 중복 · 다른 이름 필요` · 숨김 · 위로 · 저장 확인 창 · 떠날 때 창), 반납 타임(더하기: 이름 → 시각, 24:00은 막힘 · 기본은 숨김 막힘 · 야간 수거
+ * 준비 181분 막힘 · 차량 지연 기준), 요금 · 할인(1일 값 · 할인 비율 · 할인 추가: 비율 → 대상 → 비율 → 이름), 차량 · 직원(1호 차량의 사용 종료 막힘 ·
+ * `수거 목록 ›` · 차량 추가 · 직원 차량 배정 · 직원 추가(기사: 이름 → 차량) · 비밀번호 재발급은 체험판 미지원 · 저장(목록 바꿈 + 직원 바꿈) → 새 차량
+ * 사용 종료 → 다시 사용), 카운터가 보는 화면(?viewer=counter: `권한 없음 · 관리자 확인 필요` · 저장 막힘), 미리 보기(#/preview/pin 새 비밀번호 창 ·
+ * #/preview/settings-many 권종 · 장소가 많은 탭의 `(계속)`). 끝에 체험 자료를 처음으로 되돌린다.
+ */
+async function settingsWalk(w) {
+  const page = w.page;
+  const footer = page.locator('.sn-footer');
+  const primary = () => footer.locator('[data-primary="true"]');
+  for (const tab of ['info', 'places', 'slots', 'pricing', 'fleet']) {
+    await settingsFresh(w, tab);
+    if ((await footerSummary(w)) !== '변경 없음') w.fail('set-' + tab, '처음 바닥줄이 `변경 없음`이 아님: ' + (await footerSummary(w)));
+    if (await primary().isEnabled()) w.fail('set-' + tab, '변경 없음인데 저장을 누를 수 있음');
+    await w.pages('set-' + tab);
+    await settingsCellsWalk(w, 'set-' + tab);
+  }
+  await settingsTabsReachable(w);
+
+  // 매장 정보: 이름(키보드) → 변경됨 · 저장 확인 창, 전화(숫자판), 영업일 기준 시각의 `운영 규칙 ›`.
+  await settingsFresh(w, 'info');
+  await w.click(page.locator('.sn-rule-card[aria-label="매장 이름"] .sn-rule-value'));
+  if (await w.keyboardWalk('set-info-name', { submit: ['ㄱ', 'ㅏ'] })) {
+    await w.scene('set-info-changed');
+    if (!/^변경 1건 · 다음 기록부터 적용$/.test(await footerSummary(w))) w.fail('set-info-changed', '이름을 바꾼 뒤 바닥줄이 `변경 1건 · …`이 아님: ' + (await footerSummary(w)));
+    await w.click(primary());
+    await w.scene('set-info-save', 'dialog');
+    await w.closeTo(0);
+  }
+  await w.click(page.locator('.sn-rule-card[aria-label="전화"] .sn-rule-value'));
+  await w.scene('set-info-phone', 'dialog');
+  await padKeys(w, ['0', '1', '0']);
+  if (await w.top().getByRole('button', { name: '입력', exact: true }).isEnabled()) w.fail('set-info-phone', '세 자리 전화인데 입력을 누를 수 있음');
+  await w.closeTo(0);
+  await w.click(page.locator('.sn-rule-card[aria-label="영업일 기준 시각"] .sn-rule-value'));
+  const unsavedFromInfo = await w.dialogCount();
+  if (unsavedFromInfo) { await w.scene('set-info-leave', 'dialog'); await w.click(w.top().getByRole('button', { name: '저장 안 함', exact: true })); }
+  if (!/#\/manage\/settings\/rules$/.test(await w.hash())) w.fail('set-info-link', '`운영 규칙 ›`이 운영 규칙 탭으로 가지 않음: ' + (await w.hash()));
+
+  // 장소: 겹치는 구역 이름(거절 한 줄) · 장소 숨김 · 위로 · 저장 확인 창 · 떠날 때 창.
+  await settingsFresh(w, 'places');
+  const areaAdd = await settingsCell(w, (pg) => pg.locator('.sn-rule-card[aria-label="구역"]').getByRole('button', { name: '구역 추가', exact: true }));
+  if (!areaAdd) w.fail('set-places-area', '장소 탭에 `구역 추가`가 없음');
+  else await w.click(areaAdd);
+  if (areaAdd && await w.keyboardWalk('set-places-area', { submit: ['ㅅ', 'ㅓ', 'ㄹ', 'ㅊ', 'ㅓ', 'ㄴ'], then: true })) {
+    await w.settle();
+    if (!(await w.dialogCount()) || !(await w.top().getByText('이름 중복 · 다른 이름 필요').count())) w.fail('set-places-dup', '겹치는 구역 이름에 `이름 중복 · 다른 이름 필요` 창이 없음');
+    else await w.scene('set-places-dup', 'dialog');
+    await w.closeTo(0);
+  }
+  if (await pressCell(w, 'set-places-hide', '설천 주차장') && await pressChoice(w, 'set-places-hide', '숨김')) await w.scene('set-places-hidden');
+  if (await pressCell(w, 'set-places-up', '설천 하우스 앞') && await pressChoice(w, 'set-places-up', '위로')) await w.scene('set-places-moved');
+  await w.pages('set-places-draft');
+  if (await primary().isEnabled()) {
+    await w.click(primary());
+    await w.scene('set-places-save', 'dialog');
+    await w.closeTo(0);
+  } else w.fail('set-places-save', '바꾼 뒤 저장을 누를 수 없음');
+  await w.click(footer.getByRole('button', { name: '관리' }));
+  if (await w.dialogCount()) { await w.scene('set-places-leave', 'dialog'); await w.closeTo(0); }
+  else w.fail('set-places-leave', '저장하지 않은 바꿈이 있는데 떠날 때 창이 없음');
+
+  // 반납 타임: 더하기(이름 → 시각), 24:00 막힘, 기본의 숨김 막힘, 야간 수거 준비 · 차량 지연 기준 숫자판.
+  await settingsFresh(w, 'slots');
+  if (await pressCell(w, 'set-slots-add', '반납 타임 추가') && await w.keyboardWalk('set-slots-add-name', { submit: ['ㅂ', 'ㅏ', 'ㅁ'], then: true })) {
+    await w.scene('set-slots-add-time', 'dialog');
+    await padKeys(w, ['2', '4', '0', '0']);
+    if (await w.top().getByRole('button', { name: '입력', exact: true }).isEnabled()) w.fail('set-slots-add-time', '24:00인데 입력을 누를 수 있음');
+    for (let k = 0; k < 4; k += 1) await w.click(w.top().getByRole('button', { name: '정정', exact: true }));
+    await padKeys(w, ['2', '0', '3', '0']);
+    await padEnter(w, 'set-slots-add-time');
+    await w.scene('set-slots-added');
+    if (!(await settingsCell(w, '밤 20:30'))) w.fail('set-slots-added', '더한 반납 타임 칸이 없음');
+  }
+  if (await pressCell(w, 'set-slots-default', '오후 16:30')) {
+    await w.scene('set-slots-default-sheet', 'dialog');
+    if (await sheetChoice(w, '숨김').isEnabled()) w.fail('set-slots-default-sheet', '기본 반납 타임인데 숨김을 누를 수 있음');
+    // 막힌 까닭은 판 위의 온전한 한 줄(2026-09-27 점검).
+    if (!(await w.top().getByText('숨김 불가 · 기본 반납 타임').count())) w.fail('set-slots-default-sheet', '숨김이 막힌 판에 `숨김 불가 · 기본 반납 타임` 한 줄이 없음');
+    await w.closeTo(0);
+  }
+  const notice = await settingsCell(w, (pg) => pg.locator('.sn-rule-card[aria-label="야간 수거 준비"] .sn-rule-value'));
+  if (notice) await w.click(notice);
+  else w.fail('set-slots-notice', '반납 타임 탭에 `야간 수거 준비` 값 버튼이 없음');
+  await w.scene('set-slots-notice', 'dialog');
+  await padKeys(w, ['1', '8', '1']);
+  if (await w.top().getByRole('button', { name: '입력', exact: true }).isEnabled()) w.fail('set-slots-notice', '181분인데 입력을 누를 수 있음');
+  for (let k = 0; k < 3; k += 1) await w.click(w.top().getByRole('button', { name: '정정', exact: true }));
+  await padKeys(w, ['3', '0']);
+  await padEnter(w, 'set-slots-notice');
+  // 좁은 화면(한 칸)에서는 둘째 쪽이다: 쪽을 넘겨 찾는다.
+  const late = await settingsCell(w, (pg) => pg.locator('.sn-rule-card[aria-label="차량 지연 기준"] .sn-rule-value').nth(1));
+  if (late) await w.click(late);
+  else w.fail('set-slots-late', '반납 타임 탭에 `차량 지연 기준` 야간 값 버튼이 없음');
+  await w.scene('set-slots-late', 'dialog');
+  await padKeys(w, ['1', '2', '0']);
+  await padEnter(w, 'set-slots-late');
+  await w.pages('set-slots-draft');
+
+  // 요금 · 할인: 1일 값 · 할인 추가(비율 → 대상 → 비율 → 이름).
+  await settingsFresh(w, 'pricing');
+  if (await pressCell(w, 'set-price', '스키')) {
+    await w.scene('set-price-pad', 'dialog');
+    await padKeys(w, ['4', '5', '000']);
+    await padEnter(w, 'set-price-pad');
+    await w.scene('set-price-changed');
+  }
+  if (await pressCell(w, 'set-discount-add', '할인 추가') && await pressChoice(w, 'set-discount-add', '비율')) {
+    await w.scene('set-discount-target', 'dialog');
+    if (await pressChoice(w, 'set-discount-target', '장비')) {
+      await w.scene('set-discount-value', 'dialog');
+      await padKeys(w, ['1', '5']);
+      await padEnter(w, 'set-discount-value');
+      if (await w.keyboardWalk('set-discount-name', { submit: ['ㄷ', 'ㅏ', 'ㄴ', 'ㄱ', 'ㅗ', 'ㄹ'] })) await w.scene('set-discount-added');
+    }
+  }
+  await w.pages('set-pricing-draft');
+
+  // 차량 · 직원: 1호 차량의 사용 종료 막힘 · `수거 목록 ›`, 비밀번호 재발급(체험판 미지원), 차량 추가 · 직원 배정 · 직원 추가 → 저장 → 사용 종료 → 다시 사용.
+  await settingsFresh(w, 'fleet');
+  if (await pressCell(w, 'set-fleet-v1', '1호 차량')) {
+    await w.scene('set-fleet-v1', 'dialog');
+    if (await sheetChoice(w, '사용 종료').isEnabled()) w.fail('set-fleet-v1', '업무가 남은 1호 차량인데 사용 종료를 누를 수 있음');
+    // 미처리 업무는 가는 곳과 맞게 수거 · 배달로 나눠 말한다(wording 3-20 `2026-09-27 점검 반영`).
+    if (!(await w.top().getByText(/^사용 종료 불가 · 미처리 (수거 \d+건|배달 \d+건|수거 \d+ · 배달 \d+)$/).count())) w.fail('set-fleet-v1', '사용 종료 막힘의 한 줄이 없음');
+    if (await pressChoice(w, 'set-fleet-v1', '수거 목록 ›')) {
+      if (!/#\/collections/.test(await w.hash())) w.fail('set-fleet-v1', '`수거 목록 ›`이 수거 목록으로 가지 않음: ' + (await w.hash()));
+      await settingsFresh(w, 'fleet');
+    }
+  }
+  if (await pressCell(w, 'set-fleet-pin', '문태오') && await pressChoice(w, 'set-fleet-pin', '비밀번호 재발급')) {
+    await w.scene('set-fleet-pin', 'dialog');
+    await w.closeTo(0);
+  }
+  if (await pressCell(w, 'set-fleet-add', '차량 추가')) {
+    await w.scene('set-fleet-add', 'dialog');
+    await w.click(page.locator('.sn-kb').locator('[data-primary="true"]'));
+    await w.scene('set-fleet-added');
+  }
+  if (await pressCell(w, 'set-fleet-assign', '서하준') && await pressChoice(w, 'set-fleet-assign', '차량')) {
+    await w.scene('set-fleet-assign', 'dialog');
+    await pressChoice(w, 'set-fleet-assign', '3호 차량');
+  }
+  if (await pressCell(w, 'set-fleet-staff', '직원 추가') && await pressChoice(w, 'set-fleet-staff', '기사')) {
+    if (await w.keyboardWalk('set-fleet-staff-name', { submit: ['ㄱ', 'ㅏ', 'ㅇ', 'ㄷ', 'ㅏ', 'ㅇ', 'ㅗ', 'ㄴ'], then: true })) {
+      await w.scene('set-fleet-staff-vehicle', 'dialog');
+      await pressChoice(w, 'set-fleet-staff-vehicle', '2호 차량');
+    }
+  }
+  await w.pages('set-fleet-draft');
+  if (await primary().isEnabled()) {
+    await w.click(primary());
+    await w.scene('set-fleet-save', 'dialog');
+    const next = () => w.top().getByRole('button', { name: '다음 쪽' });
+    for (let p = 2; await next().count() && await next().isEnabled(); p += 1) { await w.click(next()); await w.scene('set-fleet-save-p' + p, 'dialog'); }
+    await w.click(w.top().locator('[data-primary="true"]'));
+    await page.waitForSelector('[role="dialog"]', { state: 'detached', timeout: 10_000 }).catch(() => {});
+    await w.settle();
+    await w.scene('set-fleet-saved');
+    if ((await footerSummary(w)) !== '변경 없음') w.fail('set-fleet-saved', '저장 뒤 바닥줄이 `변경 없음`이 아님: ' + (await footerSummary(w)));
+    for (const [step, label] of [['end', '사용 종료'], ['reuse', '다시 사용']]) {
+      if (await pressCell(w, 'set-fleet-' + step, '3호 차량') && await pressChoice(w, 'set-fleet-' + step, label)) {
+        await w.scene('set-fleet-' + step);
+        await w.click(primary());
+        await w.click(w.top().locator('[data-primary="true"]'));
+        await page.waitForSelector('[role="dialog"]', { state: 'detached', timeout: 10_000 }).catch(() => {});
+        await w.settle();
+        await w.scene('set-fleet-' + step + '-saved');
+      }
+    }
+  } else w.fail('set-fleet-save', '바꾼 뒤 저장을 누를 수 없음');
+
+  // 카운터가 보는 매장 설정: 권한 없음 · 저장 막힘.
+  w.route('counter');
+  await page.goto(BASE + '?viewer=counter#/manage/settings/places');
+  await page.waitForSelector('.sn-rule-card', { timeout: 10_000 });
+  await w.settle();
+  await w.scene('set-viewer-counter');
+  if ((await footerSummary(w)) !== '권한 없음 · 관리자 확인 필요') w.fail('set-viewer-counter', '카운터에게 `권한 없음 · 관리자 확인 필요`가 없음: ' + (await footerSummary(w)));
+  // 읽기만(2026-09-27 점검): 항목 판은 `권한 없음 · 관리자 확인 필요` 한 줄과 누를 수 없는 버튼, 초안이 생기지 않는다(`변경됨` · `저장 · 1건` 없음).
+  if (await pressCell(w, 'set-viewer-counter', '설천 주차장')) {
+    await w.scene('set-viewer-counter-sheet', 'dialog');
+    if (!(await w.top().getByText('권한 없음 · 관리자 확인 필요').count())) w.fail('set-viewer-counter-sheet', '권한 없는 사람의 항목 판에 `권한 없음 · 관리자 확인 필요`가 없음');
+    const hide = sheetChoice(w, '숨김');
+    if (await hide.count() && await hide.first().isEnabled()) w.fail('set-viewer-counter-sheet', '권한 없는 사람이 `숨김`을 누를 수 있음');
+    await w.closeTo(0);
+  }
+  for (const tab of ['places', 'slots', 'pricing', 'fleet']) {
+    await page.goto(BASE + '?viewer=counter#/manage/settings/' + tab);
+    await page.waitForSelector('.sn-rule-card', { timeout: 10_000 }).catch(() => {});
+    await w.settle();
+    await w.scene('set-viewer-counter-' + tab);
+    const enabled = page.locator('.sn-rule-card button.sn-choice:enabled, .sn-rule-card button.sn-rule-value:enabled');
+    if (await enabled.count()) w.fail('set-viewer-counter-' + tab, '권한 없는 사람이 누를 수 있는 고르기 · 값 버튼: ' + (await enabled.first().textContent()));
+    if (await page.locator('.sn-rule-card .sn-chip', { hasText: '변경됨' }).count()) w.fail('set-viewer-counter-' + tab, '권한 없는 사람에게 `변경됨`이 생김');
+    if (await primary().isEnabled()) w.fail('set-viewer-counter-' + tab, '권한 없는 사람이 저장을 누를 수 있음');
+  }
+
+  // 미리 보기: 새 비밀번호 창, 권종 · 장소가 많은 탭.
+  await w.visit('#/preview/pin', '.pos-pin-digits');
+  await w.scene('set-preview-pin', 'dialog');
+  // 한 번만 보이는 새 비밀번호 창의 버튼은 `확인` 하나(2026-09-27 점검: `닫기`도 같은 일을 해 잘못 누르면 비밀번호를 잃었다).
+  if (await w.top().getByRole('button', { name: '닫기', exact: true }).count()) w.fail('set-preview-pin', '새 비밀번호 창에 `닫기`가 있음');
+  for (const tab of ['pricing', 'places']) {
+    await w.visit('#/preview/settings-many?tab=' + tab, '.sn-rule-card');
+    await w.pages('set-many-' + tab);
+  }
   await w.visit('#/exit', '.pos-card');
   await w.click(page.getByRole('button', { name: '체험 자료 초기화', exact: true }));
   await w.click(w.top().getByRole('button', { name: '초기화', exact: true }));
@@ -1902,6 +3425,22 @@ async function closingDay(w) {
   await w.visit('#/closing/' + w.date, '.pos-closing-table', 'counter');
   await w.scene('v6-blocked');
   if (!(await page.locator('.pos-closing-sum', { hasText: '전송 대기 있음' }).count())) w.fail('v6-blocked', '전송 대기가 있는데 마감 바닥줄에 막힘 한 줄이 없음');
+  // 막는 단계(features-1 §9-3): 주 버튼 `마감` → 창 안의 한 줄 `1호 차량 기록 1건 전송 대기 · 마감 전 전송 필요` · `재확인`(주 버튼) · `닫기`.
+  const closePrimary = page.locator('.sn-footer [data-primary="true"]');
+  if (await closePrimary.count() && await closePrimary.isEnabled()) {
+    await w.click(closePrimary);
+    const step = w.top().locator('.sn-review-step');
+    if (!(await step.count())) w.fail('v6-blocked-step', '막힌 마감의 주 버튼이 막는 단계 창을 열지 않음');
+    else {
+      await w.scene('v6-blocked-step', 'dialog');
+      if (!/전송 대기 · 마감 전 전송 필요$/.test((await step.getAttribute('aria-label')) ?? '')) w.fail('v6-blocked-step', '막는 단계 한 줄이 `… 전송 대기 · 마감 전 전송 필요`가 아님');
+      await w.click(w.top().locator('[data-primary="true"]'));
+      await w.scene('v6-blocked-recheck', 'dialog');
+      if (!(await w.top().locator('.sn-review-step').count())) w.fail('v6-blocked-recheck', '아직 막혔는데 `재확인` 뒤 막는 단계가 사라짐');
+      await w.closeTo(0);
+      if (await page.locator('.pos-closing-sum', { hasText: '마감 완료' }).count()) w.fail('v6-blocked-step', '막는 단계 창을 닫았는데 마감됨');
+    }
+  } else w.fail('v6-blocked-step', '막힌 마감의 주 버튼 `마감`을 누를 수 없음(막는 단계 창)');
   await w.visit('#/exit?from=driver', '.pos-card', 'driver');
   await w.click(page.getByRole('button', { name: /^재연결/ }));
   w.route('counter');
@@ -2482,6 +4021,13 @@ async function driverNight(w, list) {
 async function runSize(browser, sizeClass, size) {
   const report = [];
   const context = await browser.newContext({ viewport: size, locale: 'ko-KR', timezoneId: 'Asia/Seoul', serviceWorkers: 'block' });
+  // 인쇄 창(features-1 E16)은 막아 두고, 부른 수와 그때 인쇄 문서의 글을 남긴다(printWalk가 본다).
+  await context.addInitScript(() => {
+    window.print = () => {
+      window.__skinotePrinted = (window.__skinotePrinted ?? 0) + 1;
+      window.__skinotePrintText = document.querySelector('.pos-print-host')?.textContent ?? '';
+    };
+  });
   const page = await context.newPage();
   page.setDefaultTimeout(6000);
   const errors = [];

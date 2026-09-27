@@ -186,3 +186,33 @@ export function nowLineIndex(times: readonly (number | null)[], nowMs: number): 
   }
   return lastTimed >= 0 ? lastTimed + 1 : null;
 }
+
+/** 인쇄 쪽 하나: 이 쪽에 든 줄의 차례 [from, to)와 이 쪽이 앞 쪽에서 이어지는지(`(계속)` 머리). */
+export interface PrintPage {
+  from: number;
+  to: number;
+  continued: boolean;
+}
+
+/**
+ * A4 인쇄의 쪽 나누기(features-1 E16, 순수 함수): 줄 높이 목록을 한 쪽 높이(첫 쪽은 firstPagePx, 없으면 pagePx)에 차례대로 담는다. 반쯤 잘린 줄이
+ * 없다(한 줄이 쪽보다 높아도 그 줄 하나만 한 쪽에 둔다). 줄이 없으면 빈 쪽 하나.
+ */
+export function printPages(rowHeights: readonly number[], pagePx: number, firstPagePx: number = pagePx): PrintPage[] {
+  const pages: PrintPage[] = [];
+  let from = 0;
+  let used = 0;
+  let room = Math.max(1, firstPagePx);
+  rowHeights.forEach((h, i) => {
+    const height = Math.max(0, h);
+    if (i > from && used + height > room) {
+      pages.push({ from, to: i, continued: pages.length > 0 });
+      from = i;
+      used = 0;
+      room = Math.max(1, pagePx);
+    }
+    used += height;
+  });
+  pages.push({ from, to: rowHeights.length, continued: pages.length > 0 });
+  return pages;
+}

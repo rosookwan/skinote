@@ -10,8 +10,8 @@ import { all, insert, num, one, str, type Db } from './db.ts';
 import { ensureBusinessDay } from './dates.ts';
 import { writeRegistry } from './registry-write.ts';
 import {
-  COUNTER_EXCLUDED, DEFAULT_VARIANT, DRIVER_PERMISSIONS, EXTERNAL_LOCATION, MAIN_SCOPE, OK_CONDITION, ROLES, SHOP_LOCATION, SYSTEM_ACTOR, TICKET_VENDOR, variantId,
-  vehicleLocation,
+  COUNTER_EXCLUDED, DEFAULT_VARIANT, DRIVER_PERMISSIONS, EXTERNAL_LOCATION, MAIN_SCOPE, OK_CONDITION, ROLE_START_LIMITS, ROLES, SHOP_LOCATION, SYSTEM_ACTOR, TICKET_VENDOR,
+  variantId, vehicleLocation,
 } from './registry-keys.ts';
 import type { StaffRow } from './registry-read.ts';
 
@@ -101,7 +101,7 @@ export function provisionRows(db: Db, shopId: string, spec: ShopSpec, now: numbe
   const epoch = ulid(now);
 
   insert(db, 'shops', {
-    id: shopId, code: spec.shop.code, name: spec.shop.name, timezone: spec.shop.timezone, business_day_cutoff: spec.shop.cutoff, is_test: options.isTest,
+    id: shopId, code: spec.shop.code, name: spec.shop.name, phone: spec.registry.shopPhone, timezone: spec.shop.timezone, business_day_cutoff: spec.shop.cutoff, is_test: options.isTest,
     config_rev: 0, created_at: at, updated_at: at,
   });
   insert(db, 'shop_instance', { shop_id: shopId, epoch_id: epoch, epoch_no: epochNo, rev_floor: revFloor, updated_at: at });
@@ -109,7 +109,12 @@ export function provisionRows(db: Db, shopId: string, spec: ShopSpec, now: numbe
   const roleGrants = grants(db);
   ROLES.forEach((r, i) => {
     insert(db, 'roles', { ...base, id: r.key, key: r.key, label: r.label, is_system: true, sort: i });
-    for (const g of roleGrants.get(r.key) ?? []) insert(db, 'role_permissions', { shop_id: shopId, role_id: r.key, permission_key: g.key, scope_key: g.scope });
+    for (const g of roleGrants.get(r.key) ?? []) {
+      // 역할의 시작 한도(limits_json): 카운터의 직접 입력 할인은 10,000원까지(features-1 E10 · §14 Q3의 답 전까지, 2026-09-27 점검: 한도가 비어 100%
+      // 할인까지 됐다). 관리자는 한도 없음. 바꾸는 길은 명령줄 `shop set-limit`(관리자 일).
+      const limits = ROLE_START_LIMITS[r.key]?.[g.key];
+      insert(db, 'role_permissions', { shop_id: shopId, role_id: r.key, permission_key: g.key, scope_key: g.scope, ...(limits ? { limits_json: JSON.stringify(limits) } : {}) });
+    }
   });
 
   writeRegistry(db, shopId, spec.registry, spec.settings, spec.drawers, meta, effectiveFrom);

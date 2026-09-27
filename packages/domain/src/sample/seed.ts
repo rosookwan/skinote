@@ -10,7 +10,8 @@
 // 1매 5,000원(보증금 규칙의 시작 값). 번호 · 보증금 규칙이 켜면 계속 도는지 보는 시험이 쓴다.
 // 15:40 뒤의 이야기(새 팀 0042 ~ 0045 · 일괄 수납 · 부분 반납 · 마감)는 체험판의 story.ts 사건이 시계를 앞으로 돌릴 때 적는다.
 // id는 체험판 id('o21' …, ids 'demo')다. 날짜가 든 id(가져오기, ids 'import')는 B2b에서 더한다(plan §3-3 4).
-import type { FxAsset, FxDrawer, FxLine, FxOrder, FxPayment, FxPin, FxPromise, FxSection, FxShopRules, FxVanSpare, ShopState } from '../model.ts';
+import { reviewMessage } from '@skinote/contract';
+import type { FxAsset, FxDrawer, FxLine, FxOrder, FxPayment, FxPin, FxPromise, FxReview, FxSection, FxShopRules, FxStaff, FxVanSpare, ShopState } from '../model.ts';
 import { assetId } from '../assets.ts';
 import { liftReturnable, type FxProduct } from '../catalog.ts';
 import { START_LIFT_DEPOSIT } from '../shop-rules.ts';
@@ -262,10 +263,10 @@ export const SHOP_RULES: FxShopRules = {
   driverSeesDue: true,
   defaultReturnSlotKey: 'afternoon',
   returnSlots: [
-    { key: 'morning', label: '오전타임 후', hour: 12, minute: 0 },
-    { key: 'afternoon', label: '오후', hour: 16, minute: 30 },
-    { key: 'night', label: '야간', hour: 22, minute: 0 },
-    { key: 'late_night', label: '심야', hour: 24, minute: 0 },
+    { key: 'morning', label: '오전타임 후', hour: 12, minute: 0, night: false },
+    { key: 'afternoon', label: '오후', hour: 16, minute: 30, night: false },
+    { key: 'night', label: '야간', hour: 22, minute: 0, night: true },
+    { key: 'late_night', label: '심야', hour: 24, minute: 0, night: true },
   ],
   vehicleLate: { minutes: 60, nightMinutes: 90 },
   nightNoticeMinutes: 60,
@@ -395,5 +396,34 @@ export function sampleDay(options: SampleDayOptions): ShopState {
     vanReceipts: [],
     nextReceiptSeq: 19,
     storyApplied: [],
+    staff: sampleStaff(),
+    reviews: sampleReviews(at),
   };
+}
+
+/**
+ * 견본 확인 필요(features-1 §3-2 · §9-6): 최은정 팀(0024)은 11:52에 매장에서 스키 1 · 의류 1을 반납했고, 그 뒤에 온 기사 기록(스키 1대 수거)은 넣지
+ * 않았다 — 12:05에 적힌 열린 한 건(가져오기 몫 import, 기기 · 업무 없음, 상태에 다른 효과 없음). 15:40의 `확인 필요`가 비지 않게 한다. 스키는 `대`로
+ * 세어 시드 틀(`{qty}개`) 대신 세는 말 틀로 그린다(E18).
+ */
+function sampleReviews(at: At): FxReview[] {
+  const params = { team: '최은정', item: '스키', qty: 1, unit: '대' };
+  return [{
+    id: 'review-o24', kindKey: 'already_returned', params, message: reviewMessage('already_returned', params), orderId: 'o24', source: 'import', createdAt: at(12, 5),
+    status: 'open',
+  }];
+}
+
+/**
+ * 체험판의 직원(매장 설정 `차량 · 직원`): 견본 직원(SAMPLE_STAFF: 관리자 · 카운터 · 1호 차량 기사)과 체험 목록에만 둔 두 사람(2호 차량 기사 ·
+ * 카운터). 이름은 예시다(실제 사람이 아님). 서버의 시험 매장은 명세의 직원(SAMPLE_STAFF)만 만든다.
+ */
+export function sampleStaff(): FxStaff[] {
+  return [
+    { id: 'staff-1', name: '한가람', roleKey: 'manager', status: 'active' },
+    { id: 'staff-2', name: '오세린', roleKey: 'counter', status: 'active' },
+    { id: 'staff-3', name: '문태오', roleKey: 'driver', vehicleId: 'v1', status: 'active' },
+    { id: 'staff-4', name: '윤지호', roleKey: 'driver', vehicleId: 'v2', status: 'active' },
+    { id: 'staff-5', name: '서하준', roleKey: 'counter', status: 'active' },
+  ];
 }

@@ -8,7 +8,9 @@
 //     반환 · 몰수 · 몰수 취소는 줄마다 자기 돈 행(deposit_in · deposit_out · deposit_forfeit · deposit_restore, id = 장부 줄 id)이다.
 // 되읽기: 몫의 id는 결제 자리 id + ':' + 차례(접수 확정의 칸별 결제는 결제 자리 id 그대로 — 요청번호와 id가 다른 결제 자리), 몫의 차례는
 // 행을 넣은 차례.
-import { resolveTask, type FxDeposit, type FxDepositEntry, type FxMethodKey, type FxOrder, type FxPayment, type FxPaymentGroup } from '@skinote/domain';
+import {
+  DISCOUNT_WORDS, resolveTask, type FxDeposit, type FxDepositEntry, type FxMethodKey, type FxOrder, type FxPayment, type FxPaymentGroup, type FxRefund,
+} from '@skinote/domain';
 import { isoOf, msOf } from '../ids.ts';
 import { all, insert, num, one, str, text, type Db, type InValue } from '../db.ts';
 import { DEPOSIT_METHOD } from '../registry-keys.ts';
@@ -16,6 +18,7 @@ import { appended, bumpCounter, factMeta, unmapped, type WriteContext } from './
 
 const PAYMENT_KINDS = {
   payment: { requires_refund_of: 0, requires_deposit: 0, cash_sign: 1 },
+  refund: { requires_refund_of: 1, requires_deposit: 0, cash_sign: -1 },
   deposit_in: { requires_refund_of: 0, requires_deposit: 1, cash_sign: 1 },
   deposit_out: { requires_refund_of: 0, requires_deposit: 1, cash_sign: -1 },
   deposit_apply: { requires_refund_of: 0, requires_deposit: 1, cash_sign: 0 },
@@ -46,6 +49,9 @@ interface PaymentRow {
   payerOrderId?: string;
   vehicleId?: string;
   purpose?: 'charge' | 'prepayment' | 'deposit';
+  /** 환불이 가리키는 돈 행(refund). */
+  refundOf?: string;
+  reason?: string;
 }
 
 /** 돈 한 행(payments) + 현금이면 cash_movements. */
@@ -59,7 +65,8 @@ function insertPayment(ctx: WriteContext, p: PaymentRow): void {
   insert(ctx.db, 'payments', {
     shop_id: ctx.shopId, id: p.id, payment_group_id: p.groupId, kind_key: p.kind, kind_requires_refund_of: flags.requires_refund_of, kind_requires_deposit: flags.requires_deposit,
     kind_cash_sign: flags.cash_sign, purpose_key: p.purpose ?? (p.kind === 'payment' ? 'charge' : 'deposit'), method_id: p.methodId, method_affects_cash: cash,
-    amount: p.amount, cash_drawer_id: p.drawerId, deposit_id: p.depositId, payer_order_id: p.payerOrderId, collected_by_vehicle_id: p.vehicleId, ...meta,
+    amount: p.amount, cash_drawer_id: p.drawerId, deposit_id: p.depositId, payer_order_id: p.payerOrderId, collected_by_vehicle_id: p.vehicleId,
+    refund_of_payment_id: p.refundOf, reason: p.reason, ...meta,
   });
   if (needsDrawer) {
     insert(ctx.db, 'cash_movements', {
@@ -150,7 +157,34 @@ export function writeMoney(ctx: WriteContext, prevOrder: (id: string) => FxOrder
     insertAllocations(ctx, x.share.id, x.order.id, x.share, { n: 0 }, x.share.at);
   }
   writeDeposits(ctx, newShares.filter((x) => !used.has(x.share) && x.share.methodKey === DEPOSIT_METHOD));
+  // 환불(features-1 E4): 돌려준 수납의 돈 행(몫의 결제 자리, 없으면 그 몫)을 가리키는 refund 행, 목적 · 낸 팀은 그 행에서 복사, 배분은 그 몫이
+  // 채운 자리(줄 · 결제 칸 · 접수 전체)에, 현금은 돈통에서 나간다(cash_movements −).
+  for (const o of after.orders) {
+    for (const r of appended(prevOrder(o.id)?.refunds, o.refunds, '환불 ' + o.id)) insertRefund(ctx, o, r);
+  }
 }
+
+/** 환불 한 건(payments kind refund + 배분 + 현금이면 돈통 나감). */
+function insertRefund(ctx: WriteContext, o: FxOrder, r: FxRefund): void {
+  const share = o.payments.find((p) => p.id === r.refundOf) ?? unmapped('환불이 가리키는 수납이 없다: ' + r.id);
+  const tender = share.groupId ?? share.id;
+  const row = one(ctx.db, 'SELECT purpose_key, payer_order_id FROM payments WHERE shop_id = ? AND id = ?', ctx.shopId, tender);
+  if (!row) unmapped('환불이 가리키는 돈 행이 없다: ' + tender);
+  if (!(r.amount > 0) || !r.reason) unmapped('환불의 모양: ' + r.id);
+  insertPayment(ctx, {
+    id: r.id, kind: 'refund', methodId: r.methodKey, amount: r.amount, ...(r.drawerId ? { drawerId: r.drawerId } : {}), at: r.at, refundOf: tender, reason: r.reason,
+    purpose: str(row.purpose_key) as NonNullable<PaymentRow['purpose']>, ...(text(row.payer_order_id) !== undefined ? { payerOrderId: str(row.payer_order_id) } : {}),
+  });
+  const share2: FxPayment = {
+    id: r.id, amount: r.amount, methodKey: r.methodKey, at: r.at, ...(r.section ? { section: r.section } : {}),
+    ...(r.lines?.length ? { lines: r.lines } : {}),
+  };
+  insertAllocations(ctx, r.id, o.id, share2, { n: 0 }, r.at);
+}
+
+/** 환불의 까닭(payments.reason의 말 → 종류). */
+const causeOfReason = (reason: string | undefined): FxRefund['cause']['kind'] =>
+  reason === DISCOUNT_WORDS.refundCause ? 'discount' : reason === DISCOUNT_WORDS.overpaidCause ? 'overpaid' : 'cancellation';
 
 /** 현장 수납의 차량(돈통이 현금이 아니면 봉투의 업무 차량). */
 function taskVehicleOf(ctx: WriteContext): string | undefined {
@@ -225,12 +259,14 @@ function insertDeposit(ctx: WriteContext, d: FxDeposit): void {
 /** 결제 자리 · 접수마다의 몫 · 보증금. */
 export function loadMoney(db: Db, shopId: string, byId: Map<string, FxOrder>): { paymentGroups: FxPaymentGroup[]; deposits: FxDeposit[] } {
   const payments = all(db, `SELECT p.id, p.payment_group_id, p.kind_key, p.method_id, p.amount, p.cash_drawer_id, p.payer_order_id, p.occurred_at, p.request_id,
-      g.purpose_key AS group_purpose FROM payments p LEFT JOIN payment_groups g ON g.shop_id = p.shop_id AND g.id = p.payment_group_id
+      p.refund_of_payment_id, p.reason, g.purpose_key AS group_purpose, c.depends_on_json FROM payments p
+      LEFT JOIN payment_groups g ON g.shop_id = p.shop_id AND g.id = p.payment_group_id
+      LEFT JOIN command_log c ON c.shop_id = p.shop_id AND c.request_id = p.request_id AND p.kind_key = 'refund'
       WHERE p.shop_id = ? ORDER BY p.rowid`, shopId);
   const allocations = new Map<string, { order_id: string; line_id?: string; amount: number; quantity?: number; section?: string; seq: number }[]>();
   for (const r of all(db, `SELECT a.payment_id, a.seq, a.order_id, a.line_id, a.amount, a.allocated_quantity, s.payment_section_id FROM payment_allocations a
       LEFT JOIN payment_allocation_sections s ON s.shop_id = a.shop_id AND s.payment_id = a.payment_id AND s.seq = a.seq
-      WHERE a.shop_id = ? ORDER BY a.payment_id, a.seq`, shopId)) {
+      WHERE a.shop_id = ? AND a.reallocation_id IS NULL ORDER BY a.payment_id, a.seq`, shopId)) {
     const list = allocations.get(str(r.payment_id)) ?? [];
     list.push({
       order_id: str(r.order_id), ...(text(r.line_id) !== undefined ? { line_id: str(r.line_id) } : {}), amount: num(r.amount),
@@ -247,6 +283,28 @@ export function loadMoney(db: Db, shopId: string, byId: Map<string, FxOrder>): {
     const at = msOf(str(p.occurred_at));
     const method = str(p.method_id);
     const drawer = text(p.cash_drawer_id);
+    if (kind === 'refund') {
+      // 환불: 배분 행의 접수에, 가리키는 돈 행의 그 접수 몫(결제 자리 몫 또는 그 행)을 refundOf로.
+      const rows = allocations.get(id) ?? [];
+      const o = rows[0] ? byId.get(rows[0].order_id) : undefined;
+      if (!o) continue;
+      const tender = str(p.refund_of_payment_id);
+      const share = o.payments.find((x) => (x.groupId ?? x.id) === tender);
+      if (!share) continue;
+      const reason = text(p.reason) ?? '';
+      const cause = causeOfReason(reason);
+      const depends = JSON.parse(text(p.depends_on_json) ?? '[]') as string[];
+      const lines = rows.filter((x) => x.line_id !== undefined);
+      const section = rows.length === 1 && rows[0]!.line_id === undefined ? rows[0]!.section : undefined;
+      const refund: FxRefund = {
+        id, refundOf: share.id, methodKey: method as FxMethodKey, amount: num(p.amount), at, ...(drawer !== undefined ? { drawerId: drawer } : {}),
+        ...(section !== undefined ? { section: section as NonNullable<FxRefund['section']> } : {}),
+        ...(lines.length ? { lines: lines.map((x) => ({ lineId: x.line_id!, quantity: x.quantity ?? 0, amount: x.amount })) } : {}),
+        cause: { kind: cause, ...(cause !== 'overpaid' && depends[0] ? { id: depends[0] } : {}) }, reason,
+      };
+      o.refunds = [...(o.refunds ?? []), refund];
+      continue;
+    }
     if (kind !== 'payment' && kind !== 'deposit_apply') {
       depositMoney.set(id, { method, ...(drawer !== undefined ? { drawer } : {}), at });
       continue;

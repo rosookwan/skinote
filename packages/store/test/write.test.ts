@@ -29,7 +29,10 @@ test('a change the tables cannot hold refuses the whole write before anything is
   const before = store.state(T0);
   const counts = rowCounts(db);
   const cases: [string, (s: ShopState) => void][] = [
-    ['a registry value', (s) => { (s.registry as { shopName: string }).shopName = '다른 이름'; }],
+    // 매장 이름 · 구역 · 차량 …은 목록 바꿈(map/registry)이 옮기지만, 매장 설정 탭에 없는 값(한 줄 수량 한도 · 종류 · 지운 행)은 옮기지 못한다.
+    ['a registry value outside the settings tabs', (s) => { (s.registry as { maxLineQuantity: number }).maxLineQuantity = 99; }],
+    ['a removed area', (s) => { (s.registry.areas as unknown[]).pop(); }],
+    ['a removed staff member', (s) => { s.staff!.pop(); }],
     ['a written payment', (s) => { s.orders[0]!.payments[0]!.amount += 1; }],
     ['a frozen line value', (s) => { s.orders[0]!.lines[0]!.amount += 1; }],
     ['a removed order', (s) => { s.orders.pop(); }],

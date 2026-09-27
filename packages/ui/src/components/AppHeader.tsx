@@ -33,6 +33,11 @@ export interface AppHeaderProps {
   /** menuFor()로 거른 메뉴 행(일터 · 등급 · 기능 · 권한). */
   menu: MenuEntryRow[];
   alertCount: number;
+  /**
+   * 메뉴 버튼 안의 수(메뉴 key → 수, features-1 F1c · §9-3): `확인 필요 3`. 점이 아니라 16px 글자다. 더 보기로 들어간 메뉴의 수는 `더 보기` 버튼이
+   * 합쳐 보인다. 0이면 그리지 않는다.
+   */
+  menuCounts?: Readonly<Record<string, number>>;
   /** 지금 화면의 메뉴 키(켜진 표시). */
   currentKey?: string;
   /** 장부(홈). 없으면 버튼을 그리지 않는다(기사 기기: 목록이 곧 홈). */
@@ -73,7 +78,10 @@ function OfflineTag({ lastSyncAt }: { lastSyncAt: string | undefined }) {
 const LEVEL = { exitIcon: 1, exitInMore: 2, homeIcon: 3, vehicleInMore: 4, moreIcon: 5, findIcon: 6 } as const;
 const LAST_LEVEL = LEVEL.findIcon;
 
-export function AppHeader({ shopName, vehicleLabel, menu, alertCount, currentKey, onHome, onFind, onMenu, onMore, onAlerts, onExit, connection }: AppHeaderProps) {
+/** 메뉴 버튼 안의 수(99를 넘으면 `99+`). */
+const countText = (n: number) => (n > 99 ? '99+' : String(n));
+
+export function AppHeader({ shopName, vehicleLabel, menu, alertCount, menuCounts, currentKey, onHome, onFind, onMenu, onMore, onAlerts, onExit, connection }: AppHeaderProps) {
   const offline = connection !== undefined && !connection.online;
   const profile = useDeviceProfile();
   const barRef = useRef<HTMLElement>(null);
@@ -117,6 +125,25 @@ export function AppHeader({ shopName, vehicleLabel, menu, alertCount, currentKey
   const vehicleInMore = Boolean(vehicleLabel) && level >= LEVEL.vehicleInMore;
   const showMore = fitted.overflow.length > 0 || exitInMore || vehicleInMore;
   const iconOnly = (min: number) => level >= min;
+  const countOf = (key: string) => Math.max(0, menuCounts?.[key] ?? 0);
+  // 더 보기로 들어간 메뉴의 수를 합친다(좁은 포스에서 `확인 필요`가 더 보기 안에 있어도 수가 보이게).
+  const moreCount = fitted.overflow.reduce((sum, entry) => sum + countOf(entry.key), 0);
+  const menuButton = (entry: (typeof entries)[number]) => {
+    const n = countOf(entry.key);
+    return (
+      <button
+        key={entry.key}
+        type="button"
+        className="sn-button"
+        aria-current={entry.key === currentKey ? 'page' : undefined}
+        {...(n > 0 ? { 'aria-label': t('menuCount', { label: entry.label, n }) } : {})}
+        onClick={() => onMenu(entry)}
+      >
+        {entry.label}
+        {n > 0 ? <span className="sn-count" aria-hidden="true">{countText(n)}</span> : null}
+      </button>
+    );
+  };
 
   return (
     <header ref={barRef} className="sn-header">
@@ -137,30 +164,23 @@ export function AppHeader({ shopName, vehicleLabel, menu, alertCount, currentKey
             {iconOnly(LEVEL.findIcon) ? null : <span>{t('find')}</span>}
           </button>
         ) : null}
-        {free.map((entry) => (
-          <button key={entry.key} type="button" className="sn-button" aria-current={entry.key === currentKey ? 'page' : undefined} onClick={() => onMenu(entry)}>
-            {entry.label}
-          </button>
-        ))}
+        {free.map(menuButton)}
         {showMore ? (
           <button
             type="button"
             className={iconOnly(LEVEL.moreIcon) ? 'sn-icon-button' : 'sn-button'}
-            aria-label={t('more')}
+            aria-label={moreCount > 0 ? t('menuCount', { label: t('more'), n: moreCount }) : t('more')}
             onClick={() => onMore?.({ entries: fitted.overflow, includesExit: exitInMore, ...(vehicleInMore && vehicleLabel ? { vehicleLabel } : {}) })}
           >
             {iconOnly(LEVEL.moreIcon) ? <Icon name="more" /> : t('more')}
+            {moreCount > 0 ? <span className={iconOnly(LEVEL.moreIcon) ? 'sn-badge' : 'sn-count'} aria-hidden="true">{countText(moreCount)}</span> : null}
           </button>
         ) : null}
         <button type="button" className="sn-icon-button" aria-label={alertCount > 0 ? t('alertsCount', { n: alertCount }) : t('alerts')} onClick={onAlerts}>
           <Icon name="bell" />
           {alertCount > 0 ? <span className="sn-badge">{alertCount > 99 ? '99+' : alertCount}</span> : null}
         </button>
-        {pinned.map((entry) => (
-          <button key={entry.key} type="button" className="sn-button" aria-current={entry.key === currentKey ? 'page' : undefined} onClick={() => onMenu(entry)}>
-            {entry.label}
-          </button>
-        ))}
+        {pinned.map(menuButton)}
         {exitInMore ? null : (
           <button type="button" className={iconOnly(LEVEL.exitIcon) ? 'sn-icon-button' : 'sn-button'} aria-label={t('exit')} onClick={onExit}>
             <Icon name="exit" />

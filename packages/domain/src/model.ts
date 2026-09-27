@@ -56,6 +56,16 @@ export interface FxLine {
   /** 이 품목을 세는 말(스키 · 보드 '대', 의류 '벌', 헬멧 '개', 권 '매'). 일정 변경 창의 '대여 2대' · '0대'. 없으면 unit ?? '개'. */
   countWord?: string;
   amount: number;
+  /**
+   * 할인 앞 값(order_lines.gross_amount): 접수 때 할인을 받은 줄만 가진다(amount = 뺀 뒤 값, 몫 = gross − amount). 없으면 amount가 할인 앞 값이다.
+   * 접수증 품목 표의 금액 칸은 이 값이고, 할인은 품목 표 아래 출처 줄이다(features-1 §6-2).
+   */
+  gross?: number;
+  /**
+   * 1일 값(장비 줄, order_lines.unit_price · price_basis_key per_day): 줄을 만들 때의 요금표 값. 일정 변경의 연장 · 품목 취소의 연장 몫이 이 값으로
+   * 센다(요금을 바꿔도 이미 받은 접수는 그대로, extension.ts). 없으면(옛 줄 · 견본 · 리프트권) 지금 요금표 값.
+   */
+  dayPrice?: number;
   section: FxSection;
   /** 돌려받는 품목인지(리프트권은 반납 없음). */
   returnable: boolean;
@@ -86,6 +96,48 @@ export interface FxLine {
   /** 새 접수에서 고른 상품 · 규격(옛 줄에는 없음). */
   productKey?: string;
   variantKey?: string;
+  /**
+   * 취소한 수(order_cancellation_lines의 합, features-1 E6): 줄은 얼린 채(qty 그대로) 살아 있는 수 = qty − cancelled(liveQty). 지급 · 적재 · 배달 ·
+   * 업무 · 도장 · 품목 요약은 살아 있는 수로 세고, 반납 · 수거는 내준 것(issued − 돌아온 것)으로 센다(취소 뒤에 온 기사 기록도 적는다, E23).
+   */
+  cancelled?: number;
+  /** 취소한 배달의 차에 실렸던 것 중 매장에 내려놓은 수(stock.receive of the deliver task, E7). 차에 남은 것 = leftover(l). */
+  unloaded?: number;
+  /** 품목 추가(order.add, features-1 §5-5)로 더한 줄의 차수: 카운터에서 더한 때. 없으면 첫 접수 또는 기사 현장 추가. */
+  batch?: { source: 'counter'; at: number };
+  /**
+   * 즉시 교환(exchange.swap, features-1 §7): 사이즈를 바꾼 차례. 줄은 얼린 채(variantKey = 접수 때 규격) 자리마다 지금 규격을 이 기록으로 센다
+   * (variants.ts slotVariants). 쌓기만 한다.
+   */
+  swaps?: FxSwap[];
+  /**
+   * 분실 처리한 수(stock.write_off − 되돌린 것, features-1 E20): 손님에게서 돌아오지 않아 청구 없이 닫은 권(폐기·분실). 손님에게 있는 수 =
+   * 지급 − 반납 − 수거 − 분실(backCount가 센다). 분실 회수(asset.found)한 것도 여기에 남고 found로 따로 센다(지금 분실 = lost − found).
+   */
+  lost?: number;
+  lostAt?: number;
+  /** 분실 처리한 것 중 찾은 수(asset.found: 폐기·분실 → 매장). */
+  found?: number;
+  foundAt?: number;
+}
+
+/**
+ * 즉시 교환 한 건(exchanges + exchange_units, features-1 §7-1): 줄의 수량 일부의 규격을 다른 규격으로. held(planned false)는 손님이 가진 것
+ * (옛 규격이 매장으로 돌아오고 새 규격이 나감), planned는 아직 지급하지 않은 것(이동 없음, 뒤의 지급이 새 규격). 돈은 바뀌지 않는다(금액 유지).
+ * base: 이 교환이 닿는 첫 자리(held = 그때 돌아온 수, planned = 그때 지급한 수 + 차에 실린 수). 저장소는 이동 기록에서 다시 센다.
+ */
+export interface FxSwap {
+  /** = exchange.swap 명령의 요청번호(exchanges.id). */
+  id: string;
+  at: number;
+  quantity: number;
+  /** 옛 규격 · 새 규격(FxVariant.key). */
+  from: string;
+  to: string;
+  planned: boolean;
+  base: number;
+  /** 교환한 사람(명령을 한 직원 이름, 저장소 events.actor_name). 명령을 한 사람을 모르면(메모리 어댑터) 없음. */
+  byName?: string;
 }
 
 export interface FxPayment {
@@ -163,6 +215,18 @@ export interface FxReturnSlot {
   label: string;
   hour: number;
   minute: number;
+  /**
+   * 야간 반납 타임(return_slots.is_night): 더할 때 시각(20:00 이후)으로 정하고 시각을 바꿔도 그대로다(plan E12). 없으면 hour ≥ 20(옛 자료).
+   * 야간 차량 약속의 늦음 기준(vehicleLate.nightMinutes)과 야간 수거 준비가 이것을 본다.
+   */
+  night?: boolean;
+  /** 숨긴 반납 타임(return_slots.active 0): 고르기에서 빠지고, 지난 접수 · 늦음 · 장부는 그대로 읽는다. */
+  hidden?: true;
+  /**
+   * 이 반납 타임이 가졌던 가장 이른 시각(시각을 늦춘 뒤에만, config_changes에서 읽음): 야간이 시작하는 시각은 이것까지 본다 — 22:00을 22:30으로
+   * 바꿔도 이미 22:00에 잡은 접수의 늦음(빨강)이 움직이지 않게(plan E12).
+   */
+  earliest?: { hour: number; minute: number };
 }
 
 /** 운영 규칙(관리 → 매장 설정 → 운영 규칙, V8). 바꾸면 다음 기록부터: 이미 만든 줄 · 보관은 만들 때 복사한 값을 쓴다. */
@@ -290,8 +354,20 @@ export interface FxPromiseSplit {
  * 품목 줄 값 뒤의 청구 조정(charge_adjustments, catalog 14): 날을 옮긴 일정 변경의 연장 값. 늘어난 몫(extension, 금액 > 0)은 수량 ·
  * 늘어난 날을 갖고(order_extension_lines), 날을 되돌려 줄어든 몫(extension_undo `연장 취소`, 금액 < 0)은 금액만 갖는다(0001의 연장 표는
  * 음수를 받지 않는다, plan §3-3 7). 이미 받은 연장 날은 금액에서 센다(promise-sheet.ts extensionOf).
+ * 할인 변경(discount_change, features-1 E9): 접수 뒤의 할인 적용 · 변경 · 해제가 청구를 바꾼 몫(더 큰 할인 = 음수). 줄마다 나눈 몫(lines, 합 =
+ * amount)을 가져 줄마다의 청구(lineCharged)가 맞는다(표에는 줄마다 한 행, discount_application_id로 묶임).
  */
 export type FxCharge =
+  | {
+    id: string;
+    kind: 'discount_change';
+    /** 이 바뀜을 적은 할인 적용(FxDiscountApplication.id = 그 명령의 요청번호). */
+    applicationId: string;
+    section: FxSection;
+    amount: number;
+    lines: { lineId: string; amount: number }[];
+    at: number;
+  }
   | {
     id: string;
     kind: 'extension';
@@ -302,7 +378,11 @@ export type FxCharge =
     amount: number;
     at: number;
   }
-  | { id: string; kind: 'extension_undo'; lineId: string; amount: number; at: number };
+  | { id: string; kind: 'extension_undo'; lineId: string; amount: number; at: number }
+  /** 취소한 수의 값(order_cancellation_lines · charge_adjustments cancellation, 음수, features-1 E5). */
+  | { id: string; kind: 'cancellation'; cancellationId: string; lineId: string; amount: number; at: number }
+  /** 환불 없음을 고른 취소의 줄 몫(charge_adjustments cancellation_fee, 양수 = 그 줄에서 비운 돈): 받은 돈이 그 줄에 남는다. 화면에는 `환불 없음`. */
+  | { id: string; kind: 'cancellation_fee'; cancellationId: string; lineId: string; amount: number; at: number };
 
 export interface FxOrder {
   id: string;
@@ -330,18 +410,74 @@ export interface FxOrder {
   splits?: FxPromiseSplit[];
   /** 청구 조정(연장). 청구 = 줄 값 + 조정. */
   charges?: FxCharge[];
-  /** 접수 때 적용한 할인(discount_applications, catalog 9): 칸마다 하나. 줄 값(amount)은 이미 뺀 값이고 이것은 기록이다. */
+  /**
+   * 할인 적용(discount_applications, catalog 9): 칸마다 쌓인다. 접수 때의 할인은 줄 값(amount)에서 이미 뺐고(줄의 gross − amount), 뒤의 할인 적용 ·
+   * 변경 · 해제는 앞 것을 대신하는 새 행(supersedes)과 청구 조정(discount_change)이다. 칸마다 마지막 행이 그 칸의 지금 할인이다(features-1 E9).
+   */
   discounts?: FxDiscountApplication[];
+  /** 돌려준 돈(features-1 E4): 받은 돈(payments)과 따로 둔다. 받은 돈 합 = 수납 − 환불(paidTotal). */
+  refunds?: FxRefund[];
+  /** 접수 취소 · 품목 취소(order_cancellations, features-1 §5): 쌓기만 한다. */
+  cancellations?: FxCancellation[];
 }
 
-/** 할인 적용 한 건(묶음 = 결제 칸마다 하나, 겹치지 않음). */
+/**
+ * 취소 한 건(order.cancel, data-model S8 · features-1 E5): id = 그 명령의 요청번호(환불의 까닭 id). 범위(접수 전체 · 품목), 구분(취소 요청 · 연락 없음),
+ * 돈의 결정(환불 · 미수 결제 · 환불 없음 · 해당 없음), 줄마다 취소한 수와 그 값(청구에서 뺀 돈, cancellation 조정), 미수 결제면 수납에서 풀어
+ * 접수 전체로 옮긴 돈(released: payment_reallocations).
+ */
+export interface FxCancellation {
+  id: string;
+  at: number;
+  scope: 'order' | 'lines';
+  reasonKey: 'request' | 'no_show';
+  decision: 'refund' | 'apply_to_due' | 'no_refund' | 'not_applicable';
+  lines: { lineId: string; quantity: number; amount: number }[];
+  /** 미수 결제로 접수 전체로 옮긴 묶인 돈(payment_reallocations): 수납 · 그 수납이 묶였던 줄(없으면 그 수납의 칸) · 금액. */
+  released?: { paymentId: string; lineId?: string; amount: number }[];
+}
+
+/** 할인 종류(sys_discount_kinds): 매장 할인(비율 · 금액), 직접 입력(금액 · 비율), 해제(none: 앞 할인을 없앰, 금액 0). */
+export type FxDiscountKind = 'percent' | 'amount' | 'manual_amount' | 'manual_percent' | 'none';
+
+/** 할인 적용 한 건(묶음 = 결제 칸마다 하나, 겹치지 않음: 새 행이 앞 행을 대신한다). */
 export interface FxDiscountApplication {
+  /** 접수 때는 '<접수>:da<n>', 뒤의 할인 적용은 그 명령의 요청번호(환불의 까닭 id, features-1 E3). */
+  id: string;
   sectionKey: FxSection;
-  discountKey: string;
+  /** 매장 할인의 key(discount_rules). 직접 입력 · 해제는 없음. */
+  discountKey?: string;
+  kind: FxDiscountKind;
+  /** 할인 이름(사본, `10% 할인` · `할인 직접 입력` · `할인 해제`). */
   label: string;
-  /** 뺀 금액(10원 단위로 내림). */
+  /** 값의 사본: 비율(%) 또는 금액(원). 해제는 없음. */
+  value?: number;
+  /** 이 칸에서 뺀 금액(10원 단위로 내림, 해제는 0). */
+  amount: number;
+  /** 직접 입력의 사유(개인 정보가 아닌 짧은 글, 20자). */
+  reason?: string;
+  /** 대신한 앞 적용. */
+  supersedes?: string;
+  at: number;
+}
+
+/**
+ * 환불 한 건(payments kind refund, features-1 E4): 돌려준 수납(refundOf = 접수의 FxPayment id)과 수단(그 수납의 수단 또는 현금), 금액(> 0).
+ * 그 수납이 채운 자리(줄 · 결제 칸 · 접수 전체)에서 뺀다(lines · section). 까닭(cause): 할인 변경 · 접수 취소는 그 명령의 id, 초과 수납은 없음.
+ */
+export interface FxRefund {
+  id: string;
+  refundOf: string;
+  methodKey: FxMethodKey;
   amount: number;
   at: number;
+  /** 현금이면 돈통(카운터 'counter'). */
+  drawerId?: string;
+  section?: FxSection;
+  lines?: { lineId: string; quantity: number; amount: number }[];
+  cause: { kind: 'discount' | 'cancellation' | 'overpaid'; id?: string };
+  /** 까닭의 말(payments.reason: `할인 변경`). */
+  reason: string;
 }
 
 /** 방문 결과 하나: 고객 부재 · 장소 변경 · 물품 미준비(수거) · 기타(배달) → 다시 갈 때. */
@@ -375,12 +511,38 @@ export interface FxArea {
   label: string;
   /** 숙소 구역이면 장소 이름 앞에 구역 이름을 붙여 쓴다('솔마을 한솔동'). */
   lodging: boolean;
-  places: { id: string; label: string }[];
+  places: FxPlace[];
+  /** 숨긴 구역(areas.active 0): 고르기에서 빠진다(그 구역의 장소도). 지난 접수의 이름은 그대로 읽는다(plan E12). */
+  hidden?: true;
 }
 
+/** 장소(places). 숨긴 장소는 고르기에서 빠지고 이미 고른 접수에서는 그대로 보인다. */
+export interface FxPlace {
+  id: string;
+  label: string;
+  hidden?: true;
+}
+
+/** 차량. 사용 종료한 차량(vehicles.active 0, 몰리는 날 더한 임시 차량)은 목록에 남아 마감 · 지난 업무가 이름을 읽는다(plan E13). */
 export interface FxVehicle {
   id: string;
   label: string;
+  ended?: true;
+}
+
+/** 직원 역할(roles.key). */
+export type FxRoleKey = 'manager' | 'counter' | 'driver';
+
+/**
+ * 직원(staff_members): 이름 · 역할 · 지금 배정된 차량(vehicle_assignments의 열린 행), 사용 종료(suspended, `다시 사용`으로 되돌림). 이름은
+ * 개인 정보라 명령 기록에서는 event_pii로 간다(journal PII_KEYS).
+ */
+export interface FxStaff {
+  id: string;
+  name: string;
+  roleKey: FxRoleKey;
+  vehicleId?: string;
+  status: 'active' | 'suspended';
 }
 
 /** 기사 기기의 보냄 대기 한 건(오프라인에서 확인한 명령). 다시 연결되면 순서대로 보낸다(sync 8-3). */
@@ -397,11 +559,39 @@ export interface FxDevice {
   /** 연결이 끊긴 때(마지막 맞춤). */
   since?: number;
   queue: FxQueued[];
+  /** 이 기사 기기의 차량(마감의 막는 단계 `1호 차량 기록 2건 전송 대기`). 없으면 1호 차량(메모리 어댑터의 기사 기기). */
+  vehicleId?: string;
+}
+
+/**
+ * 저장된 확인 필요 한 건(review_items, features-1 E18): 지난 일을 적은 것(보냄 대기로 온 기사 기록이 카운터에 밀린 것 · 취소 뒤에 온 기사 기록 ·
+ * 견본 자료)이라 사람이 `확인`으로 끝낸다. 문장(message)은 종류의 틀(REVIEW_TEMPLATES · REVIEW_COUNT_TEMPLATES)과 인자(params)로 만들 때 한 번
+ * 그린다. 초과 수납 · 미입고 · 차량 예비권 기록 부족처럼 지금 상태를 말하는 것은 저장하지 않는다(읽을 때 센다, reviews.ts).
+ */
+export interface FxReview {
+  /** `${요청번호}:r1`(명령이 만든 것) · 견본 `review-o24`(가져오기는 앞글자가 붙는다). */
+  id: string;
+  kindKey: string;
+  params: Record<string, string | number>;
+  message: string;
+  orderId?: string;
+  /** 그 기록의 차량 업무(수거 'collect:o21' …). */
+  taskId?: string;
+  /** 그 기록을 보낸 기기(서버: 세션의 기기, 메모리 어댑터는 없음). */
+  targetDeviceId?: string;
+  /** sync = 보냄 대기로 온 명령, import = 견본 자료. */
+  source: 'sync' | 'import';
+  createdAt: number;
+  status: 'open' | 'resolved';
+  /** 끝낸 것: 방법(`acknowledged` = 확인) · 때 · 누가(명령을 한 사람, 모르면 없음). */
+  resolution?: { key: string; at: number; byName?: string };
 }
 
 /** 매장 목록 값(예전의 모듈 상수, plan §3-2): 품목 · 종류 타일 · 결제 수단 · 결제 칸 · 할인 · 구역 · 차량 · 사유. 서버는 표에서 읽는다(§4-2). */
 export interface ShopRegistry {
   shopName: string;
+  /** 매장 전화(shops.phone, 인쇄 머리 · 매장 정보). 없으면 비어 있다. */
+  shopPhone?: string;
   timezone: 'Asia/Seoul';
   /** 상품(차례는 종류 타일의 차례). */
   products: Readonly<Record<string, FxProduct>>;
@@ -472,6 +662,10 @@ export interface ShopState {
   nextReceiptSeq: number;
   /** 이미 적용한 이야기 사건(메모리 어댑터의 몫, B2c에서 나간다). */
   storyApplied: string[];
+  /** 직원(매장 설정 `차량 · 직원`). 옛 저장 자료에는 없을 수 있다. */
+  staff?: FxStaff[];
+  /** 저장된 확인 필요(features-1 §9). 쌓기만 하고, 끝내면 status가 바뀐다. 옛 저장 자료에는 없을 수 있다. */
+  reviews?: FxReview[];
 }
 
 /** 옛 이름(apps/pos 시험 · 메모리 어댑터가 쓴다). 새 코드는 ShopState를 쓴다. */

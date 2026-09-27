@@ -8,7 +8,8 @@
 // 문제 글은 칸의 자리와 까닭만 적고 보낸 값은 적지 않는다(이름 · 전화가 기록에 남지 않게).
 import { ACTION_KEYS, DEVICE_CLASS_KEYS } from './vocab.ts';
 import { COMMAND_TYPES, type AnyCommandEnvelope, type CommandType, type QueryName, type QueryParams, type ViewParams } from './client.ts';
-import type { ChallengeRequest, EnrollRequest, LoginRequest, OpenEnrollRequest, StaffListRequest } from './auth.ts';
+import type { ChallengeRequest, DeviceBlockRequest, EnrollRequest, LoginRequest, OpenEnrollRequest, StaffListRequest, StaffPinRequest } from './auth.ts';
+import { SETTINGS_TAB_KEYS, TICKET_TAB_KEYS } from './sheets.ts';
 
 // ── 작은 검사 말(DSL) ──────────────────────────────────────────────────
 
@@ -115,6 +116,11 @@ export function union(tag: string, cases: Readonly<Record<string, Rule>>): Rule 
   });
 }
 
+/** 칸 하나(field)가 있으면 앞 모양, 없으면 뒤 모양(구분 칸 없이 모양이 둘인 본문: 적재 = 업무 품목 | 차량 예비권). */
+export function byShape(field: string, when: Rule, otherwise: Rule): Rule {
+  return rule((v, p, out) => (isObject(v) && v[field] !== undefined ? when : otherwise).check(v, p, out));
+}
+
 /** 여러 모양 중 하나(앞에서부터, 처음 맞는 것). 모두 틀리면 한 줄. */
 export function anyOf(...rules: Rule[]): Rule {
   return rule((v, p, out) => {
@@ -153,6 +159,22 @@ export const WIRE_LIMITS = /* @__PURE__ */ Object.freeze({
   orderIds: 30,
   dependsOn: 5,
   ruleChanges: 20,
+  /** 매장 목록 바꿈(registry.update) · 직원 바꿈(staff.set) 한 명령의 건수. */
+  registryOps: 50,
+  staffOps: 20,
+  /** 매장 설정 화면 초안(두 명령을 합친 것). */
+  settingsDraft: 70,
+  /** 금액 · 비율 · 분의 끝(요금 1,000만 원, 할인 금액 100만 원 · 비율 100%, 분 240). */
+  priceMax: 10_000_000,
+  discountAmountMax: 1_000_000,
+  percentMax: 100,
+  minutesMax: 240,
+  /** 직접 입력 할인의 사유(화면 키보드 `할인 사유`, features-1 §6-2). */
+  discountReasonMax: 20,
+  /** 환불 한 명령의 줄(수납마다 하나, features-1 §3-5). */
+  refunds: 10,
+  /** 예비권 적재 · 입고 한 명령의 권종(features-1 §8-1). */
+  spares: 20,
 });
 
 /** id(접수 · 줄 · 업무 · 번호 · 차량 · 알림 · 인계 · 돈통). */
@@ -209,10 +231,65 @@ function shapes(maxQuantity: number) {
     giveBack: promise,
     returnSet: opt(obj({ time: opt(bool), place: opt(bool) })),
   });
-  const choice = obj({ sectionKey: key, methodKey: key, discountKey: opt(key), payerOrderId: opt(id) });
+  const manual = obj({
+    kind: lit('amount', 'percent'), value: int(1, WIRE_LIMITS.discountAmountMax), reason: str({ min: 1, max: WIRE_LIMITS.discountReasonMax, text: true }),
+  });
+  const choice = obj({ sectionKey: key, methodKey: key, discountKey: opt(key), manual: opt(manual), payerOrderId: opt(id) });
+  // 할인 적용의 고른 것: 매장 할인 · 직접 입력 · 할인 없음(features-1 §3-5).
+  const discountChoice = anyOf(obj({ ruleKey: key }), obj({ manual }), obj({ none: rule((v, p, out) => { if (v !== true) add(out, p, '참이어야 한다'); }) }));
   const ruleChange = obj({ key: str({ max: 160, pattern: RULE_KEY }), value: anyOf(str({ max: 40, text: true }), int(-WIRE_LIMITS.money, WIRE_LIMITS.money), bool, rule((v, p, out) => { if (v !== null) add(out, p, 'null이어야 한다'); })) });
   const closingCount = obj({ drawerId: id, countedAmount: money, expectedAmount: opt(signedMoney), reasonKey: opt(key), reasonNote: opt(note) });
-  return { quantity, lineUnits, lines, slot, place, promise, draft, choice, ruleChange, closingCount };
+  // 차량 예비권 한 권종의 수(예비권 적재 · 입고, features-1 §3-5): 명령은 1 이상, 창의 인자는 0부터.
+  const spares = arr(obj({ productKey: key, quantity: int(1, maxQuantity) }), { min: 1, max: WIRE_LIMITS.spares });
+  const sparePicks = arr(obj({ productKey: key, quantity }), { max: WIRE_LIMITS.spares });
+  return { quantity, lineUnits, lines, slot, place, promise, draft, choice, discountChoice, ruleChange, closingCount, spares, sparePicks, ...settingsShapes() };
+}
+
+/** 매장 설정의 초안 한 건(registry.update · staff.set의 바꿈, plan §3-5). 'op'로 모양을 고른다. */
+function settingsShapes() {
+  const { id, key, flag: bool } = common();
+  const label = str({ min: 1, max: WIRE_LIMITS.nameMax, text: true });
+  const ref = str({ min: 1, max: 16, pattern: /^[a-z0-9]{1,16}$/ });
+  const time = str({ max: 5, pattern: HHMM });
+  const move = int(0, 500);
+  const role = lit('manager', 'counter', 'driver');
+  const registryCases = {
+    'shop.set': obj({ op: lit('shop.set'), name: opt(label), phone: opt(str({ max: 11, pattern: /^\d{0,11}$/ })) }),
+    'area.add': obj({ op: lit('area.add'), ref, label }),
+    'area.rename': obj({ op: lit('area.rename'), id, label }),
+    'area.hide': obj({ op: lit('area.hide'), id, hidden: bool }),
+    'area.move': obj({ op: lit('area.move'), id, toIndex: move }),
+    'place.add': obj({ op: lit('place.add'), ref, areaId: id, label }),
+    'place.rename': obj({ op: lit('place.rename'), id, label }),
+    'place.hide': obj({ op: lit('place.hide'), id, hidden: bool }),
+    'place.move': obj({ op: lit('place.move'), id, toIndex: move }),
+    'slot.add': obj({ op: lit('slot.add'), ref, label, time }),
+    'slot.update': obj({ op: lit('slot.update'), id, label: opt(label), time: opt(time) }),
+    'slot.hide': obj({ op: lit('slot.hide'), id, hidden: bool }),
+    'slot.move': obj({ op: lit('slot.move'), id, toIndex: move }),
+    'price.set': obj({ op: lit('price.set'), productKey: key, amount: int(1, WIRE_LIMITS.priceMax) }),
+    'discount.add': obj({
+      op: lit('discount.add'), ref, label, kind: lit('percent', 'amount'), value: int(1, WIRE_LIMITS.discountAmountMax), sections: arr(lit('gear', 'lift'), { min: 1, max: 2 }),
+    }),
+    'discount.update': obj({ op: lit('discount.update'), id, label: opt(label), value: opt(int(1, WIRE_LIMITS.discountAmountMax)) }),
+    'discount.active': obj({ op: lit('discount.active'), id, active: bool }),
+    'vehicle.add': obj({ op: lit('vehicle.add'), ref, label }),
+    'vehicle.rename': obj({ op: lit('vehicle.rename'), id, label }),
+    'vehicle.active': obj({ op: lit('vehicle.active'), id, active: bool }),
+    'setting.default_slot': obj({ op: lit('setting.default_slot'), slotId: id }),
+    'setting.night_notice': obj({ op: lit('setting.night_notice'), minutes: int(0, WIRE_LIMITS.minutesMax) }),
+    'setting.vehicle_late': obj({ op: lit('setting.vehicle_late'), minutes: int(0, WIRE_LIMITS.minutesMax), nightMinutes: int(0, WIRE_LIMITS.minutesMax) }),
+  };
+  const staffCases = {
+    'staff.add': obj({ op: lit('staff.add'), ref, name: label, role, vehicleId: opt(id) }),
+    'staff.update': obj({ op: lit('staff.update'), id, role: opt(role), vehicleId: opt(nullable(id)) }),
+    'staff.active': obj({ op: lit('staff.active'), id, active: bool }),
+  };
+  return {
+    registryOp: union('op', registryCases),
+    staffOp: union('op', staffCases),
+    settingsOp: union('op', { ...registryCases, ...staffCases }),
+  };
 }
 
 // ── 명령 본문 ───────────────────────────────────────────────────────────
@@ -229,10 +306,11 @@ function commandRules(maxQuantity: number): Record<CommandType, Rule> {
   const rules: Record<CommandType, Rule> = {
     'stock.issue': byOrder,
     'stock.direct_return': byOrder,
-    'stock.load': byTask,
+    // 적재: 배달 업무의 품목 또는 차량 예비권(features-1 E21). spares 칸이 있으면 예비권 모양(칸마다 까닭이 남게 anyOf 대신 칸으로 고른다).
+    'stock.load': byShape('spares', obj({ vehicleId: id, spares: s.spares }), byTask),
     'stock.collect': byTask,
     'stock.deliver': byTask,
-    'stock.receive': obj({ vehicleId: id, taskIds: arr(id, { max: 200 }), lines: opt(s.lines) }),
+    'stock.receive': obj({ vehicleId: id, taskIds: arr(id, { max: 200 }), lines: opt(s.lines), spares: opt(s.spares) }),
     'payment.take': obj({
       orderIds: arr(id, { min: 1, max: WIRE_LIMITS.orderIds }),
       amount: money,
@@ -262,6 +340,27 @@ function commandRules(maxQuantity: number): Record<CommandType, Rule> {
       date, drawerCounts: arr(s.closingCount, { max: 20 }), deferredTransferIds: arr(id, { max: 50 }), overrideReason: opt(note),
     }),
     'setting.set': obj({ changes: arr(s.ruleChange, { max: WIRE_LIMITS.ruleChanges }) }),
+    'registry.update': obj({ changes: arr(s.registryOp, { min: 1, max: WIRE_LIMITS.registryOps }) }),
+    'staff.set': obj({ changes: arr(s.staffOp, { min: 1, max: WIRE_LIMITS.staffOps }) }),
+    'discount.apply': obj({ orderId: id, sectionKey: lit('gear', 'lift'), choice: s.discountChoice }),
+    'payment.refund': obj({
+      orderId: id, cause: lit('discount', 'cancellation', 'overpaid'),
+      refunds: arr(obj({ paymentId: id, methodKey: key, amount: int(1, WIRE_LIMITS.money) }), { min: 1, max: WIRE_LIMITS.refunds }),
+    }),
+    'order.cancel': obj({
+      orderId: id, scope: lit('order', 'lines'), lines: s.lines, reasonKey: lit('request', 'no_show'),
+      decision: lit('refund', 'apply_to_due', 'no_refund', 'not_applicable'),
+    }),
+    'order.add': obj({
+      orderId: id, items: arr(obj({ productKey: key, variantKey: opt(key), quantity: s.quantity }), { min: 1, max: WIRE_LIMITS.lines }),
+      choices: arr(s.choice, { max: 10 }), payer: lit('order', 'self'),
+    }),
+    'exchange.swap': obj({ orderId: id, lineId: id, quantity: int(1, maxQuantity), from: key, to: key, planned: bool() }),
+    // 분실 처리 · 분실 회수(features-1 E20).
+    'stock.write_off': obj({ orderId: id, lines: arr(s.lineUnits, { min: 1, max: WIRE_LIMITS.lines }), reasonKey: lit('lost') }),
+    'asset.found': obj({ orderId: id, lines: arr(s.lineUnits, { min: 1, max: WIRE_LIMITS.lines }) }),
+    // 확인 필요 처리(features-1 §9-1): 끝낼 확인 필요 한 건과 그 방법(`확인`).
+    'review.resolve': obj({ reviewId: id, resolutionKey: lit('acknowledged') }),
     'route.move': obj({ taskId: id, anchorTaskId: nullable(id), position: lit('before', 'after', 'top') }),
     'route.reset': obj({ vehicleId: id, date }),
     'task.pin': obj({ taskId: id, note: opt(note) }),
@@ -355,9 +454,10 @@ function queryRules(maxQuantity: number): Record<QueryName, Rule> {
     promiseSheet: obj({
       orderId: id, quantities: opt(rec(ID_PATTERN, s.quantity, WIRE_LIMITS.lines)), slot: opt(s.slot), place: opt(s.place), vehicleId: opt(id),
     }),
-    orderDraft: obj({ draft: s.draft, openKindKey: opt(key), openVariantKey: opt(key) }),
+    orderDraft: obj({ draft: s.draft, openKindKey: opt(key), openVariantKey: opt(key), addTo: opt(id) }),
     checkoutSheet: obj({
       draft: s.draft, choices: opt(arr(s.choice, { max: 10 })), payerOrderId: opt(nullable(id)), foundPayerIds: opt(ids(WIRE_LIMITS.orderIds)),
+      addTo: opt(id), payer: opt(lit('order', 'self')),
     }),
     groupPaySheet: obj({
       orderId: id, tabKey: opt(lit('group', 'unpaid')), selected: opt(ids(WIRE_LIMITS.orderIds)),
@@ -372,6 +472,20 @@ function queryRules(maxQuantity: number): Record<QueryName, Rule> {
     fieldPaySheet: obj({ taskId: id, amount: opt(money), methodKey: opt(key), afterTicket: opt(requestId) }),
     addTicketSheet: obj({ taskId: id, productKey: opt(key), quantity: opt(s.quantity) }),
     shopRules: obj({ changes: opt(arr(s.ruleChange, { max: WIRE_LIMITS.ruleChanges })) }),
+    shopSettings: obj({ tab: lit(...SETTINGS_TAB_KEYS), changes: opt(arr(s.settingsOp, { max: WIRE_LIMITS.settingsDraft })) }),
+    discountSheet: obj({
+      orderId: id, sectionKey: opt(lit('gear', 'lift')), choice: opt(s.discountChoice), methods: opt(rec(ID_PATTERN, key, WIRE_LIMITS.refunds)),
+    }),
+    cancelSheet: obj({
+      orderId: id, scope: lit('order', 'lines'), picked: opt(s.lines), reasonKey: opt(lit('request', 'no_show')),
+      decision: opt(lit('refund', 'apply_to_due', 'no_refund')), methods: opt(rec(ID_PATTERN, key, WIRE_LIMITS.refunds)),
+    }),
+    exchangeSheet: obj({ orderId: id, lineId: opt(id), from: opt(key), planned: opt(bool()), quantity: opt(int(0, maxQuantity)), to: opt(key) }),
+    ticketBoard: obj({ date: opt(date), tab: opt(lit(...TICKET_TAB_KEYS)) }),
+    ticketLossSheet: obj({ orderId: id, direction: lit('loss', 'found'), picked: opt(s.lines) }),
+    spareSheet: obj({ vehicleId: id, direction: lit('load', 'unload'), picked: opt(s.sparePicks) }),
+    phoneReveal: obj({ orderId: id }),
+    refundSheet: obj({ orderId: id, methods: opt(rec(ID_PATTERN, key, WIRE_LIMITS.refunds)) }),
   };
   if (queryCache.size > 16) queryCache.clear();
   queryCache.set(maxQuantity, rules);
@@ -381,7 +495,8 @@ function queryRules(maxQuantity: number): Record<QueryName, Rule> {
 /** 조회 이름(권한 표 · 시험이 쓴다). queryRules가 모든 이름의 규칙을 가지는지는 형식(Record<QueryName, Rule>)이 본다. */
 export const WIRE_QUERY_NAMES = [
   'orderSlip', 'findLast4', 'confirmDraft', 'reviewList', 'vehicleLoad', 'returnSheet', 'promiseSheet', 'orderDraft', 'checkoutSheet', 'groupPaySheet',
-  'partialPaySheet', 'closingSheet', 'taskSheet', 'fieldPaySheet', 'addTicketSheet', 'shopRules',
+  'partialPaySheet', 'closingSheet', 'taskSheet', 'fieldPaySheet', 'addTicketSheet', 'shopRules', 'shopSettings', 'discountSheet', 'cancelSheet',
+  'exchangeSheet', 'ticketBoard', 'ticketLossSheet', 'spareSheet', 'phoneReveal', 'refundSheet',
 ] as const satisfies readonly QueryName[];
 // 목록이 모든 조회를 담았는지 형식으로 확인한다(조회를 더하고 목록을 잊으면 컴파일 오류).
 const QUERY_NAMES_COMPLETE: [Exclude<QueryName, (typeof WIRE_QUERY_NAMES)[number]>] extends [never] ? true : never = true;
@@ -453,7 +568,11 @@ function authRules() {
     staff: obj({ deviceId: requestId, nonce: b64url(43), signature: b64url(86) }),
     // 열린 등록 기기 놓기: staff와 같은 서명(한 번 값 · 기기 열쇠).
     openRelease: obj({ deviceId: requestId, nonce: b64url(43), signature: b64url(86) }),
-    login: obj({ ticket: b64url(43), staffId: requestId, pin: str({ min: 4, max: 6, pattern: /^\d{4,6}$/ }) }),
+    // 직원 id는 매장을 만들 때의 ULID, 또는 직원 바꿈(staff.set)이 만든 `${요청번호}:<ref>`(id 모양).
+    login: obj({ ticket: b64url(43), staffId: id, pin: str({ min: 4, max: 6, pattern: /^\d{4,6}$/ }) }),
+    // 비밀번호 재발급: 대상 직원과 요청한 관리자의 비밀번호(plan E15). 기기 막기: 기기 id(ULID).
+    staffPin: obj({ staffId: id, ownPin: str({ min: 4, max: 6, pattern: /^\d{4,6}$/ }) }),
+    deviceBlock: obj({ deviceId: requestId }),
   };
 }
 let authRuleCache: ReturnType<typeof authRules> | undefined;
@@ -465,6 +584,8 @@ export interface AuthBodies {
   staff: StaffListRequest;
   openRelease: StaffListRequest;
   login: LoginRequest;
+  staffPin: StaffPinRequest;
+  deviceBlock: DeviceBlockRequest;
 }
 
 /** 기기 등록 · 한 번 값 · 직원 목록 · 로그인 본문 검사. 비밀번호 · 등록 번호는 문제 글에 싣지 않는다. */

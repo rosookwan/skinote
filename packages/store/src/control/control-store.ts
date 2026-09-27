@@ -1,9 +1,22 @@
 // control 파일의 행(plan §4-7): 매장 목록(tenants), 직원 계정(accounts · account_tenants), 세션(sessions), 로그인 시도
 // (login_attempts), 등록 번호 길잡이(enrollment_routes). 서버의 로그인 · 세션(auth.js)과 명령줄(provision · rotate-pin · revoke)이
 // 쓴다. 비밀번호 해시(scrypt)는 서버가 만들어 넘기고 여기서는 PHC 글자만 저장한다. 세션 토큰은 sha256만 둔다.
+import { createHash } from 'node:crypto';
 import { StoreError } from '../errors.ts';
-import { isoOf, msOf, ulid } from '../ids.ts';
+import { canonicalJson, isoOf, msOf, ulid } from '../ids.ts';
 import { all, insert, num, one, run, str, text, type Db, type InValue, type Row } from '../db.ts';
+
+/** 사용 내역 줄의 열(hash 뺌) — 적을 때와 다시 셀 때 같은 차례 · 같은 열이다. */
+const AUDIT_COLUMNS = [
+  'chain_id', 'seq', 'id', 'at', 'tenant_id', 'account_id', 'actor_label', 'device_id', 'session_id', 'ip_hash', 'category_key', 'action_key', 'target_type',
+  'target_id', 'before_json', 'after_json', 'request_id', 'outcome_key', 'message', 'prev_hash',
+] as const;
+
+/** sha256(prev_hash + canonical(열 모두, 없으면 null)). */
+function auditHash(row: Readonly<Record<string, unknown>>): string {
+  const full = Object.fromEntries(AUDIT_COLUMNS.map((k) => [k, row[k] ?? null]));
+  return createHash('sha256').update(String(row.prev_hash ?? '') + canonicalJson(full)).digest('hex');
+}
 
 export interface Tenant {
   id: string;
@@ -91,6 +104,27 @@ export interface ControlStore {
   revokeDeviceSessions(tenantId: string, deviceId: string, reason: string, now: number): number;
   /** 한 기기의 열린 세션(스트림 닫기 · 시험). */
   openSessionsOfDevice(tenantId: string, deviceId: string, now: number): Session[];
+  /** 한 직원의 열린 세션(모든 기기: 사용 종료 · 비밀번호 재발급 · 역할 바꿈 뒤 알림 연결 닫기). */
+  openSessionsOfStaff(tenantId: string, staffMemberId: string, now: number): Session[];
+  /** 한 직원의 열린 세션을 끝낸다(keep은 남길 세션: 자기 비밀번호를 새로 받은 관리자의 지금 세션). 끝낸 세션 id. */
+  revokeStaffSessions(tenantId: string, staffMemberId: string, reason: string, now: number, keep?: string): string[];
+  /**
+   * 매장 설정에서 더한 직원의 control 계정(비밀번호 재발급이 처음 부를 때, features-1 E15): id는 매장 파일이 미리 정한 staff_members.account_id,
+   * 로그인 이름은 그 매장의 다음 'staff-N'. 이미 있으면 그대로.
+   */
+  ensureAccount(input: { id: string; tenantId: string; displayName: string }, now: number): Account;
+  /**
+   * 플랫폼 사용 내역 한 줄(platform_audit_log, 사슬: 이 파일의 instance_id마다 이어지는 hash). 비밀(비밀번호 · 토큰)은 싣지 않는다.
+   */
+  appendAudit(input: {
+    tenantId?: string; accountId?: string; actorLabel: string; deviceId?: string; sessionId?: string; ipHash?: string; category: string; action: string;
+    targetType?: string; targetId?: string; outcome: 'ok' | 'denied' | 'failed'; now: number;
+  }): { seq: number; hash: string };
+  /**
+   * 사용 내역 사슬(platform_audit_log)을 다시 센다: 차례(seq)가 비지 않고, 줄마다 prev_hash = 앞 줄의 hash, hash = sha256(prev_hash + canonical(열 모두,
+   * hash 뺌)). 어긋난 첫 줄의 seq(모두 맞으면 null).
+   */
+  verifyAuditChain(chainId?: string): { ok: boolean; badSeq: number | null; rows: number };
   /** 한 기기의 가장 새 세션이 적은 브라우저 모양(user_agent, 명령줄 status가 스스로 붙은 기기를 가릴 때). 없으면 undefined. */
   lastUserAgent(tenantId: string, deviceId: string): string | undefined;
   recordAttempt(input: {
@@ -254,6 +288,68 @@ export function openControlStore(db: Db): ControlStore {
     },
     openSessionsOfDevice(tenantId, deviceId, now) {
       return all(db, 'SELECT * FROM sessions WHERE tenant_id = ? AND device_id = ? AND revoked_at IS NULL AND expires_at > ? ORDER BY created_at', tenantId, deviceId, isoOf(now)).map(sessionOf);
+    },
+    openSessionsOfStaff(tenantId, staffMemberId, now) {
+      return all(db, 'SELECT * FROM sessions WHERE tenant_id = ? AND staff_member_id = ? AND revoked_at IS NULL AND expires_at > ? ORDER BY created_at', tenantId, staffMemberId, isoOf(now)).map(sessionOf);
+    },
+    revokeStaffSessions(tenantId, staffMemberId, reason, now, keep) {
+      const ids = all(db, 'SELECT id FROM sessions WHERE tenant_id = ? AND staff_member_id = ? AND revoked_at IS NULL', tenantId, staffMemberId).map((r) => str(r.id)).filter((id) => id !== keep);
+      for (const id of ids) run(db, 'UPDATE sessions SET revoked_at = ?, revoke_reason = ? WHERE id = ? AND revoked_at IS NULL', isoOf(now), reason, id);
+      return ids;
+    },
+    ensureAccount(input, now) {
+      return tx(db, () => {
+        const found = store.account(input.id);
+        if (found) {
+          // 있는 계정은 이 매장의 사람일 때만(2026-09-27 점검: 다른 매장의 계정 비밀번호를 바꿀 수 있었다).
+          const member = one(db, "SELECT 1 AS x FROM account_tenants WHERE account_id = ? AND tenant_id = ? AND status_key = 'active'", input.id, input.tenantId);
+          if (!member) throw new StoreError('ACCOUNT_TENANT_MISMATCH', '이 매장의 계정이 아니다: ' + input.id);
+          return found;
+        }
+        const tenant = store.tenant(input.tenantId);
+        if (!tenant) throw new StoreError('SHOP_NOT_PROVISIONED', '없는 매장: ' + input.tenantId);
+        const at = isoOf(now);
+        const count = num(one(db, 'SELECT count(*) AS n FROM accounts WHERE login_realm = ?', tenant.code)?.n);
+        insert(db, 'accounts', {
+          id: input.id, login_realm: tenant.code, login_id: 'staff-' + (count + 1), display_name: input.displayName, must_change_password: false, status_key: 'active',
+          created_at: at, updated_at: at,
+        });
+        insert(db, 'account_tenants', { account_id: input.id, tenant_id: input.tenantId, status_key: 'active', updated_at: at });
+        return store.account(input.id)!;
+      });
+    },
+    appendAudit(input) {
+      return tx(db, () => {
+        const chain = str(one(db, 'SELECT instance_id FROM db_instance WHERE singleton = 1')?.instance_id ?? 'control');
+        const last = one(db, 'SELECT seq, hash FROM platform_audit_log WHERE chain_id = ? ORDER BY seq DESC LIMIT 1', chain);
+        const seq = num(last?.seq) + 1;
+        const prevHash = last ? str(last.hash) : '';
+        // 열 모두(값이 없으면 null)를 적고, 해시는 그 열들의 canonical JSON으로 센다(스키마 주석 sha256(prev_hash || canonical(row without hash)):
+        // 다시 읽은 행으로 같은 해시가 나오게, 2026-09-27 점검).
+        const row: Record<string, string | number | null> = {
+          chain_id: chain, seq, id: ulid(input.now), at: isoOf(input.now), tenant_id: input.tenantId ?? null, account_id: input.accountId ?? null,
+          actor_label: input.actorLabel, device_id: input.deviceId ?? null, session_id: input.sessionId ?? null, ip_hash: input.ipHash ?? null,
+          category_key: input.category, action_key: input.action, target_type: input.targetType ?? null, target_id: input.targetId ?? null,
+          before_json: null, after_json: null, request_id: null, outcome_key: input.outcome, message: null, prev_hash: prevHash,
+        };
+        const hash = auditHash(row);
+        insert(db, 'platform_audit_log', { ...Object.fromEntries(Object.entries(row).filter(([, v]) => v !== null)), hash });
+        return { seq, hash };
+      });
+    },
+    verifyAuditChain(chainId) {
+      const chain = chainId ?? str(one(db, 'SELECT instance_id FROM db_instance WHERE singleton = 1')?.instance_id ?? 'control');
+      let prev = '';
+      let expectSeq = 1;
+      const rows = all(db, 'SELECT * FROM platform_audit_log WHERE chain_id = ? ORDER BY seq', chain);
+      for (const r of rows) {
+        const { hash, ...rest } = r as Record<string, string | number | null>;
+        const seq = num(rest.seq);
+        if (seq !== expectSeq || str(rest.prev_hash) !== prev || auditHash(rest) !== hash) return { ok: false, badSeq: seq, rows: rows.length };
+        prev = str(hash);
+        expectSeq += 1;
+      }
+      return { ok: true, badSeq: null, rows: rows.length };
     },
     lastUserAgent(tenantId, deviceId) {
       return text(one(db, 'SELECT user_agent FROM sessions WHERE tenant_id = ? AND device_id = ? AND user_agent IS NOT NULL ORDER BY created_at DESC LIMIT 1',

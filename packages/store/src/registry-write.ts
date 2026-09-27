@@ -1,12 +1,13 @@
 // 매장 목록 값(ShopRegistry) · 운영 규칙(FxShopRules) · 돈통 → 표(plan §4-2 '머리와 목록'). 매장을 만들 때(provision) 한 번 모두
 // 쓰고, 운영 규칙 저장(setting.set)은 바뀐 곳만 쓴다(목록 행은 제자리 수정 + config_changes 기록, 설정은 shop_settings 새 판).
 // 되읽기(registry-read)가 같은 값을 돌려주는 것이 기준이다(load(write(x)) ≡ x, D3). 규칙 셈은 하지 않고 모양만 옮긴다.
-import type { FxDepositRule, FxDrawer, FxKind, FxProduct, FxReturnSlot, FxShopRules, ShopRegistry } from '@skinote/domain';
+import type { FxDepositRule, FxDiscount, FxDrawer, FxKind, FxProduct, FxReturnSlot, FxShopRules, ShopRegistry } from '@skinote/domain';
 import { StoreError } from './errors.ts';
 import { canonicalJson, isoOf } from './ids.ts';
-import { insert, num, one, run, type Db } from './db.ts';
+import { insert, num, one, run, str, type Db } from './db.ts';
 import {
-  axisAttribute, axisOption, CASH_METHOD, CLOSING_DIFFERENCE, DEPOSIT_METHOD, DEPOSIT_SECTION, EXTENSION, EXTENSION_UNDO, HANDOVER, INCLUDES_ATTRIBUTE,
+  axisAttribute, axisOption, CANCELLATION, CANCELLATION_FEE, CANCELLATION_REASON, CASH_METHOD, CLOSING_DIFFERENCE, DEPOSIT_METHOD, DEPOSIT_SECTION, DISCOUNT_CHANGE, EXTENSION,
+  EXTENSION_UNDO, HANDOVER, INCLUDES_ATTRIBUTE,
   MAIN_SCOPE, OK_CONDITION, PRICE_LIST, PRICE_VERSION, priceRuleId, reasonId, SETTING, TICKET_VENDOR, defaultVariantId, variantId, VISIT_RESULT,
 } from './registry-keys.ts';
 
@@ -52,6 +53,67 @@ function returnPolicyOf(products: readonly FxProduct[], settings: FxShopRules): 
 export function depositRuleOf(settings: FxShopRules): FxDepositRule | undefined {
   if (settings.liftDeposit && settings.liftDepositOff) bad('보증금 규칙이 사용 · 미사용 둘 다 있다');
   return settings.liftDeposit ?? settings.liftDepositOff;
+}
+
+/** 반납 타임의 야간 여부(return_slots.is_night): 도메인 값, 없으면(옛 자료) 20시 이후. */
+export const slotNight = (s: FxReturnSlot) => s.night ?? s.hour >= 20;
+
+/** 청구 조정 종류 `할인 변경`(부호 0: 할인이 커지면 음수, 줄면 양수, features-1 E9). */
+function insertDiscountChangeType(db: Db, shopId: string, at: string): void {
+  insert(db, 'adjustment_types', {
+    shop_id: shopId, id: DISCOUNT_CHANGE, key: DISCOUNT_CHANGE, label: '할인 변경', report_group_key: 'discount', sign: 0, is_system: true, sort: 3, created_at: at, updated_at: at,
+  });
+}
+
+/** `할인 변경` 종류가 없으면 둔다(0004 전에 만든 매장 파일: 코드가 처음 쓸 때, features-1 §3-2). */
+export function ensureDiscountChangeType(db: Db, shopId: string, at: string): void {
+  if (!one(db, 'SELECT 1 AS x FROM adjustment_types WHERE shop_id = ? AND id = ?', shopId, DISCOUNT_CHANGE)) insertDiscountChangeType(db, shopId, at);
+}
+
+/**
+ * 취소의 청구 조정 종류(취소 −, 환불 없음 +)와 구분 사유(취소 요청 · 연락 없음)가 없으면 둔다(0004 전에 만든 매장 파일: 코드가 처음 쓸 때, 새 매장은
+ * 매장 만들기가, features-1 §3-2). 이름은 문구 표 3-20의 말.
+ */
+export function ensureCancellationKinds(db: Db, shopId: string, at: string): void {
+  const base = { shop_id: shopId, is_system: true, created_at: at, updated_at: at };
+  if (!one(db, 'SELECT 1 AS x FROM adjustment_types WHERE shop_id = ? AND id = ?', shopId, CANCELLATION)) {
+    insert(db, 'adjustment_types', { ...base, id: CANCELLATION, key: CANCELLATION, label: '취소', report_group_key: 'charge', sign: -1, sort: 4 });
+  }
+  if (!one(db, 'SELECT 1 AS x FROM adjustment_types WHERE shop_id = ? AND id = ?', shopId, CANCELLATION_FEE)) {
+    insert(db, 'adjustment_types', { ...base, id: CANCELLATION_FEE, key: CANCELLATION_FEE, label: '환불 없음', report_group_key: 'fee', sign: 1, sort: 5 });
+  }
+  const reasons = [{ key: 'request', label: '취소 요청' }, { key: 'no_show', label: '연락 없음' }];
+  reasons.forEach((r, i) => {
+    const id = reasonId(CANCELLATION_REASON, r.key);
+    if (!one(db, 'SELECT 1 AS x FROM reason_codes WHERE shop_id = ? AND id = ?', shopId, id)) {
+      insert(db, 'reason_codes', { shop_id: shopId, id, domain_key: CANCELLATION_REASON, key: r.key, label: r.label, is_system: true, sort: i });
+    }
+  });
+}
+
+/** 할인 묶음이 내는 종류(discount_group_kinds)를 둔다(매장 만들기는 비율만 두었다, features-1 E10). */
+export function ensureGroupKind(db: Db, shopId: string, group: string, kind: string): void {
+  if (one(db, 'SELECT 1 AS x FROM discount_group_kinds WHERE shop_id = ? AND discount_group_id = ? AND discount_kind_key = ?', shopId, group, kind)) return;
+  const sort = num(one(db, 'SELECT count(*) AS n FROM discount_group_kinds WHERE shop_id = ? AND discount_group_id = ?', shopId, group)?.n);
+  insert(db, 'discount_group_kinds', { shop_id: shopId, discount_group_id: group, discount_kind_key: kind, sort });
+}
+
+/** 할인 규칙 한 행과 대상(결제 칸의 종류들). 규칙이 칸 여럿에 걸리면 첫 칸의 묶음에 둔다(plan §4-2). */
+export function insertDiscountRule(db: Db, shopId: string, reg: ShopRegistry, d: FxDiscount, sort: number, at: string, rev = 0): void {
+  const group = d.sections[0] ?? bad('할인 ' + d.key + '의 결제 칸이 없다');
+  ensureGroupKind(db, shopId, group, d.kind);
+  insert(db, 'discount_rules', {
+    shop_id: shopId, id: d.key, label: d.label, discount_kind_key: d.kind, discount_group_id: group,
+    ...(d.kind === 'percent' ? { percent_bp: Math.round(d.value * 100) } : { amount: d.value }), rounding_unit: 10, sort, active: !d.hidden,
+    required_permission_key: d.requiredPermission,
+    created_at: at, updated_at: at, updated_rev: rev,
+  });
+  let seq = 0;
+  for (const section of d.sections) {
+    const kinds = reg.kinds.filter((k) => reg.products[k.products[0] ?? '']?.section === section);
+    if (!kinds.length) bad('할인 ' + d.key + '의 결제 칸 ' + section + '에 종류가 없다');
+    for (const k of kinds) insert(db, 'discount_rule_targets', { shop_id: shopId, discount_rule_id: d.key, seq: (seq += 1), item_kind_id: k.key });
+  }
 }
 
 /** 설정 값의 JSON(shop_settings.value_json). */
@@ -105,11 +167,12 @@ export function writeRegistry(
   const at = isoOf(meta.now);
   const base = { shop_id: shopId, created_at: at, updated_at: at };
 
-  reg.vehicles.forEach((v) => insert(db, 'vehicles', { ...base, id: v.id, code: v.id, name: v.label }));
+  reg.vehicles.forEach((v) => insert(db, 'vehicles', { ...base, id: v.id, code: v.id, name: v.label, active: !v.ended, retired_at: v.ended ? at : undefined }));
   drawers.forEach((d) => insert(db, 'cash_drawers', { ...base, id: d.id, kind_key: d.kind, label: d.label, vehicle_id: d.vehicleId, closing_scope_id: MAIN_SCOPE }));
 
   reg.payMethods.forEach((m, i) => insert(db, 'payment_methods', {
     ...base, id: m.key, key: m.key, label: m.label, affects_cash_drawer: m.key === CASH_METHOD, driver_allowed: m.driver, quick: m.quick, sort: i,
+    refundable: m.refundable !== false,
   }));
   // 보증금 결제(미수 차감): 돈이 움직이지 않는 시스템 수단. 매장 목록(registry.payMethods)에는 없다.
   insert(db, 'payment_methods', {
@@ -202,18 +265,7 @@ export function writeRegistry(
   run(db, "UPDATE price_list_versions SET status_key = 'published', published_at = ?, published_by = ? WHERE shop_id = ? AND id = ?", at, meta.actorKey, shopId, PRICE_VERSION);
 
   // 할인: 규칙 하나가 결제 칸 여럿에 걸리면 첫 칸의 묶음에 두고 대상은 그 칸들의 종류(plan §4-2)
-  reg.discounts.forEach((d, i) => {
-    const group = d.sections[0] ?? bad('할인 ' + d.key + '의 결제 칸이 없다');
-    insert(db, 'discount_rules', {
-      ...base, id: d.key, label: d.label, discount_kind_key: 'percent', discount_group_id: group, percent_bp: Math.round(d.percent * 100), rounding_unit: 10, sort: i,
-    });
-    let seq = 0;
-    for (const section of d.sections) {
-      const kinds = reg.kinds.filter((k) => sectionOfKind.get(k.key) === section);
-      if (!kinds.length) bad('할인 ' + d.key + '의 결제 칸 ' + section + '에 종류가 없다');
-      for (const k of kinds) insert(db, 'discount_rule_targets', { shop_id: shopId, discount_rule_id: d.key, seq: (seq += 1), item_kind_id: k.key });
-    }
-  });
+  reg.discounts.forEach((d, i) => insertDiscountRule(db, shopId, reg, d, i, at));
 
   // 보증금 규칙(있으면)
   const rule = depositRuleOf(settings);
@@ -221,15 +273,18 @@ export function writeRegistry(
 
   // 구역 · 장소(숙소 구역은 장소마다 쓰임 lodging)
   reg.areas.forEach((a, i) => {
-    insert(db, 'areas', { ...base, id: a.id, name: a.label, sort: i });
+    insert(db, 'areas', { ...base, id: a.id, name: a.label, sort: i, active: !a.hidden });
     if (a.lodging && !a.places.length) bad('장소 없는 숙소 구역은 되읽을 수 없다: ' + a.id);
     a.places.forEach((p, j) => {
-      insert(db, 'places', { ...base, id: p.id, area_id: a.id, name: p.label, sort: j });
+      insert(db, 'places', { ...base, id: p.id, area_id: a.id, name: p.label, sort: j, active: !p.hidden });
       if (a.lodging) insert(db, 'place_uses', { shop_id: shopId, place_id: p.id, use_key: 'lodging' });
     });
   });
 
-  settings.returnSlots.forEach((s, i) => insert(db, 'return_slots', { ...base, id: s.key, label: s.label, ...slotRow(s), is_night: s.hour >= 20, sort: i }));
+  settings.returnSlots.forEach((s, i) => {
+    if (s.earliest) bad('새 매장의 반납 타임에는 시각을 바꾼 기록이 없다: ' + s.key);
+    insert(db, 'return_slots', { ...base, id: s.key, label: s.label, ...slotRow(s), is_night: slotNight(s), sort: i, active: !s.hidden });
+  });
   if (settings.defaultReturnSlotKey !== undefined && !settings.returnSlots.some((s) => s.key === settings.defaultReturnSlotKey)) bad('기본 반납 타임이 목록에 없다');
 
   reg.visitOutcomes.forEach((o, i) => insert(db, 'reason_codes', { shop_id: shopId, id: reasonId(VISIT_RESULT, o.key), domain_key: VISIT_RESULT, key: o.key, label: o.label, sort: i }));
@@ -238,18 +293,38 @@ export function writeRegistry(
   }
   insert(db, 'adjustment_types', { ...base, id: EXTENSION, key: EXTENSION, label: '연장', report_group_key: 'charge', sign: 1, is_system: true, sort: 1 });
   insert(db, 'adjustment_types', { ...base, id: EXTENSION_UNDO, key: EXTENSION_UNDO, label: '연장 취소', report_group_key: 'charge', sign: -1, is_system: true, sort: 2 });
+  insertDiscountChangeType(db, shopId, at);
+  ensureCancellationKinds(db, shopId, at);
   insert(db, 'asset_conditions', { shop_id: shopId, id: OK_CONDITION, key: OK_CONDITION, label: '사용 가능', issuable: true, settable_manually: false, is_system: true, sort: 0 });
 
   for (const [key, value] of Object.entries(settingValues(reg, settings))) writeSetting(db, shopId, key, value, meta);
 }
 
 /** 바뀐 목록 행 한 줄의 기록(config_changes). */
-interface ConfigChange {
+export interface ConfigChange {
   entity: string;
   id: string;
   before: unknown;
   after: unknown;
   at?: number;
+}
+
+/**
+ * 한 명령의 설정 쓰기를 끝낸다(features-1 E25): 바뀐 것이 있으면 shops.config_rev를 한 번만 올리고 바뀐 행마다 config_changes 한 줄. 새 값을
+ * 돌려준다(바뀐 것이 없으면 지금 값).
+ */
+export function finishConfig(db: Db, shopId: string, changes: readonly ConfigChange[], versioned: boolean, meta: WriteMeta): { configRev: number } {
+  const current = num(one(db, 'SELECT config_rev FROM shops WHERE id = ?', shopId)?.config_rev);
+  if (!changes.length && !versioned) return { configRev: current };
+  const at = isoOf(meta.now);
+  const configRev = current + 1;
+  run(db, 'UPDATE shops SET config_rev = ?, updated_at = ?, updated_rev = ? WHERE id = ?', configRev, at, meta.rev, shopId);
+  changes.forEach((c, i) => insert(db, 'config_changes', {
+    shop_id: shopId, config_rev: configRev, seq: i + 1, entity_type: c.entity, entity_id: c.id,
+    before_json: c.before === null ? null : canonicalJson(c.before), after_json: canonicalJson(c.after), actor_key: meta.actorKey, request_id: meta.requestId,
+    at: c.at !== undefined ? isoOf(c.at) : at,
+  }));
+  return { configRev };
 }
 
 /**
@@ -261,6 +336,17 @@ interface ConfigChange {
 export function writeSettingsChange(
   db: Db, shopId: string, reg: ShopRegistry, before: FxShopRules, after: FxShopRules, meta: WriteMeta,
 ): { configRev: number } {
+  const { changes, versioned } = settingsRows(db, shopId, reg, before, after, meta);
+  return finishConfig(db, shopId, changes, versioned, meta);
+}
+
+/**
+ * 운영 규칙의 바뀐 행만 쓴다(config_rev는 올리지 않음: 명령마다 finishConfig가 한 번). 바뀐 목록 행(config_changes에 적을 것)과 설정 새 판이
+ * 있었는지를 돌려준다.
+ */
+export function settingsRows(
+  db: Db, shopId: string, reg: ShopRegistry, before: FxShopRules, after: FxShopRules, meta: WriteMeta,
+): { changes: ConfigChange[]; versioned: boolean } {
   const at = isoOf(meta.now);
   const changes: ConfigChange[] = [];
   const handled = new Set<keyof FxShopRules>();
@@ -315,20 +401,32 @@ export function writeSettingsChange(
 
   handled.add('returnSlots');
   if (!same(before.returnSlots, after.returnSlots)) {
-    const keep = new Set(after.returnSlots.map((s) => s.key));
+    // 반납 타임은 지우지 않는다(숨김 = active 0). 행마다 바뀐 칸만 고치고 config_changes 한 줄: 앞 값의 시각이 `가장 이른 시각`(earliest)의
+    // 근거다(registry-read slotEarliest). 야간 여부(is_night)는 더할 때만 적는다(features-1 E12).
+    const kept = new Set(after.returnSlots.map((s) => s.key));
+    if (before.returnSlots.some((s) => !kept.has(s.key))) throw new StoreError('UNMAPPED_CHANGE', '반납 타임을 지우는 바뀜은 표에 없다(숨김은 active 0)');
+    const rowOf = (s: FxReturnSlot, i: number) => ({ label: s.label, ...slotRow(s), sort: i, active: s.hidden ? 0 : 1 });
     after.returnSlots.forEach((s, i) => {
-      const exists = one(db, 'SELECT 1 AS x FROM return_slots WHERE shop_id = ? AND id = ?', shopId, s.key);
-      if (exists) {
-        run(db, 'UPDATE return_slots SET label = ?, local_time = ?, day_offset = ?, sort = ?, active = 1, updated_at = ?, updated_rev = ?, version = version + 1 WHERE shop_id = ? AND id = ?',
-          s.label, slotRow(s).local_time, slotRow(s).day_offset, i, at, meta.rev, shopId, s.key);
-      } else {
-        insert(db, 'return_slots', { shop_id: shopId, id: s.key, label: s.label, ...slotRow(s), is_night: s.hour >= 20, sort: i, created_at: at, updated_at: at, updated_rev: meta.rev });
+      const was = before.returnSlots.find((x) => x.key === s.key);
+      const row = rowOf(s, i);
+      if (!was) {
+        insert(db, 'return_slots', { shop_id: shopId, id: s.key, ...row, is_night: slotNight(s), created_at: at, updated_at: at, updated_rev: meta.rev });
+        changes.push({ entity: 'return_slots', id: s.key, before: null, after: { ...row, is_night: slotNight(s) ? 1 : 0 } });
+        return;
+      }
+      if (slotNight(was) !== slotNight(s)) throw new StoreError('UNMAPPED_CHANGE', '반납 타임의 야간 여부 바꾸기: ' + s.key);
+      const old = rowOf(was, before.returnSlots.indexOf(was));
+      if (same(old, row)) return;
+      run(db, `UPDATE return_slots SET label = ?, local_time = ?, day_offset = ?, sort = ?, active = ?, updated_at = ?, updated_rev = ?, version = version + 1
+        WHERE shop_id = ? AND id = ?`, row.label, row.local_time, row.day_offset, row.sort, row.active, at, meta.rev, shopId, s.key);
+      changes.push({ entity: 'return_slots', id: s.key, before: old, after: row });
+      // 그 타임에 끝나는 권종의 사용 창 끝(ticket_products.window_end)도 새 시각으로(권의 반납 시각 처음 값이 타임을 따라가게).
+      if (old.local_time !== row.local_time) {
+        for (const p of Object.values(reg.products)) {
+          if (p.returnSlotKey === s.key) run(db, 'UPDATE ticket_products SET window_end = ? WHERE shop_id = ? AND catalog_item_id = ?', row.local_time, shopId, p.key);
+        }
       }
     });
-    for (const s of before.returnSlots) {
-      if (!keep.has(s.key)) run(db, 'UPDATE return_slots SET active = 0, updated_at = ?, updated_rev = ?, version = version + 1 WHERE shop_id = ? AND id = ?', at, meta.rev, shopId, s.key);
-    }
-    changes.push({ entity: 'return_slots', id: '*', before: before.returnSlots, after: after.returnSlots });
   }
 
   // 설정 새 판(값이 바뀐 key만)
@@ -345,15 +443,24 @@ export function writeSettingsChange(
   const left = (Object.keys({ ...before, ...after }) as (keyof FxShopRules)[]).filter((k) => !handled.has(k) && !same(before[k], after[k]));
   if (left.length) throw new StoreError('UNMAPPED_CHANGE', '표로 옮기지 못한 운영 규칙: ' + left.join(', '));
 
-  const current = num(one(db, 'SELECT config_rev FROM shops WHERE id = ?', shopId)?.config_rev);
-  const settingsChanged = Object.keys(valuesAfter).some((key) => !same(valuesBefore[key], valuesAfter[key]));
-  if (!changes.length && !settingsChanged) return { configRev: current };
-  const configRev = current + 1;
-  run(db, 'UPDATE shops SET config_rev = ?, updated_at = ?, updated_rev = ? WHERE id = ?', configRev, at, meta.rev, shopId);
-  changes.forEach((c, i) => insert(db, 'config_changes', {
-    shop_id: shopId, config_rev: configRev, seq: i + 1, entity_type: c.entity, entity_id: c.id,
-    before_json: c.before === null ? null : canonicalJson(c.before), after_json: canonicalJson(c.after), actor_key: meta.actorKey, request_id: meta.requestId,
-    at: c.at !== undefined ? isoOf(c.at) : at,
-  }));
-  return { configRev };
+  const versioned = Object.keys(valuesAfter).some((key) => !same(valuesBefore[key], valuesAfter[key]));
+  return { changes, versioned };
+}
+
+/**
+ * 역할의 직접 입력 할인 한도(role_permissions.limits_json of discount.manual)를 적는다. 쓰기 트랜잭션은 부르는 쪽(shop-store). 설정 값이라 장부 표가
+ * 아니다(바꿔 쓴다). 그 역할에 discount.manual이 없으면 false.
+ */
+export function setRoleLimits(db: Db, shopId: string, roleKey: string, limits: { maxDiscountAmount?: number; maxDiscountPercentBp?: number } | null): boolean {
+  const json = limits && (limits.maxDiscountAmount !== undefined || limits.maxDiscountPercentBp !== undefined)
+    ? JSON.stringify({
+      ...(limits.maxDiscountAmount !== undefined ? { max_discount_amount: limits.maxDiscountAmount } : {}),
+      ...(limits.maxDiscountPercentBp !== undefined ? { max_discount_percent_bp: limits.maxDiscountPercentBp } : {}),
+    })
+    : null;
+  const row = one(db, `SELECT p.role_id FROM role_permissions p JOIN roles r ON r.shop_id = p.shop_id AND r.id = p.role_id
+    WHERE p.shop_id = ? AND r.key = ? AND p.permission_key = 'discount.manual'`, shopId, roleKey);
+  if (!row) return false;
+  run(db, "UPDATE role_permissions SET limits_json = ? WHERE shop_id = ? AND role_id = ? AND permission_key = 'discount.manual'", json, shopId, str(row.role_id));
+  return true;
 }

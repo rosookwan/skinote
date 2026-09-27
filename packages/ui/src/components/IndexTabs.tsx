@@ -1,5 +1,6 @@
 // 제목 · 색인 탭 줄(ui 5 IndexTabs). 한 화면에 제목은 하나, 켜진 탭은 종이 색인처럼 앞으로 나온다.
-// 탭 수는 등급의 칸 수(6 · 5 · 4 · 3)이고, 넘치면 우선순위 낮은 탭이 '더 보기' 탭으로 간다. 폭이 모자라도 같은 규칙으로 줄인다.
+// 탭 수는 등급의 칸 수(6 · 5 · 4 · 3)이고, 넘치면 우선순위 낮은 탭이 '더 보기' 탭으로 간다(켜진 탭은 늘 보이고, 차례는 설정 그대로). 폭이 모자라도
+// 같은 규칙으로 줄인다.
 import type { LedgerTabRow } from '@skinote/contract';
 import { fitList, shortCount } from '@skinote/layout';
 import { useMemo, useRef, useState } from 'react';
@@ -30,10 +31,12 @@ export function IndexTabs({ title, tabs, counts, active, onSelect, onMore, tag }
   const tagRef = useRef<HTMLSpanElement>(null);
   const bar = useElementSize(barRef);
   const fonts = useFontsVersion();
-  const entries = useMemo(() => tabs.map((tab) => ({ ...tab, pinnedEnd: false })), [tabs]);
+  // 켜진 탭은 늘 보인다(넘치는 탭을 고르면 그 탭이 자리를 얻고 다른 탭이 더 보기로 간다): 탭은 늘 설정의 차례이고, 넘친 탭이 있으면 `더 보기`가 늘
+  // 남는다(2026-09-27 점검: 켜진 탭이 더 보기 자리에 이름으로 들어가 `더 보기`가 사라지고 차례가 바뀌었다).
+  const entries = useMemo(() => tabs.map((tab) => ({ ...tab, pinnedEnd: false, priority: tab.tab_key === active ? Number.MAX_SAFE_INTEGER : tab.priority })), [tabs, active]);
   const [limit, setLimit] = useState(profile.capacity.tabs);
   // 크기가 바뀌면 등급 칸 수부터 다시 세고, 넘치면 하나씩 줄인다(잰 폭으로 맞춤).
-  useIsoLayoutEffect(() => { setLimit(profile.capacity.tabs); }, [bar?.width, profile.capacity.tabs, fonts, tabs, tag]);
+  useIsoLayoutEffect(() => { setLimit(profile.capacity.tabs); }, [bar?.width, profile.capacity.tabs, fonts, tabs, tag, active]);
   // 탭이 먼저다: 제목은 낱말을 줄여 비켜 주고(첫 낱말은 남김), 그래도 탭이 넘치면 탭을 더 보기로 보낸다.
   useIsoLayoutEffect(() => {
     const bar = barRef.current;

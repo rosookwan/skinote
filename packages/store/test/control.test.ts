@@ -125,3 +125,27 @@ test('enrollment routes: a code hash routes to one shop code id; claim and use s
   const r = control.route(sha256('123456789012'));
   assert.deepEqual([r?.claimedAt, r?.usedAt], [T0 + MINUTE, T0 + 2 * MINUTE]);
 });
+
+test('ensureAccount keeps the tenant boundary: an existing account of another shop is refused, the same shop gets it back, a new id is made here', () => {
+  const { control, accountIds } = setup();
+  control.provisionTenant({ shopId: 'shop0other', code: 'other', name: '다른 매장', isTest: true, staff: [{ displayName: '남궁', pinHash: null }] }, T0);
+  const theirs = control.accountsOf('shop0other')[0]!.id;
+  // 다른 매장의 계정 id를 가리키는 직원(요청번호 · ref가 겹침): 비밀번호를 바꾸지 않게 거절(2026-09-27 점검).
+  assert.throws(() => control.ensureAccount({ id: theirs, tenantId: 'shop0test', displayName: '겹침' }, T0), (e: unknown) => isStoreError(e, 'ACCOUNT_TENANT_MISMATCH'));
+  assert.equal(control.ensureAccount({ id: accountIds[1]!, tenantId: 'shop0test', displayName: '오세린' }, T0).id, accountIds[1]);
+  const made = control.ensureAccount({ id: 'acct:shop0test:rq:n1', tenantId: 'shop0test', displayName: '새 직원' }, T0);
+  assert.equal(made.id, 'acct:shop0test:rq:n1');
+  assert.equal(control.ensureAccount({ id: 'acct:shop0test:rq:n1', tenantId: 'shop0test', displayName: '새 직원' }, T0 + MINUTE).id, made.id);
+});
+
+test('the audit chain (platform_audit_log) re-verifies from the stored rows; an edited row breaks it', () => {
+  const { db, control, accountIds } = setup();
+  control.appendAudit({ tenantId: 'shop0test', accountId: accountIds[0], actorLabel: 'staff:s1', deviceId: 'd1', sessionId: 'x1', ipHash: 'hmac-1', category: 'account', action: 'account.pin_reset', targetType: 'staff_member', targetId: 's2', outcome: 'ok', now: T0 });
+  control.appendAudit({ actorLabel: 'system:cli', category: 'settings', action: 'device.block', outcome: 'denied', now: T0 + MINUTE });
+  assert.deepEqual(control.verifyAuditChain(), { ok: true, badSeq: null, rows: 2 });
+  assert.equal(one(db, 'SELECT ip_hash FROM platform_audit_log WHERE seq = 1')?.ip_hash, 'hmac-1');
+  // 파일을 직접 고친 경우(추가 전용 트리거를 걷어 낸 뒤): 사슬이 그 줄에서 어긋난다.
+  db.exec('DROP TRIGGER platform_audit_log_no_update');
+  db.prepare("UPDATE platform_audit_log SET target_id = 's9' WHERE seq = 1").run();
+  assert.deepEqual(control.verifyAuditChain(), { ok: false, badSeq: 1, rows: 2 });
+});

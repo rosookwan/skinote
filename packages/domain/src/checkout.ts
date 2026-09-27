@@ -12,13 +12,18 @@
 //     (결제 자리 intake_confirm) · 보증금 입금(보증금 장부, 수납이 아님) · `후불` 칸의 결제 팀(줄 · 접수).
 import {
   CHECKOUT_KEYS, type CheckoutChoice, type CheckoutSection, type CheckoutSheetParams, type CheckoutSheetView, type ChoiceOption, type CommandEnvelope,
-  type OrderDraftInput, type RichText,
+  type ManualDiscount, type OrderDraftInput, type RichText,
 } from '@skinote/contract';
 import {
-  cleanItems, discountAmount, discountOf, discountedAmounts, kindOf, liftReturnable, payMethodOf, variantOf, type FxDiscount,
+  cleanItems, discountAmount, discountOf, discountedAmounts, kindOf, liftReturnable, manualDiscountAmount, payMethodOf, variantOf, type FxDiscount,
   type FxPaySection, type Quote, type QuoteLine,
 } from './catalog.ts';
-import type { DomainLines, FxDeposit, FxDepositRule, FxLine, FxMethodKey, FxOrder, FxPayment, FxPaymentGroup, FxPromise, ShopRegistry, ShopState } from './model.ts';
+import {
+  DISCOUNT_WORDS, discountOptions, manualAllowed, manualSpec, manualValid, manualValueText, manualWithinLimit, ruleAllowed, type DiscountViewer,
+} from './discounts.ts';
+import type {
+  DomainLines, FxDeposit, FxDepositRule, FxDiscountApplication, FxLine, FxMethodKey, FxOrder, FxPayment, FxPaymentGroup, FxPromise, ShopRegistry, ShopState,
+} from './model.ts';
 import { phoneText, resolveSchedule, type ResolvedPickup, type ResolvedReturn } from './order-draft.ts';
 import { PAST, timeReason } from './promise-sheet.ts';
 import { conflict, rejected, unsupported, type Result } from './result.ts';
@@ -33,12 +38,16 @@ export const LATER = CHECKOUT_KEYS.later;
 const OTHER = CHECKOUT_KEYS.other;
 const OTHER_TEAM = CHECKOUT_KEYS.otherTeam;
 const NO_DISCOUNT = CHECKOUT_KEYS.noDiscount;
+const MANUAL = CHECKOUT_KEYS.manual;
 export const SELF = CHECKOUT_KEYS.self;
 /** 결제 팀 줄에 보일 다른 팀 수(찾은 팀 포함). */
 const PAYER_OPTIONS = 2;
 const UNKNOWN_METHOD = '등록되지 않은 결제 수단';
-/** 틀린 인자의 종류: 모르는 결제 수단(`등록되지 않은 결제 수단`), 그 밖(모르는 칸 · 할인 · 팀 = 미지원 입력). */
-type Invalid = 'method' | 'unsupported';
+/**
+ * 틀린 인자의 종류: 모르는 결제 수단(`등록되지 않은 결제 수단`), 권한 · 한도 밖의 할인(`권한 없음 · 관리자 확인 필요`, features-1 E10), 그 밖(모르는
+ * 칸 · 할인 · 팀 = 미지원 입력).
+ */
+type Invalid = 'method' | 'forbidden' | 'unsupported';
 
 // ── 셈(화면의 읽기 모델과 order.create가 같은 셈을 쓴다) ─────────────────────────
 
@@ -48,6 +57,8 @@ interface PlanSection {
   lines: QuoteLine[];
   gross: number;
   discount?: FxDiscount;
+  /** 직접 입력 할인(금액 · 비율 · 사유). */
+  manual?: ManualDiscount;
   net: number;
   /** 줄마다 할인을 뺀 값(lines 차례). */
   netLines: number[];
@@ -106,7 +117,7 @@ function depositOf(state: ShopState, draft: OrderDraftInput, quote: Quote): Plan
 
 /** 인자의 선택을 읽는다(없으면 칸의 기본). 틀린 것(없는 칸 · 수단 · 할인 · 팀)은 invalid로 알린다: 창은 주 버튼을 막고, 명령은 거절한다. */
 export function checkoutPlan(
-  state: ShopState, now: number, draft: OrderDraftInput, choices: readonly CheckoutChoice[] = [], payerOrderId?: string | null,
+  state: ShopState, now: number, draft: OrderDraftInput, choices: readonly CheckoutChoice[] = [], payerOrderId?: string | null, viewer?: DiscountViewer,
 ): CheckoutPlan {
   const { pickup, giveBack, quote } = resolveSchedule(state, now, draft);
   let invalid: Invalid | undefined;
@@ -132,11 +143,22 @@ export function checkoutPlan(
         else invalid ??= 'unsupported';
       }
     }
-    const discount = choice?.discountKey && choice.discountKey !== NO_DISCOUNT ? discountOf(state.registry, choice.discountKey, pay.key) : undefined;
-    if (choice?.discountKey && choice.discountKey !== NO_DISCOUNT && !discount) invalid ??= 'unsupported';
-    const cut = discountAmount(gross, discount);
+    // 할인: 매장 할인(그 할인의 권한) 또는 직접 입력(권한 discount.manual · 역할 한도, features-1 E10).
+    const manualChoice = choice?.discountKey === MANUAL;
+    const manual = manualChoice ? choice?.manual : undefined;
+    if (manualChoice) {
+      if (!manual || !manualValid(pay.key, manual)) invalid ??= 'unsupported';
+      else if (!manualAllowed(viewer) || !manualWithinLimit(viewer, gross, manual)) invalid ??= 'forbidden';
+    } else if (choice?.manual !== undefined) invalid ??= 'unsupported';
+    const discount = !manualChoice && choice?.discountKey && choice.discountKey !== NO_DISCOUNT ? discountOf(state.registry, choice.discountKey, pay.key) : undefined;
+    if (!manualChoice && choice?.discountKey && choice.discountKey !== NO_DISCOUNT && !discount) invalid ??= 'unsupported';
+    if (discount && !ruleAllowed(viewer, discount)) invalid ??= 'forbidden';
+    const cut = manual && manualValid(pay.key, manual) ? manualDiscountAmount(gross, manual) : discountAmount(gross, discount);
     const netLines = discountedAmounts(lines.map((l) => l.amount), cut);
-    sections.push({ pay, lines, gross, ...(discount ? { discount } : {}), net: gross - cut, netLines, methodKey, ...(ownPayer ? { ownPayer } : {}), laterAllowed });
+    sections.push({
+      pay, lines, gross, ...(discount ? { discount } : {}), ...(manual ? { manual: { ...manual, reason: manual.reason.trim() } } : {}), net: gross - cut, netLines, methodKey,
+      ...(ownPayer ? { ownPayer } : {}), laterAllowed,
+    });
   }
   const deposit = depositOf(state, draft, quote);
   const depositChoice = deposit ? given.get(deposit.rule.key) : undefined;
@@ -155,10 +177,11 @@ export function checkoutPlan(
   const itemsReady = name !== '' && cleanItems(state.registry, draft.items).length > 0;
   const scheduleReady = pickup.complete && giveBack.complete;
   const reason = scheduleReady ? undefined : (giveBack.at !== undefined ? timeReason(giveBack.at, now) : undefined) ?? PAST;
-  const hash = quote.hash + '|' + sections.map((s) => s.pay.key + (s.discount ? '-' + s.discount.key : '') + '=' + s.net).join(',');
+  const hash = quote.hash + '|' + sections.map((s) => s.pay.key + (s.discount ? '-' + s.discount.key : s.manual ? '-manual-' + s.manual.kind + s.manual.value : '') + '=' + s.net).join(',');
   const resolved: CheckoutChoice[] = [
     ...sections.map((s) => ({
-      sectionKey: s.pay.key, methodKey: s.methodKey, ...(s.discount ? { discountKey: s.discount.key } : {}), ...(s.ownPayer ? { payerOrderId: s.ownPayer.id } : {}),
+      sectionKey: s.pay.key, methodKey: s.methodKey, ...(s.discount ? { discountKey: s.discount.key } : s.manual ? { discountKey: MANUAL, manual: s.manual } : {}),
+      ...(s.ownPayer ? { payerOrderId: s.ownPayer.id } : {}),
     })),
     ...(deposit ? [{ sectionKey: deposit.rule.key, methodKey: deposit.methodKey }] : []),
   ];
@@ -189,9 +212,6 @@ function itemList(reg: ShopRegistry, s: PlanSection, days: number): string[] {
   ];
 }
 
-/** 이 칸 할인 묶음의 할인(`할인 적용 ›` 작은 창). */
-const discountsFor = (reg: ShopRegistry, s: PlanSection) => reg.discounts.filter((d) => d.sections.includes(s.pay.key));
-
 /**
  * 결제 팀 줄에 보일 다른 팀: 고른 팀과 이 창에서 끝 4자리로 찾은 팀만(찾은 차례, 같은 팀은 한 번). 오늘 다른 팀 몫을 내는 팀을 모두
  * 내보이면 관련 없는 현장 접수에도 한 번 누름으로 남의 가족에게 청구가 걸린다.
@@ -201,7 +221,15 @@ function linkedTeams(state: ShopState, payer: FxOrder | null, found: readonly st
   return [...new Set(ids)].map((id) => findOrder(state, id)).filter((o): o is FxOrder => o !== undefined);
 }
 
-function sectionView(plan: CheckoutPlan, s: PlanSection): CheckoutSection {
+/** 칸의 할인 상태 글(`10% 할인 · 225,000원 → 202,500원`, `할인 직접 입력 · 5,000원 · 225,000원 → 220,000원`). */
+function discountText(s: PlanSection): { discount: string; discountShort?: string } {
+  const range = won(s.gross) + ' → ' + won(s.net);
+  if (s.discount) return { discount: s.discount.label + ' · ' + range, discountShort: s.discount.label };
+  if (s.manual) return { discount: DISCOUNT_WORDS.manualLabel + ' · ' + manualValueText(s.manual) + ' · ' + range, discountShort: DISCOUNT_WORDS.manualLabel };
+  return { discount: DISCOUNT_WORDS.none };
+}
+
+function sectionView(plan: CheckoutPlan, s: PlanSection, viewer: DiscountViewer | undefined, forbidden: string): CheckoutSection {
   const later = s.methodKey === LATER;
   const payer = payerOf(plan, s);
   const method = payMethodOf(plan.registry, s.methodKey);
@@ -215,10 +243,9 @@ function sectionView(plan: CheckoutPlan, s: PlanSection): CheckoutSection {
       ...(nonQuick ? { secondLine: method.label } : s.ownPayer ? { secondLine: teamLabel(s.ownPayer) } : {}),
     },
   ];
-  const discounts: ChoiceOption[] = [
-    { key: NO_DISCOUNT, label: '할인 없음', selected: !s.discount, enabled: true },
-    ...discountsFor(plan.registry, s).map((d) => ({ key: d.key, label: d.label, selected: s.discount?.key === d.key, enabled: true })),
-  ];
+  // `할인 적용 ›` 작은 창: 할인 없음 · 매장 할인 · 직접 입력(권한 없는 것은 회색, features-1 E10).
+  const discounts: ChoiceOption[] = discountOptions(plan.registry, s.pay.key, s.discount?.key ?? (s.manual ? MANUAL : NO_DISCOUNT), viewer, forbidden, s.manual);
+  const manual = manualSpec(viewer, s.pay.key, s.pay.label, s.gross, forbidden);
   const others: ChoiceOption[] = [
     ...plan.registry.payMethods.filter((m) => !m.quick).map((m) => ({ key: m.key, label: m.label, selected: s.methodKey === m.key, enabled: true })),
     ...(s.laterAllowed ? [{ key: OTHER_TEAM, label: '다른 팀 결제', opens: true, selected: s.ownPayer !== undefined, enabled: true }] : []),
@@ -229,13 +256,14 @@ function sectionView(plan: CheckoutPlan, s: PlanSection): CheckoutSection {
     label: s.pay.label,
     items: items.join(' · '),
     itemList: items,
-    ...(s.discount ? { discount: s.discount.label + ' · ' + won(s.gross) + ' → ' + won(s.net), discountShort: s.discount.label } : { discount: '할인 없음' }),
+    ...discountText(s),
     ...(payer ? { payerNote: payer.teamName + ' 팀 결제 예정' } : {}),
     amount: s.net,
     amountMuted: later,
     methods,
     discountable: true,
     discounts,
+    ...(manual ? { manual } : {}),
     others,
     choice: plan.choices.find((c) => c.sectionKey === s.pay.key)!,
   };
@@ -273,11 +301,12 @@ function dueOf(plan: CheckoutPlan) {
 
 export function checkoutSheet(ctx: ViewContext, params: CheckoutSheetParams): CheckoutSheetView {
   const state = ctx.state;
-  const plan = checkoutPlan(state, ctx.now, params.draft, params.choices ?? [], params.payerOrderId);
+  const forbidden = (ctx.lines ?? { forbidden: '권한 없음 · 관리자 확인 필요' }).forbidden;
+  const plan = checkoutPlan(state, ctx.now, params.draft, params.choices ?? [], params.payerOrderId, ctx.viewer);
   const name = params.draft.leader.name.trim();
   const title = name ? '결제 · ' + name + ' 팀' : '결제';
 
-  const sections = [...plan.sections.map((s) => sectionView(plan, s)), ...(plan.deposit ? [depositView(plan, plan.deposit)] : [])];
+  const sections = [...plan.sections.map((s) => sectionView(plan, s, ctx.viewer, forbidden)), ...(plan.deposit ? [depositView(plan, plan.deposit)] : [])];
 
   // 결제 팀 줄: `후불`인 칸(이 칸만의 팀이 없는 것) 모두에 건다. 이 팀 · 찾은 팀 · 다른 팀 몫을 내는 팀.
   const laterRow = plan.sections.filter((s) => s.methodKey === LATER && !s.ownPayer);
@@ -321,7 +350,7 @@ export function checkoutSheet(ctx: ViewContext, params: CheckoutSheetParams): Ch
     sections,
     payer,
     due: dueLine,
-    ...(plan.itemsReady && !plan.scheduleReady && plan.reason ? { notice: plan.reason } : {}),
+    ...(plan.itemsReady && !plan.scheduleReady && plan.reason ? { notice: plan.reason } : plan.invalid === 'forbidden' ? { notice: forbidden } : {}),
     primary: { label, alts, enabled: ready },
     ...(ready
       ? {
@@ -333,6 +362,14 @@ export function checkoutSheet(ctx: ViewContext, params: CheckoutSheetParams): Ch
 }
 
 // ── 명령(order.create) ────────────────────────────────────────────────
+
+/** 접수 때의 할인 적용 한 건(값의 사본: 매장 할인 · 직접 입력). id는 '<접수>:da<n>'. */
+function applicationOf(id: string, s: PlanSection, now: number): FxDiscountApplication {
+  const base = { id, sectionKey: s.pay.key, amount: s.gross - s.net, at: now };
+  if (s.discount) return { ...base, discountKey: s.discount.key, kind: s.discount.kind, label: s.discount.label, value: s.discount.value };
+  const m = s.manual!;
+  return { ...base, kind: m.kind === 'amount' ? 'manual_amount' : 'manual_percent', label: DISCOUNT_WORDS.manualLabel, value: m.value, reason: m.reason };
+}
 
 /** 접수증 · 반납 창의 줄 이름: 규격이 있으면 그 이름을 붙인다('의류 사이즈 95', '헬멧 중 사이즈', '고글 어른'). */
 function lineLabel(reg: ShopRegistry, l: QuoteLine): string {
@@ -352,10 +389,11 @@ const promiseOf = (at: number, mode: 'store' | 'vehicle', placeKey: string | und
  * id · 접수 번호(같은 요청번호로 다시 보내면 applyCommand가 처음 결과를 돌려준다).
  */
 export function createOrder(
-  state: ShopState, envelope: CommandEnvelope<'order.create'>, now: number, domainLines: DomainLines, idStyle: 'sequence' | 'dated' = 'sequence',
+  state: ShopState, envelope: CommandEnvelope<'order.create'>, now: number, domainLines: DomainLines, idStyle: 'sequence' | 'dated' = 'sequence', viewer?: DiscountViewer,
 ): Result {
   const p = envelope.payload;
-  const plan = checkoutPlan(state, now, p.draft, p.choices, p.payerOrderId);
+  const plan = checkoutPlan(state, now, p.draft, p.choices, p.payerOrderId, viewer);
+  if (plan.invalid === 'forbidden') return { outcome: 'rejected', error: { code: 'FORBIDDEN', message: domainLines.forbidden } };
   if (plan.invalid) return plan.invalid === 'method' ? rejected(UNKNOWN_METHOD) : unsupported(domainLines);
   if (!plan.itemsReady) return unsupported(domainLines);
   if (!plan.scheduleReady) return conflict('SCHEDULE_CHANGED', plan.reason ?? PAST);
@@ -375,6 +413,7 @@ export function createOrder(
     s.lines.forEach((q, i) => {
       n += 1;
       const product = q.product;
+      const net = s.netLines[i] ?? q.amount;
       lines.push({
         id: id + '-l' + n,
         kind: product.key,
@@ -383,7 +422,11 @@ export function createOrder(
         qty: q.item.quantity,
         ...(product.unit ? { unit: product.unit } : {}),
         countWord: product.countWord,
-        amount: s.netLines[i] ?? q.amount,
+        amount: net,
+        // 할인 몫이 있는 줄만 할인 앞 값을 가진다(order_lines.gross_amount · discount_amount).
+        ...(net < q.amount ? { gross: q.amount } : {}),
+        // 장비 줄의 1일 값(연장 · 취소의 연장 몫이 쓴다, extension.ts).
+        ...(product.section === 'gear' ? { dayPrice: product.price } : {}),
         section: product.section,
         returnable: product.section === 'lift' ? liftReturnable(state.settings) : product.returnable,
         capabilities: [...product.capabilities],
@@ -433,12 +476,8 @@ export function createOrder(
     payments,
     ...(orderPayer ? { payerOrderId: orderPayer } : {}),
     payWhen: selfLater && pickup.kind === 'now' ? 'return' : 'pickup',
-    ...(plan.sections.some((s) => s.discount)
-      ? {
-        discounts: plan.sections.filter((s) => s.discount).map((s) => ({
-          sectionKey: s.pay.key, discountKey: s.discount!.key, label: s.discount!.label, amount: s.gross - s.net, at: now,
-        })),
-      }
+    ...(plan.sections.some((s) => s.discount || s.manual)
+      ? { discounts: plan.sections.filter((s) => s.discount || s.manual).map((s, i): FxDiscountApplication => applicationOf(id + ':da' + (i + 1), s, now)) }
       : {}),
   };
 

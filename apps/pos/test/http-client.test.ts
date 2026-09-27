@@ -341,3 +341,33 @@ describe('넘기기 지연(sync 8-1 · ui 4-3): 띠 · 이름표가 깜빡이지
     client.close();
   });
 });
+
+describe('서버 모드의 매장 설정 길(features-1 E15 · E13c): 비밀번호 재발급 · 기기 막기', () => {
+  it('비밀번호 재발급: 요청한 관리자의 비밀번호와 함께 한 번 보내고(다시 보내지 않음), 새 비밀번호를 돌려준다', async () => {
+    const { client, calls } = setup([json(200, { staffId: 's1', name: '문태오', pin: '4821' })]);
+    expect(await client.staffPin('s1', '1357')).toEqual({ staffId: 's1', name: '문태오', pin: '4821' });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe(BASE + 'api/v2/staff/pin');
+    expect(calls[0]!.headers['x-skinote-csrf']).toBe(SESSION.csrf);
+    expect(JSON.parse(calls[0]!.body!)).toEqual({ staffId: 's1', ownPin: '1357' });
+  });
+  it('거절은 코드로(PIN_MISMATCH · LOCKED의 끝 시각 · 연결 없음은 NETWORK, 다시 보내지 않음), 401은 세션 끝', async () => {
+    const mismatch = setup([apiError(403, 'PIN_MISMATCH')]);
+    await expect(mismatch.client.staffPin('s1', '0000')).rejects.toMatchObject({ code: 'PIN_MISMATCH' });
+    const locked = setup([json(423, { ok: false, service: 'skinote', code: 'LOCKED', lockedUntil: '2026-12-26T07:00:00.000Z' })]);
+    await expect(locked.client.staffPin('s1', '0000')).rejects.toMatchObject({ code: 'LOCKED', lockedUntil: '2026-12-26T07:00:00.000Z' });
+    const down = setup([new TypeError('failed')]);
+    await expect(down.client.staffPin('s1', '0000')).rejects.toMatchObject({ code: 'NETWORK' });
+    expect(down.calls).toHaveLength(1);
+    const gone = setup([apiError(401, 'SESSION_EXPIRED')]);
+    await expect(gone.client.blockDevice('d1')).rejects.toMatchObject({ code: 'SESSION_EXPIRED' });
+    expect(gone.lost).toEqual(['SESSION_EXPIRED']);
+  });
+  it('기기 막기: 204면 끝, 거절은 코드', async () => {
+    const ok = setup([new Response(null, { status: 204 })]);
+    await expect(ok.client.blockDevice('01J00000000000000000000009')).resolves.toBeUndefined();
+    expect(ok.calls[0]!.url).toBe(BASE + 'api/v2/devices/block');
+    const refused = setup([apiError(403, 'FORBIDDEN')]);
+    await expect(refused.client.blockDevice('d1')).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+});

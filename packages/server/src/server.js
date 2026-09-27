@@ -45,6 +45,7 @@ import { createHub, PING_MS } from './sse.js';
 /** 본문 한도(바이트, plan §5-1). */
 export const BODY_LIMITS = Object.freeze({
   enroll: 4096, openEnroll: 4096, openRelease: 4096, challenge: 1024, staff: 4096, login: 1024, logout: 16, query: 32 * 1024, command: 64 * 1024,
+  staffPin: 1024, deviceBlock: 1024,
 });
 
 const JSON_HEADERS = Object.freeze({
@@ -257,7 +258,7 @@ export async function startServer(config, { log = console.log, now = () => new D
         testOpenEnroll: config.testOpenEnroll === 'on', openEnrollUntil: config.testOpenEnrollUntil ?? null, shopCount: config.shopIds.length,
         businessDateOf: ms => businessDate(new Date(ms), config.timeZone, config.cutoffMinutes),
       });
-      const api = createApi({ hub: liveHub, nowMs, log });
+      const api = createApi({ hub: liveHub, nowMs, log, afterCommand: (ctx, envelope) => auth?.staffChanged(ctx.shopId, envelope) });
       const gate = { publicOrigin: config.publicOrigin, sessionOf: auth.sessionOf, csrfOk: auth.csrfOk, sessionLimit: auth.sessionLimit };
       const a = auth.handlers;
       routes.set('/api/v2/session', { GET: openGetRoute(a.session, gate) });
@@ -275,6 +276,9 @@ export async function startServer(config, { log = console.log, now = () => new D
       routes.set('/api/v2/query', { POST: postRoute({ limit: BODY_LIMITS.query, session: true, handle: api.handlers.query }, gate) });
       routes.set('/api/v2/command', { POST: postRoute({ limit: BODY_LIMITS.command, session: true, handle: api.handlers.command }, gate) });
       routes.set('/api/v2/stream', { GET: sessionGetRoute(api.handlers.stream, gate) });
+      // 매장 설정 `차량 · 직원`(features-1 §4-3): 비밀번호 재발급 · 기기 막기(명령이 아닌 길).
+      routes.set('/api/v2/staff/pin', { POST: postRoute({ limit: BODY_LIMITS.staffPin, session: true, handle: a.staffPin }, gate) });
+      routes.set('/api/v2/devices/block', { POST: postRoute({ limit: BODY_LIMITS.deviceBlock, session: true, handle: a.deviceBlock }, gate) });
       const liveAuth = auth;
       if (config.adminSocket) {
         try {
@@ -317,7 +321,7 @@ export async function startServer(config, { log = console.log, now = () => new D
       log('control 파일에 쓸 수 없어 로그인 · 장부 API를 열지 않았습니다(503)');
       const unavailable = () => { throw new HttpError(503, 'SHOP_UNAVAILABLE'); };
       for (const path of ['/api/v2/session', '/api/v2/head', '/api/v2/stream']) routes.set(path, { GET: unavailable });
-      for (const path of ['/api/v2/device/open-enroll', '/api/v2/device/open-release', '/api/v2/device/challenge', '/api/v2/login/staff', '/api/v2/login', '/api/v2/logout', '/api/v2/query', '/api/v2/command']) {
+      for (const path of ['/api/v2/device/open-enroll', '/api/v2/device/open-release', '/api/v2/device/challenge', '/api/v2/login/staff', '/api/v2/login', '/api/v2/logout', '/api/v2/query', '/api/v2/command', '/api/v2/staff/pin', '/api/v2/devices/block']) {
         routes.set(path, { POST: unavailable });
       }
       routes.set('/api/v2/device/enroll', { GET: unavailable, POST: unavailable });

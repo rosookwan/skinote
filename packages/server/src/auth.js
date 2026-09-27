@@ -48,7 +48,7 @@ import { performance } from 'node:perf_hooks';
 import { CSRF_HEADER, isDriverDevice, loginMessage, parseAuthBody } from '@skinote/contract';
 import { sessionExpiry } from '@skinote/domain';
 import { HttpError, sendJson } from './http.js';
-import { verifyPin } from './pin.js';
+import { generatePin, hashPin, verifyPin } from './pin.js';
 import { CappedMap, clearedSessionCookie, clientIp, createLimiter, csrfFor, ipHashOf, newToken, sameText, sessionCookie, sessionToken, sha256Hex } from './security.js';
 
 /**
@@ -109,7 +109,16 @@ export const AUTH_LIMITS = Object.freeze({
   deviceCacheMs: 60_000,
   /** 세션마다 API: 초당 30번, 한꺼번에 60번. */
   apiPerSession: { capacity: 60, refillPerSec: 30 },
+  /** 비밀번호 재발급: 세션마다 한 시간에 10번(features-1 E15). */
+  pinResetPerSession: { capacity: 10, refillPerSec: 10 / 3600 },
 });
+
+/**
+ * 기사 기기의 로그인 타일 · 로그인에 나오는 직원: 기사 역할, 또는 차량을 맡은 사람(몰리는 날 자기 차로 수거를 나가는 카운터 · 관리자,
+ * features-1 E13b). 그 사람의 기사 기기 세션은 기사 역할의 권한과 맡은 차량이다(api.js permissionRole).
+ * @param {StaffRow} s
+ */
+export const drivesOnDriverDevice = s => s.roleKey === 'driver' || s.vehicleId !== undefined;
 
 /** @param {number} ms */
 const iso = ms => new Date(ms).toISOString();
@@ -160,6 +169,7 @@ export function createAuth({
     challenge: createLimiter(AUTH_LIMITS.challengePerIp),
     login: createLimiter(AUTH_LIMITS.loginPerIp),
     api: createLimiter(AUTH_LIMITS.apiPerSession),
+    pinReset: createLimiter(AUTH_LIMITS.pinResetPerSession),
   };
   /** @type {number[]} */
   let enrollTimes = [];
@@ -366,7 +376,8 @@ export function createAuth({
     }
     if (touch) control.touchSession(session.id, now);
     // 스스로 붙은 기사 기기는 기사의 차량이 먼저(기기를 붙인 사람이 고른 차량으로 남의 목록을 보지 못하게), 번호 기기는 기기의 차량이 먼저.
-    const driverVan = staff.roleKey === 'driver' ? staff.vehicleId : undefined;
+    // 기사 기기의 세션은 역할과 관계없이 맡은 차량(임시 차량을 맡은 카운터 · 관리자, features-1 E13b).
+    const driverVan = staff.roleKey === 'driver' || isDriverDevice(device.kind) ? staff.vehicleId : undefined;
     const vehicleId = device.openEnrolled ? driverVan ?? device.vehicleId : device.vehicleId ?? driverVan;
     return {
       ok: true,
@@ -623,7 +634,7 @@ export function createAuth({
       tickets.set(ticket, { shopId: found.port.shopId, deviceId: found.device.id, expiresAt: now + AUTH_LIMITS.ticketMs });
       const driverDevice = isDriverDevice(found.device.kind);
       const staff = found.port.staff()
-        .filter(s => s.accountId !== undefined && control.account(s.accountId)?.status === 'active' && (!driverDevice || s.roleKey === 'driver'))
+        .filter(s => s.accountId !== undefined && control.account(s.accountId)?.status === 'active' && (!driverDevice || drivesOnDriverDevice(s)))
         .map(s => ({ id: s.id, name: s.name }));
       const vehicleName = found.device.vehicleId ? found.port.vehicles(now).find(v => v.id === found.device.vehicleId)?.name : undefined;
       const openDevice = found.device.openEnrolled ? { openDevice: vehicleName ? { vehicleName } : {} } : {};
@@ -656,7 +667,7 @@ export function createAuth({
         tickets.delete(parsed.body.ticket);
         throw new HttpError(401, 'DEVICE_REVOKED');
       }
-      const staff = port.staff().find(s => s.id === parsed.body.staffId && s.accountId !== undefined && (!isDriverDevice(device.kind) || s.roleKey === 'driver'));
+      const staff = port.staff().find(s => s.id === parsed.body.staffId && s.accountId !== undefined && (!isDriverDevice(device.kind) || drivesOnDriverDevice(s)));
       const account = staff?.accountId ? control.account(staff.accountId) : undefined;
       if (!staff || !account || account.status !== 'active' || !account.pinHash) throw new HttpError(400, 'UNKNOWN_STAFF');
       const pinHash = account.pinHash;
@@ -763,6 +774,107 @@ export function createAuth({
       sendJson(req, res, 204, null, { 'set-cookie': clearedSessionCookie() });
     },
 
+    /**
+     * 비밀번호 재발급(features-1 E15, 명령이 아님: 명령 결과는 기록에 남으므로 비밀번호가 명령을 지나지 않는다). 관리자 세션 · 카운터 기기 ·
+     * 직원 권한(staff.manage)만. 요청한 사람의 비밀번호를 먼저 맞춰 본다(틀리면 403 PIN_MISMATCH, 로그인 실패와 같이 세어 잠근다). 맞으면 대상의
+     * control 계정(없으면 만든다: 매장 설정에서 더한 직원)에 새 비밀번호(시험 매장의 열린 등록이 켜져 있으면 6자리, 아니면 4자리)의 해시만 두고,
+     * `pin_reset` 표시 · 사용 내역(platform_audit_log, 비밀번호 없음)을 적고, 대상의 세션을 끝낸 뒤 비밀번호를 한 번만 돌려준다(no-store). 기록 줄에
+     * 비밀번호를 적지 않는다.
+     */
+    async staffPin(req, res, { body, ctx }) {
+      const session = /** @type {SessionContext} */ (ctx);
+      const parsed = parseAuthBody('staffPin', body);
+      if (!parsed.ok) throw new HttpError(400, 'BAD_INPUT', { problems: parsed.problems.slice(0, 5) });
+      const { port, staff: me, device } = session;
+      if (isDriverDevice(device.kind) || !port.permissions(me.roleKey).has('staff.manage')) throw new HttpError(403, 'FORBIDDEN');
+      const now = nowMs();
+      if (!limiters.pinReset.take(session.session.id, now)) throw new HttpError(429, 'RATE_LIMITED');
+      const account = control.account(session.session.accountId);
+      if (!account || !account.pinHash) throw new HttpError(403, 'PIN_MISMATCH');
+      const settings = port.authSettings(now);
+      const open = device.openEnrolled;
+      const lockId = open ? 'open:' + port.shopId : device.id;
+      const pool = open ? openIds(port, now, now - HOUR) : null;
+      const pair = pairState(account.id, lockId, now, settings.lockout, pool);
+      if (pair.until > now) throw new HttpError(423, 'LOCKED', { lockedUntil: iso(pair.until) });
+      const slot = (open ? 'open|' : '') + account.id;
+      if (checkingAccounts.has(slot)) throw new HttpError(429, 'BUSY');
+      checkingAccounts.add(slot);
+      const started = performance.now();
+      let ok = false;
+      try {
+        ok = await verifyPin(secrets.pinPepper, parsed.body.ownPin, account.pinHash);
+        if (!ok) {
+          const at = nowMs();
+          control.recordAttempt({ loginId: account.loginId ?? 'staff', accountId: account.id, tenantId: port.shopId, deviceId: device.id, method: 'pin', succeeded: false, reason: 'bad_password', ipHash: ipHash(req), now: at });
+          control.loginFailed(account.id, at);
+          const waited = performance.now() - started;
+          if (waited < AUTH_LIMITS.failureFloorMs) await sleep(AUTH_LIMITS.failureFloorMs - waited);
+        }
+      } finally {
+        checkingAccounts.delete(slot);
+      }
+      if (!ok) {
+        const at = nowMs();
+        control.appendAudit({
+          tenantId: port.shopId, accountId: account.id, actorLabel: 'staff:' + me.id, deviceId: device.id, sessionId: session.session.id, ipHash: ipHash(req),
+          category: 'account', action: 'account.pin_reset', targetType: 'staff_member', targetId: parsed.body.staffId, outcome: 'denied', now: at,
+        });
+        const n = control.failuresSince({ accountId: account.id, ...deviceFilter(lockId, pool), method: 'pin' }, Math.max(at - AUTH_LIMITS.pairWindowMs, pair.since));
+        if (n >= settings.lockout.maxFailures) {
+          pair.until = at + settings.lockout.lockMinutes * MINUTE;
+          pair.since = pair.until;
+          throw new HttpError(423, 'LOCKED', { lockedUntil: iso(pair.until) });
+        }
+        throw new HttpError(403, 'PIN_MISMATCH');
+      }
+      const target = port.staff().find(s => s.id === parsed.body.staffId);
+      if (!target || target.accountId === undefined) throw new HttpError(400, 'UNKNOWN_STAFF');
+      const at = nowMs();
+      // 계정은 이 매장의 사람이어야 한다(ensureAccount가 다른 매장의 계정이면 거절한다, 2026-09-27 점검).
+      let targetAccount;
+      try {
+        targetAccount = control.ensureAccount({ id: target.accountId, tenantId: port.shopId, displayName: target.name }, at);
+      } catch (error) {
+        if (/** @type {{ code?: string }} */ (error).code === 'ACCOUNT_TENANT_MISMATCH') throw new HttpError(400, 'UNKNOWN_STAFF');
+        throw error;
+      }
+      const pin = generatePin(testOpenEnroll ? 6 : 4);
+      const pinHash = await hashPin(secrets.pinPepper, pin);
+      control.setPinHash(targetAccount.id, pinHash, at);
+      control.recordAttempt({ loginId: targetAccount.loginId ?? 'staff', accountId: targetAccount.id, tenantId: port.shopId, deviceId: device.id, method: 'pin_reset', succeeded: true, reason: 'pin_reset', now: at });
+      resetAccount(targetAccount.id);
+      control.appendAudit({
+        tenantId: port.shopId, accountId: account.id, actorLabel: 'staff:' + me.id, deviceId: device.id, sessionId: session.session.id, ipHash: ipHash(req),
+        category: 'account', action: 'account.pin_reset', targetType: 'staff_member', targetId: target.id, outcome: 'ok', now: at,
+      });
+      // 대상의 세션은 끝낸다(자기 비밀번호를 새로 받은 관리자는 지금 세션을 남긴다).
+      const revoked = control.revokeStaffSessions(port.shopId, target.id, 'pin_reset', at, target.id === me.id ? session.session.id : undefined);
+      for (const id of revoked) hub.closeSession(id);
+      log(`비밀번호 재발급 ${port.shopId} · 세션 ${revoked.length}개 끝냄`);
+      sendJson(req, res, 200, { staffId: target.id, name: target.name, pin });
+    },
+
+    /** 기기 막기(features-1 E13c, device.manage): 그 기기 · 세션 · 알림 연결이 끝난다. 묻는 기기 자신은 막지 않는다. */
+    deviceBlock(req, res, { body, ctx }) {
+      const session = /** @type {SessionContext} */ (ctx);
+      const parsed = parseAuthBody('deviceBlock', body);
+      if (!parsed.ok) throw new HttpError(400, 'BAD_INPUT', { problems: parsed.problems.slice(0, 5) });
+      const { port, staff: me, device } = session;
+      if (isDriverDevice(device.kind) || !port.permissions(me.roleKey).has('device.manage')) throw new HttpError(403, 'FORBIDDEN');
+      const now = nowMs();
+      const target = port.devices.device(parsed.body.deviceId);
+      if (!target) throw new HttpError(404, 'DEVICE_UNKNOWN');
+      if (target.id === device.id) throw new HttpError(403, 'FORBIDDEN');
+      const out = revokeDevice(port.shopId, target.id, 'manager', now);
+      control.appendAudit({
+        tenantId: port.shopId, accountId: session.session.accountId, actorLabel: 'staff:' + me.id, deviceId: device.id, sessionId: session.session.id, ipHash: ipHash(req),
+        category: 'settings', action: 'device.block', targetType: 'device', targetId: target.id, outcome: 'ok', now,
+      });
+      log(`기기 막기 ${port.shopId} ${target.shortNo}번 · 세션 ${out.sessions}개`);
+      sendJson(req, res, 204, null);
+    },
+
     /** GET 세션(쿠키 없음 · 끝남은 401 signed_out). */
     session(req, res) {
       const check = sessionOf(req);
@@ -774,8 +886,26 @@ export function createAuth({
     },
   };
 
+  /**
+   * 직원 바꿈(staff.set) 뒤(api afterCommand): 사용 종료한 사람의 세션을 끝내고, 역할 · 차량이 바뀐 사람의 알림 연결을 닫는다(새 범위로 다시
+   * 붙는다). 세션 확인이 요청마다 직원 목록을 보므로 이것은 바로 끊는 몫이다(features-1 E13c).
+   * @param {string} shopId @param {import('@skinote/contract').AnyCommandEnvelope} envelope
+   */
+  function staffChanged(shopId, envelope) {
+    if (envelope.type !== 'staff.set') return;
+    const now = nowMs();
+    for (const change of envelope.payload.changes) {
+      if (change.op === 'staff.active' && !change.active) {
+        for (const id of control.revokeStaffSessions(shopId, change.id, 'staff_inactive', now)) hub.closeSession(id);
+      } else if (change.op === 'staff.update') {
+        for (const s of control.openSessionsOfStaff(shopId, change.id, now)) hub.closeSession(s.id);
+      }
+    }
+  }
+
   return {
     handlers,
+    staffChanged,
     sessionOf,
     csrfOk,
     sessionLimit,

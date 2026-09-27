@@ -59,14 +59,18 @@ describe('해시 경로', () => {
     expect(screenRoute('collection_list')).toEqual({ name: 'collection', date: null });
     expect(screenRoute('order_slip', { orderId: 'o22' })).toEqual({ name: 'slip', orderId: 'o22' });
     expect(screenRoute('order_slip')).toBeNull();
-    expect(screenRoute('lift_tickets')).toBeNull();
-    expect(screenRoute('review_list')).toBeNull();
+    expect(screenRoute('lift_tickets')).toEqual({ name: 'tickets', tab: 'status' });
+    expect(screenRoute('review_list')).toEqual({ name: 'review', tab: 'open' });
+    expect(screenRoute('intake_requests')).toBeNull();
   });
 
   it('수거 목록은 sys_screens 모양(/collections/:date)과 줄임 주소(/collection/:date), 기사 기기의 나가기', () => {
     expect(parseHash('#/collections/2026-12-26')).toEqual({ name: 'collection', date: '2026-12-26' });
     expect(parseHash('#/collection/2026-12-26')).toEqual({ name: 'collection', date: '2026-12-26' });
     expect(parseHash('#/collection')).toEqual({ name: 'collection', date: null });
+    // 그 차량의 수거 목록(매장 설정 차량 판의 `수거 목록 ›`, 2026-09-27 점검).
+    expect(parseHash('#/collections/2026-12-26?vehicle=v2')).toEqual({ name: 'collection', date: '2026-12-26', vehicleId: 'v2' });
+    expect(hrefFor({ name: 'collection', date: null, vehicleId: 'v2' })).toBe('#/collections?vehicle=v2');
     expect(parseHash('#/collections/어제')).toEqual({ name: 'unknown' });
     expect(parseHash('#/exit?from=driver')).toEqual({ name: 'exit', from: 'driver' });
     expect(parseHash('#/exit?from=elsewhere')).toEqual({ name: 'exit' });

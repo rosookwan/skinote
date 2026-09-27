@@ -78,6 +78,10 @@ export interface Choice {
   /** 이름 아래 작은 줄(약속 · 끝 4자리). */
   note?: string;
   icon?: 'phone' | 'exit';
+  /** 누를 수 없는 버튼(점선, 자리는 그대로: 매장 설정 항목 판의 `사용 종료` 막힘 · 맨 위의 `위로`). */
+  disabled?: boolean;
+  /** 지금 값(남색, 역할 · 차량 판의 지금 역할 · 차량): 막힌 것(점선)과 다른 모양이다. */
+  selected?: boolean;
 }
 
 export interface ChoiceSheetProps {
@@ -85,6 +89,8 @@ export interface ChoiceSheetProps {
   choices: Choice[];
   onPick: (key: string) => void;
   onClose: () => void;
+  /** 버튼 위의 사실 한 줄(매장 설정 항목 판의 `사용 종료 불가 · 미처리 수거 2건`). */
+  lines?: string[];
 }
 
 /** 고르기 판의 한 줄에 놓는 버튼 수(app.css의 .pos-choices 칸 수와 같다). */
@@ -94,19 +100,20 @@ const CHOICE_COLUMNS = 2;
  * 한 쪽에 들어가는 고르기 버튼 수: 창 높이 − 제목 − 바닥 − 본문 위아래 여백(− 쪽 넘김이 본문에 들 때는 없음: 바닥에 있다)을
  * 버튼 높이(주 버튼 높이) + 사이로 나눈 줄 수 × 칸 수.
  */
-export function choicesPerPage(profile: DeviceProfile, heightPx: number): number {
-  const body = heightPx - profile.confirm.titlePx - profile.confirm.primaryRowPx - 2 * profile.space.m;
+export function choicesPerPage(profile: DeviceProfile, heightPx: number, lines = 0): number {
+  const line = Math.ceil(profile.bodyFontPx * profile.bodyLineHeight);
+  const body = heightPx - profile.confirm.titlePx - profile.confirm.primaryRowPx - 2 * profile.space.m - lines * (line + profile.space.s);
   const rows = Math.max(1, Math.floor((body + profile.space.s) / (profile.primaryButtonPx + profile.space.s)));
   return rows * CHOICE_COLUMNS;
 }
 
 /** 더 보기 · 여러 팀 중 고르기. 버튼은 두 칸씩, 모두 등급의 누르는 곳 크기 이상. 넘치면 쪽 넘김(스크롤 없음). */
-export function ChoiceSheet({ title, choices, onPick, onClose }: ChoiceSheetProps) {
+export function ChoiceSheet({ title, choices, onPick, onClose, lines = [] }: ChoiceSheetProps) {
   const { profile, viewport } = useUi();
   const titleId = useId();
   const width = useDialogWidth(profile.confirm.maxWidthPx * 0.75);
   const box = confirmWindow(viewport, profile.confirm, 1, 0);
-  const perPage = choicesPerPage(profile, box.heightPx);
+  const perPage = choicesPerPage(profile, box.heightPx, lines.length);
   const pageCount = Math.max(1, Math.ceil(choices.length / perPage));
   const [page, setPage] = useState(0);
   const current = Math.min(page, pageCount - 1);
@@ -118,9 +125,21 @@ export function ChoiceSheet({ title, choices, onPick, onClose }: ChoiceSheetProp
         <header className="sn-dialog-head">
           <h2 id={titleId} className="sn-dialog-title"><TextFit input={{ mode: 'words', text: title }} /></h2>
         </header>
+        {lines.length ? (
+          <div className="pos-choice-lines">
+            {lines.map((line, i) => <p key={i} className="sn-dialog-line" role="status"><TextFit input={{ mode: 'words', text: line }} /></p>)}
+          </div>
+        ) : null}
         <div className="sn-dialog-body pos-choices">
           {shown.map((choice) => (
-            <button key={choice.key} type="button" className="sn-button pos-choice-button" onClick={() => onPick(choice.key)}>
+            <button
+              key={choice.key}
+              type="button"
+              className={'sn-button pos-choice-button' + (choice.selected ? ' is-selected' : '')}
+              disabled={choice.disabled}
+              {...(choice.selected !== undefined ? { 'aria-pressed': choice.selected } : {})}
+              onClick={() => onPick(choice.key)}
+            >
               {choice.icon ? <Icon name={choice.icon} /> : null}
               <span className="pos-choice-text">
                 <TextFit input={{ mode: 'words', text: choice.label }} />

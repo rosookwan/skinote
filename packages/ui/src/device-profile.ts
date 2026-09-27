@@ -79,14 +79,16 @@ export interface DeviceProfile {
    * 쪽 나누기의 한 쪽 줄 수 · 카드 폭(시안의 수, spec 3-1 · 3-6 · 3-7 · 3-9): 반납 창 품목 칸 3줄(창 500 ≤ 1024×529의 한도), 부분 결제 판 3줄,
    * 마감 이월 항목 5줄, 운영 규칙 카드의 가장 작은 폭 = 누르는 곳 9칸(474 카드). 잰 높이가 더 적으면 화면이 줄인다.
    */
-  pages: { returnPieceRows: number; partialPayRows: number; closingCarryRows: number; ruleCardMinTargets: number };
+  /** settingsListColumns: 매장 설정 목록 카드의 한 줄 칸 수의 끝(글이 길면 화면이 줄인다, features-1 §4-4). */
+  /** choiceGridColumns: 할인 적용 창 할인 고르기의 한 줄 칸 수의 끝(포스 4, 좁은 포스 3, features-1 §6-5). */
+  pages: { returnPieceRows: number; partialPayRows: number; closingCarryRows: number; ruleCardMinTargets: number; settingsListColumns: number; choiceGridColumns: number };
   space: { xs: number; s: number; m: number; l: number };
   radius: { s: number; m: number; paper: number };
   line: { hair: number; strong: number; stamp: number };
 }
 
 const SPACE = { xs: 4, s: 8, m: 12, l: 16 } as const;
-const PAGES = { returnPieceRows: 3, partialPayRows: 3, closingCarryRows: 5, ruleCardMinTargets: 9 } as const;
+const PAGES = { returnPieceRows: 3, partialPayRows: 3, closingCarryRows: 5, ruleCardMinTargets: 9, settingsListColumns: 3, choiceGridColumns: 4 } as const;
 const RADIUS = { s: 8, m: 10, paper: 4 } as const;
 const LINE = { hair: 1, strong: 2, stamp: 3 } as const;
 const STAMP = { markPx: 48, miniMarkPx: 24 } as const;
@@ -136,6 +138,7 @@ const posNarrow: DeviceProfile = {
   key: 'pos_narrow',
   checkSizes: [{ width: 907, height: 648 }, { width: 875, height: 600 }],
   capacity: { menu: 2, tabs: 5, quickMethods: 4, paymentSectionsPerPage: 3, sideActions: 2 },
+  pages: { ...PAGES, choiceGridColumns: 3 },
 };
 
 const driverTablet: DeviceProfile = {
@@ -173,12 +176,15 @@ const driverPhone: DeviceProfile = {
   fill: { rowMinPx: 56, rowMaxPx: 88, panelMaxPx: PANEL_MAX_PX },
 };
 
-/** 인쇄: 크기는 인쇄 틀이 정한다. A4 794px(96dpi, 여백 뺌) 기준의 뼈대 값. */
+/**
+ * 인쇄(A4 794 × 1123px, 96dpi): 본문 14px, 쪽 번호 · 인쇄 시각만 12px(features-1 E16, ui 3-7 인쇄 줄 — 16px 규칙은 매장 화면 등급의 것). 줄 28px
+ * (품목이 두 줄이면 48px) · 표 머리 28px, 여백 12mm. 누르는 곳이 없다.
+ */
 const print: DeviceProfile = {
   ...pos,
   key: 'print',
   checkSizes: [{ width: 794, height: 1123 }],
-  minFontPx: 12, baseFontPx: 12, bodyFontPx: 12, bodyLineHeight: 1.3, titleFontPx: 18, bigFontPx: 14,
+  minFontPx: 12, baseFontPx: 14, bodyFontPx: 14, bodyLineHeight: 1.3, titleFontPx: 18, bigFontPx: 16,
   minTargetPx: 0, repeatTargetPx: 0, primaryButtonPx: 0, headerPx: 0, titleTabsPx: 40, footerPx: 24, connectionStripPx: 0, tableHeadPx: 28,
   rowPx: 28, stackedRowPx: 48, groupTitlePx: 28, nowLinePx: 0, pinRowPx: 0, sheetInsetPx: 0, deskGapPx: 0,
   capacity: { menu: 0, tabs: 0, quickMethods: 0, paymentSectionsPerPage: 0, sideActions: 0 },

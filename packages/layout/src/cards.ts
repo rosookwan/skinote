@@ -30,3 +30,46 @@ export function packCards(heights: readonly number[], roomPx: number, gapPx: num
   pages.push(page);
   return pages;
 }
+
+// ── 매장 설정의 목록 카드(features-1 plan §4-4 · E26) ─────────────────────────────
+
+/** 넓은 글자(한글 · 한자 · 가나): 1em, 그 밖(숫자 · 기호 · 빈칸): 0.6em(문구 표 1-3의 어림보다 넉넉하게). */
+const WIDE = /[ᄀ-ᇿ　-鿿가-힯豈-﫿]/u;
+
+/** 글 폭 어림(그리기 전 칸 수를 고를 때): 그린 뒤 넘치면 규칙 검사기가 잡는다. */
+export function estimateTextPx(text: string, fontPx: number): number {
+  let em = 0;
+  for (const ch of text) em += WIDE.test(ch) ? 1 : 0.6;
+  return Math.ceil(em * fontPx);
+}
+
+/**
+ * 목록의 한 줄 칸 수: max부터 1까지, 칸 폭(카드 안 폭을 사이 gap으로 나눈 것) − 안 여백 둘에 가장 긴 글(이름 · 둘째 줄)이 들어가는 가장 큰 수.
+ * 예) 474 폭 카드(안 446)에 `설천 하우스 앞`(16px, 112px)은 세 칸(143 − 16 = 127), `기사 · 1호 차량`은 두 칸.
+ */
+export function listColumns(innerPx: number, texts: readonly string[], fontPx: number, padPx: number, gapPx: number, max: number): number {
+  const widest = texts.reduce((w, text) => Math.max(w, estimateTextPx(text, fontPx)), 0);
+  for (let n = Math.max(1, Math.floor(max)); n > 1; n -= 1) {
+    const cell = (innerPx - (n - 1) * gapPx) / n;
+    if (cell - 2 * padPx >= widest) return n;
+  }
+  return 1;
+}
+
+/**
+ * 목록 줄을 카드 조각으로 나눈다(E26: 카드가 쪽 높이보다 길면 다음 카드 `{title} (계속)`로 잇는다). total = 목록 줄 수, first = 첫 조각에 들어가는
+ * 줄 수, next = 이어지는 조각에 들어가는 줄 수(적어도 1). 각 조각의 [시작 줄, 끝 줄) 목록.
+ */
+export function splitListRows(total: number, first: number, next: number): [number, number][] {
+  const out: [number, number][] = [];
+  let at = 0;
+  let room = Math.max(1, Math.floor(first));
+  while (at < total || out.length === 0) {
+    const end = Math.min(total, at + room);
+    out.push([at, end]);
+    at = end;
+    room = Math.max(1, Math.floor(next));
+    if (total === 0) break;
+  }
+  return out;
+}

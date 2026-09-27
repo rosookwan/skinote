@@ -61,6 +61,13 @@
   border-radius: var(--sn-font-title); background: var(--sn-ink); color: var(--sn-paper);
   font-size: var(--sn-font-min); font-weight: 800; line-height: var(--sn-font-title); text-align: center;
 }
+/* 메뉴 버튼 안의 수(`확인 필요 3`, features-1 §9-3): 점이 아니라 16px 글자. 켜진 메뉴(남색 바탕)에서는 뒤집는다. */
+.sn-count {
+  display: inline-block; min-width: var(--sn-font-title); padding: 0 var(--sn-space-xs);
+  border-radius: var(--sn-font-title); background: var(--sn-ink); color: var(--sn-paper);
+  font-size: var(--sn-font-min); font-weight: 800; line-height: var(--sn-font-title); text-align: center;
+}
+.sn-button[aria-current='page'] .sn-count { background: var(--sn-paper); color: var(--sn-ink); }
 .sn-primary {
   display: inline-flex; align-items: center; justify-content: center; gap: var(--sn-space-s);
   min-height: var(--sn-primary-h); padding: 0 calc(var(--sn-space-l) * 1.5);
@@ -382,6 +389,9 @@
 }
 .sn-slip-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sn-space-m); flex: none; height: var(--sn-slip-title-h); box-shadow: inset 0 calc(var(--sn-line-strong) * -1) 0 var(--sn-ink); }
 .sn-slip-title { font-family: var(--sn-font-serif); font-size: var(--sn-font-title); font-weight: 700; letter-spacing: 0.08em; white-space: nowrap; }
+/* 모두 취소한 접수의 말(`취소`): 제목 옆, 옅은 먹 테두리(빨강 아님: 늦은 것이 아니다). 품목 줄 · 일정 줄도 옅은 먹. */
+.sn-slip-status { margin-inline-end: auto; padding: 0 var(--sn-space-s); border: var(--sn-line-strong) solid var(--sn-ink-muted); border-radius: var(--sn-radius-s); color: var(--sn-ink-muted); font-size: var(--sn-font-body); font-weight: 800; white-space: nowrap; }
+.sn-slip-promise.is-cancelled { color: var(--sn-ink-muted); }
 .sn-slip-no { font-size: var(--sn-font-body); font-weight: 700; color: var(--sn-ink-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .sn-slip-fields { display: flex; flex: none; height: var(--sn-slip-fields-h); box-shadow: inset 0 calc(var(--sn-line) * -1) 0 var(--sn-rule); }
 .sn-slip-field { display: flex; align-items: center; gap: var(--sn-space-xs); flex: 1 1 auto; padding: 0 var(--sn-space-s); white-space: nowrap; }
@@ -389,6 +399,12 @@
 .sn-slip-field dt { font-size: var(--sn-font-min); font-weight: 700; color: var(--sn-ink-muted); }
 .sn-slip-field dd { font-size: var(--sn-font-body); font-weight: 800; }
 .sn-slip-items { flex: 1 1 0; min-height: 0; }
+/* 출처 줄(할인 · 환불): 품목 줄과 같은 높이, 해제 · 환불은 옅은 먹. */
+.sn-slip-adjust > td { font-weight: 700; }
+.sn-row.is-muted { color: var(--sn-ink-muted); }
+.sn-slip-adjust-line { display: flex; align-items: center; gap: var(--sn-space-s); min-width: 0; }
+.sn-slip-adjust-line > .sn-fit { flex: 1 1 0; }
+.sn-slip-adjust-amount { white-space: nowrap; font-weight: 800; }
 .sn-slip-promise { display: flex; align-items: center; flex: none; height: var(--sn-slip-promise-h); font-size: var(--sn-font-base); font-weight: 700; box-shadow: inset 0 var(--sn-line) 0 var(--sn-rule); }
 .sn-slip-promise .sn-fit { flex: 1 1 0; }
 .sn-slip-money { display: flex; align-items: center; gap: var(--sn-space-m); flex: none; height: var(--sn-slip-money-h); font-size: var(--sn-font-base); font-weight: 700; box-shadow: inset 0 var(--sn-line) 0 var(--sn-rule); }
@@ -440,7 +456,7 @@
 .sn-summary-row.is-alert > .sn-rich { justify-self: start; background: var(--sn-now-wash); border-radius: var(--sn-radius-s); padding: 0 var(--sn-space-s); }
 
 /* 틀이 따로인 확인 창(DialogFrame): 바닥줄은 닫기 · 쪽 넘김 · 주 버튼. 긴 주 버튼은 남는 폭을 쓴다. */
-.sn-dialog-foot .sn-dialog-primary { display: flex; justify-content: flex-end; flex: 0 1 auto; min-width: 0; }
+.sn-dialog-foot .sn-dialog-primary { display: flex; justify-content: flex-end; flex: 0 1 auto; min-width: 0; margin-inline-start: auto; }
 .sn-dialog-foot .sn-dialog-primary .sn-primary { flex: 0 1 auto; min-width: 0; }
 .sn-dialog-pager { flex: none; }
 
@@ -519,6 +535,12 @@
 /* 가린 비밀번호(● ● ● ●): 숫자는 보이지 않고 자리 수만. */
 .sn-numpad-display.is-masked { letter-spacing: 0.1em; }
 .sn-key.is-wide { grid-column: 1 / -1; }
+/* 아래 판 숫자판은 화면 높이 안에 든다(금액 판의 다섯 키 줄 + 안내 한 줄은 1024×529에서 540): 제목 · 표시 칸 · 안내 · `닫기`는 그대로이고
+   키 줄만 등급의 키 높이(--sn-key)에서 누르는 곳 최소(--sn-target)까지 줄어든다. 자리가 있으면 키 높이 그대로다. */
+.sn-numpad.is-sheet { max-height: 100%; }
+.sn-numpad.is-sheet > * { flex: none; }
+.sn-numpad.is-sheet > .sn-keypad-keys { flex: 0 1 auto; min-height: 0; grid-auto-rows: minmax(var(--sn-target), var(--sn-key)); }
+.sn-numpad.is-sheet .sn-key { height: auto; }
 .sn-numpad.is-inline { border-radius: var(--sn-radius-paper); }
 /* 숫자 키만(값은 부르는 쪽이 따로 보임): 판 여백 없이 키 격자만. */
 .sn-numpad.is-keys { padding: 0; background: transparent; }
@@ -648,3 +670,26 @@
 .sn-rule-notes { display: flex; flex-direction: column; min-width: 0; }
 .sn-rule-note { font-size: var(--sn-font-min); font-weight: 700; line-height: 1.375; color: var(--sn-ink-soft); white-space: nowrap; }
 .sn-rule-note > b { font-weight: 900; color: var(--sn-ink); }
+/* 매장 설정의 목록 칸(구역의 장소 · 반납 타임 · 요금 · 할인 · 차량 · 직원): 격자(칸 수는 화면이 잰 폭으로), 칸 = 누르는 곳 높이, 이름 굵게 ·
+   둘째 줄(숨김 · 기본 · 1일 40,000원) 보통. 숨긴 · 사용 종료한 칸은 점선 · 옅은 먹, 더하기 칸은 점선 테두리. */
+.sn-rule-list { display: grid; grid-template-columns: repeat(var(--rule-list-cols, 1), minmax(0, 1fr)); gap: var(--sn-space-s); min-width: 0; }
+.sn-rule-item {
+  flex-direction: column; justify-content: center; gap: 0; min-width: 0; height: var(--sn-target); padding: 0 var(--sn-space-s);
+  font-size: var(--sn-font-min); line-height: 1.15;
+}
+.sn-rule-item-label { font-weight: 900; }
+.sn-rule-item-tag { font-size: var(--sn-font-min); font-weight: 700; color: var(--sn-ink-soft); }
+.sn-rule-item.is-muted { border-style: dashed; color: var(--sn-ink-muted); }
+.sn-rule-item.is-muted .sn-rule-item-tag { color: var(--sn-ink-muted); }
+.sn-rule-item.is-add { border-style: dashed; }
+/* 카드 자신의 칸(구역): 장소 칸과 다른 옅은 음영. 더하기만 있는 카드(`구역 추가`)의 버튼은 더하기 칸처럼 점선. */
+.sn-rule-item.is-lead { background: var(--sn-paper-shade); }
+.sn-rule-card.is-adds .sn-choice { border-style: dashed; }
+
+/* 막는 단계(ReviewStep, features-1 §9-3): 창 안의 `사실 · 할 일` 한 줄(두 줄까지). 늦음이 아니라 빨강 대신 연결 띠의 노랑. */
+.sn-review-step {
+  display: flex; align-items: center; min-height: var(--sn-target); padding: var(--sn-space-s) var(--sn-space-m);
+  border: var(--sn-line-strong) solid var(--sn-ink-muted); border-radius: var(--sn-radius-m); background: var(--sn-strip); color: var(--sn-ink);
+  font-size: var(--sn-font-body); font-weight: 800;
+}
+.sn-review-step-text { flex: 1 1 auto; min-width: 0; }

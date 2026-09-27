@@ -3,7 +3,9 @@ import type { BusinessDate, IsoTime, ItemCount, MetricValue } from '@skinote/con
 import { t } from './strings.ko-KR.ts';
 
 export function formatWon(amount: number): string {
-  return t('won', { n: Math.round(amount).toLocaleString('ko-KR') });
+  // 음수는 뺄셈 기호(−, 할인 · 환불 줄 `−22,500원`)로.
+  const n = Math.round(amount);
+  return (n < 0 ? '−' : '') + t('won', { n: Math.abs(n).toLocaleString('ko-KR') });
 }
 
 const timeFormats = new Map<string, Intl.DateTimeFormat>();
@@ -100,7 +102,7 @@ export function fillTitle(template: string, values: { date?: BusinessDate; vehic
 /** 바닥줄 숫자 값 글자: '18팀', '14', '485,000원', '스키 14 · 보드 3'. */
 export function formatMetricValue(value: MetricValue): { text: string; items?: string[] } {
   switch (value.unit) {
-    case 'team': return { text: t('team', { n: value.value }) };
+    case 'team': return { text: t('team', { n: value.value }) + (value.cancelled ? ' · ' + t('cancelledCount', { n: value.cancelled }) : '') };
     case 'count': return { text: String(value.value) };
     case 'won': return { text: formatWon(value.value) };
     case 'items': {

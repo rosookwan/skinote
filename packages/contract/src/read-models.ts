@@ -132,6 +132,8 @@ export interface LedgerRow {
   lateAt?: IsoTime;
   /** 끝난 팀(다음 약속 없음): 맨 뒤에 흐리게. */
   finished: boolean;
+  /** 상태 한 말(모두 취소한 접수 `취소`, features-1 §5-4): 시각 칸 윗줄에도 들어 있다. 빨강이 아니다(흐린 줄). */
+  statusWord?: string;
   cells: Record<string, LedgerCell>;
   /** 모인 도장 칸(collapse_group)이 보일 다음 단계. 없으면 칸 순서에서 첫 남은 도장. */
   nextStepKey?: string;
@@ -165,7 +167,8 @@ export interface LedgerGroup {
 
 /** 바닥줄 숫자 값. 모양(unit)에 따라 화면이 '18팀', '지급 14', '미수 485,000원'으로 쓴다. */
 export type MetricValue =
-  | { metricKey: LedgerMetricKey; unit: 'team'; value: number }
+  /** 팀 수. cancelled: 모두 취소해 팀 수에서 뺀 접수(`합계 17팀 · 취소 1`: 탭의 `전체 18`과 맞게, 2026-09-27 점검). */
+  | { metricKey: LedgerMetricKey; unit: 'team'; value: number; cancelled?: number }
   | { metricKey: LedgerMetricKey; unit: 'count'; value: number }
   | { metricKey: LedgerMetricKey; unit: 'won'; value: number }
   | { metricKey: LedgerMetricKey; unit: 'items'; items: ItemCount[] };
@@ -196,8 +199,8 @@ export interface VehicleLoad {
   items: ItemCount[];
   /** 예비권(권종별). */
   spareTickets: ItemCount[];
-  /** 업무별로 누구 것인지. */
-  byTask: { taskId: string; teamName: string; last4: string; items: ItemCount[] }[];
+  /** 업무별로 누구 것인지. note: 취소한 배달의 차에 남은 것(`접수 취소`, features-1 E7). */
+  byTask: { taskId: string; teamName: string; last4: string; items: ItemCount[]; note?: string }[];
 }
 
 /** 주 버튼에 붙는 수(매장 입고 14개, 지급 도장 · 6개 · 3매, 수납 · 120,000원). */
@@ -238,6 +241,14 @@ export interface LedgerViewResult extends ReadModelHead {
   closedTag?: string;
   /** 방문 결과 판(못 받음)의 이유(reason_codes의 visit_result, 매장 설정). 수거 목록에만. */
   visitReasons?: ReasonCode[];
+  /** 인쇄 판(deviceClass 'print')의 머리: 매장 이름 · 전화(features-1 E16). */
+  printHead?: PrintHead;
+}
+
+/** A4 인쇄 머리(매장 이름 · 매장 전화, 전화가 없으면 빈 글). */
+export interface PrintHead {
+  shopName: string;
+  shopPhone: string;
 }
 
 /** 이유 하나(reason_codes). */
@@ -293,7 +304,10 @@ export interface PromiseSummary {
   }[];
 }
 
-/** 접수증의 돈 줄: '청구 225,000원 · 수납 105,000원(계좌이체 12/24) · 미수 120,000원'. */
+/**
+ * 접수증의 돈 줄: '청구 225,000원 · 수납 105,000원(계좌이체 12/24) · 미수 120,000원'. payments는 수납마다 돌려준 돈을 뺀 몫(모두 돌려준 수납은
+ * 없음)이다.
+ */
 export interface SlipMoney {
   charged: number;
   paid: number;
@@ -314,6 +328,25 @@ export interface SlipMoney {
   paidForOthers?: { amount: number; methodLabel: string; total: number };
   /** 이 시각이 지나면 미수가 빨강. */
   lateAt?: IsoTime;
+  /** 돌려준 돈(환불 합, features-1 E4). paid는 받은 돈 − 환불이다. 없으면 환불이 없다. 돈 줄은 `수납 0원 · 환불 145,000원`. */
+  refunded?: number;
+  /**
+   * 지금 할인(칸마다 합, 양수): 돈 줄의 `할인 −12,000원`. 할인 출처 줄이 품목 표의 다음 쪽에 있어도 첫 쪽에서 청구가 설명된다(2026-09-27 점검). 없으면
+   * 할인이 없다.
+   */
+  discount?: number;
+}
+
+/**
+ * 접수증 품목 표 아래의 출처 줄(features-1 §6-2 · §5-4): 할인(`장비 10% 할인 · −22,500원`, `장비 할인 직접 입력 · 단골 · −5,000원`), 해제
+ * (`장비 할인 해제`), 환불(`환불 · 현금 22,500원`). amount가 있는 줄은 청구에 드는 금액이다(품목 금액 + 이 줄들 = 청구). 환불처럼 청구가 아닌
+ * 줄은 amount 없이 글만, 옅은 먹(muted). 품목 줄과 함께 쪽을 넘긴다.
+ */
+export interface SlipAdjustment {
+  key: string;
+  parts: FitPart[];
+  amount?: number;
+  tone?: 'muted';
 }
 
 /** 남은 일 목록(B2) 한 줄. 끝난 일은 화면이 한 줄('끝난 일 3')로 접는다. */
@@ -364,11 +397,19 @@ export interface OrderSlip extends ReadModelHead {
   nextStep: NextStep | null;
   /** 접수 단위 능력(열린 차량 업무 등). */
   activeConditions: ConditionKey[];
+  /** 모두 취소한 접수(`취소`, 3-20): 머리에 이 말, 품목 줄 · 일정 줄은 옅은 먹(장부의 취소 줄과 같다). 없으면 진행 중. */
+  cancelled?: { label: string };
+  /** 품목 표 아래의 출처 줄(할인 · 환불). 없으면 줄이 없다. */
+  adjustments?: SlipAdjustment[];
+  /** 보는 사람에게 없는 권한(옆 동작 줄의 required_permission_key 중): availableActions가 그 줄을 뺀다(features-1 E11). */
+  deniedPermissions?: string[];
   /**
    * 이 팀이 다른 팀 몫까지 받을 팀이면(결제 예정 팀이 딸림): 수납은 보통 수납 창이 아니라 일괄 수납 화면(V5)을 연다(ui 6-7).
    * teams는 이 팀을 포함한 팀 수, amount는 처음 고른 합(받을 금액).
    */
   groupPay?: { teams: number; amount: number };
+  /** 인쇄 판(deviceClass 'print')의 머리(features-1 E16). */
+  printHead?: PrintHead;
 }
 
 /** 끝 4자리 찾기 결과. 하나면 그 접수증을 바로 연다. */
@@ -377,15 +418,86 @@ export interface FindResult {
   matches: { orderId: string; teamName: string; last4: string; parts: FitPart[] }[];
 }
 
-/** 확인 필요 한 건(sys_review_kinds). 한 줄 한 문장 · 버튼 두 개. */
+/**
+ * 확인 필요 한 건(sys_review_kinds, features-1 §9). 한 줄 한 문장(`사실 · 할 일`) · 버튼 두 개. 셋으로 나뉜다(E18):
+ *   - stored: 지난 일을 적은 것(보냄 대기로 온 기사 기록이 카운터에 밀린 것 …, review_items). `확인`으로 끝낸다.
+ *   - derived: 지금 상태에서 센 것(초과 수납 · 미입고 · 차량 예비권 기록 부족). 고치면 스스로 사라진다.
+ *   - notice: 알림(늦은 반납 · 긴급 요청 · 방문 결과). 머리줄 알림 종에만 보인다.
+ */
 export interface ReviewItem {
   id: string;
   kindKey: string;
+  /** 온전한 문장(알림 목록 · 읽는 이름). */
   message: string;
+  /** 줄의 맞춤 조각(사실은 빠지지 않고 할 일이 먼저 빠진다). 없으면 message 한 조각. */
+  parts?: FitPart[];
   severity: 'info' | 'action' | 'blocking';
   createdAt: IsoTime;
   orderId?: string;
   taskId?: string;
+  /** 저장된 것 · 지금 상태에서 센 것 · 알림. 없으면 알림(옛 모양). */
+  source?: 'stored' | 'derived' | 'notice';
+  /** 저장된 것의 처리 상태. */
+  status?: 'open' | 'resolved';
+  /** 줄의 버튼 두 개(열린 것만, 처음 것이 할 일). */
+  choices?: ReviewChoice[];
+  /** 처리 완료 줄의 둘째 줄(`확인 완료 · 16:20 · 한가람`, 이름을 모르면 시각까지). */
+  resolvedLine?: string;
+  /** 처리 완료 줄은 옅은 먹. */
+  tone?: 'muted';
+}
+
+/** 확인 필요 줄의 버튼: 확인(저장된 것을 끝냄) · 접수증 · 환불(초과 수납) · 수거 목록(미입고) · 예비권 적재 · 리프트권(예비권 기록 부족). */
+export type ReviewChoiceKey = 'resolve' | 'slip' | 'refund' | 'collections' | 'spare_load' | 'tickets';
+
+export interface ReviewChoice {
+  key: ReviewChoiceKey;
+  label: string;
+  enabled: boolean;
+  /** 누를 수 없는 까닭(읽는 이름에 붙음: `권한 없음 · 관리자 확인 필요`). */
+  reason?: string;
+  /** 확인: 보낼 명령(review.resolve). 창 없이 누르면 보낸다(요청번호는 누를 때 하나). */
+  command?: { type: 'review.resolve'; payload: { reviewId: string; resolutionKey: 'acknowledged' } };
+  /** 접수증 · 환불: 그 접수. */
+  orderId?: string;
+  /** 수거 목록 · 예비권 적재: 그 차량(수거 목록은 그 영업일). */
+  vehicleId?: string;
+  date?: BusinessDate;
+}
+
+/** 확인 필요 화면의 탭(미처리 · 처리 완료). */
+export type ReviewTabKey = 'open' | 'done';
+
+/**
+ * 확인 필요(머리줄 메뉴, #/review): 열린 것(저장된 것 · 지금 상태에서 센 것, 먼저 적힌 것부터), 오늘 끝낸 저장된 것, 알림 종의 알림, 메뉴의 수.
+ * 화면은 셈하지 않는다: 줄 · 버튼 · 누를 수 있는지 · 수는 이 모양 그대로다.
+ */
+export interface ReviewListView extends ReadModelHead {
+  /** `확인 필요`. */
+  title: string;
+  /** 탭(`미처리 {n}` · `처리 완료`). */
+  tabs: { key: ReviewTabKey; label: string; count?: number }[];
+  /** 열린 것(미처리 탭). */
+  items: ReviewItem[];
+  /** 오늘 영업일에 끝낸 저장된 것(처리 완료 탭, 늦게 끝낸 것부터). */
+  done: ReviewItem[];
+  /** 알림(늦은 반납 · 긴급 요청 · 방문 결과): 머리줄 알림 종. */
+  notices: ReviewItem[];
+  /** 메뉴 `확인 필요`의 수(열린 것 = items 수). */
+  count: number;
+  /** 줄이 없는 탭의 한 줄(`미처리 없음` · `처리 완료 없음`). */
+  empty: Record<ReviewTabKey, string>;
+}
+
+/**
+ * 막는 단계(sys_review_kinds routing dialog_step, sync 4-3): 열린 창 안에서 먼저 답할 한 줄과 버튼 둘(첫 것이 주 버튼). 마감의 `1호 차량 기록
+ * 2건 전송 대기 · 마감 전 전송 필요` → `재확인` · `닫기`.
+ */
+export interface ReviewStepView {
+  kindKey: string;
+  message: string;
+  parts: FitPart[];
+  choices: { key: 'recheck' | 'close'; label: string }[];
 }
 
 /** 상태 문구를 부를 때의 키 쌍. */

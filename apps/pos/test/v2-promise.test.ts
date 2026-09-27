@@ -297,7 +297,7 @@ describe('promise.change — 일정이 품목 · 수량으로 나뉜다', () => 
     const view = await client.query('promiseSheet', params);
     expect((await confirm(client, view, view)).outcome).toBe('applied');
     const o = state().orders.find((x) => x.id === 'o22')!;
-    expect(o.charges?.map((c) => [c.kind, c.lineId, c.kind === 'extension' ? c.quantity : 0, c.kind === 'extension' ? c.days : 0, c.amount])).toEqual([['extension', 'o22-l2', 1, 1, 25_000], ['extension', 'o22-l3', 1, 1, 5_000]]);
+    expect(o.charges?.map((c) => [c.kind, c.kind === 'discount_change' ? '' : c.lineId, c.kind === 'extension' ? c.quantity : 0, c.kind === 'extension' ? c.days : 0, c.amount])).toEqual([['extension', 'o22-l2', 1, 1, 25_000], ['extension', 'o22-l3', 1, 1, 5_000]]);
     expect(charged(o)).toBe(255_000);
     expect((await client.query('orderSlip', { orderId: 'o22' })).money).toMatchObject({ charged: 255_000, due: 150_000 });
     // 내일 22:00 일정은 오늘 목록에 없다(오늘 22:00 설천 주차장 업무만).

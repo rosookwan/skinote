@@ -8,12 +8,15 @@ import { StoreError } from './errors.ts';
 import { businessDateAt, openDays } from './dates.ts';
 import { isoOf } from './ids.ts';
 import { num, one, str, type Db } from './db.ts';
-import { loadRegistry } from './registry-read.ts';
+import { loadRegistry, loadStaff } from './registry-read.ts';
 import { loadOrderShells, splitChains } from './map/orders.ts';
 import { loadAssets, loadStock, loadVanSpares } from './map/stock.ts';
 import { loadMoney } from './map/money.ts';
 import { loadDispatch } from './map/dispatch.ts';
 import { loadCash } from './map/cash.ts';
+import { loadCancellations } from './map/edits.ts';
+import { loadSwaps } from './map/exchange.ts';
+import { loadReviews } from './map/reviews.ts';
 
 export { loadAssets } from './map/stock.ts';
 
@@ -54,8 +57,12 @@ export function loadShopState(db: Db, shopId: string, now: number): ShopState {
   const { registry, settings, drawers } = loadRegistry(db, shopId, isoOf(now));
   const { orders, byId, lineById } = loadOrderShells(db, shopId, registry);
   const vanReceipts = loadStock(db, shopId, orders, lineById, splitChains(db, shopId));
+  // 즉시 교환(줄의 swaps, features-1 §7-3).
+  loadSwaps(db, shopId, lineById);
   const { paymentGroups, deposits } = loadMoney(db, shopId, byId);
   const { pins, routeRanks } = loadDispatch(db, shopId, byId);
+  // 취소(줄의 취소한 수 · 미수 결제의 옮김은 수납을 읽은 뒤).
+  loadCancellations(db, shopId, byId, lineById);
   const { cashTransfers, closings } = loadCash(db, shopId);
   return {
     version: 3,
@@ -79,6 +86,8 @@ export function loadShopState(db: Db, shopId: string, now: number): ShopState {
     vanReceipts,
     nextReceiptSeq: nextReceiptSeq(db, shopId, head.businessDate),
     storyApplied: [],
+    staff: loadStaff(db, shopId),
+    reviews: loadReviews(db, shopId, now),
   };
 }
 

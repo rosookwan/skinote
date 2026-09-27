@@ -99,10 +99,14 @@ describe('ui-defaults.json', () => {
   it('6-2 접수증: 품목 표 칸의 최소 합이 504px이고 옆 동작은 능력으로 걸러진다', () => {
     const slip = resolveLedgerView(uiDefaults.ledger_views, 'order_slip', 'pos')!;
     expect(slip.columns.reduce((sum, c) => sum + c.min_width_em * 16, 0)).toBe(504);
-    const actions = availableActions(slip.actions, ['exchangeable']).map((a) => a.action_key);
-    expect(actions).toEqual(['change_promise', 'exchange', 'print', 'call']);
+    const actions = availableActions(slip.actions, ['exchangeable', 'order_open']).map((a) => a.action_key);
+    // 즉시 교환(features-1 §7-4, rev 6): 교환 요청(exchange) 줄 대신 exchange_swap(권한 exchange.manage). 권한이 없는 사람에게는 빠진다.
+    expect(actions).toEqual(['change_promise', 'exchange_swap', 'add_items', 'apply_discount', 'print', 'call']);
+    // 일정 변경은 진행 중 접수만(rev 7, 2026-09-27 점검): 모두 취소한 접수(order_open 없음)에는 인쇄 · 전화만.
+    expect(availableActions(slip.actions, []).map((a) => a.action_key)).toEqual(['print', 'call']);
+    expect(availableActions(slip.actions, ['exchangeable'], ['exchange.manage']).map((a) => a.action_key)).not.toContain('exchange_swap');
     // 수납은 받을 돈이 있을 때만(has_due), 조기 반납은 내준 장비가 돌아오지 않았을 때만(has_items_out).
-    expect(availableActions(slip.actions, ['has_due', 'return_required']).map((a) => a.action_key)).toEqual(['pay', 'change_promise', 'print', 'call']);
+    expect(availableActions(slip.actions, ['has_due', 'return_required', 'order_open']).map((a) => a.action_key)).toEqual(['pay', 'change_promise', 'add_items', 'apply_discount', 'print', 'call']);
     expect(availableActions(slip.actions, ['has_items_out']).map((a) => a.action_key)).toContain('early_return');
     expect(pickPrimaryAction(slip.primary_actions, [])?.action_key).toBe('next_step');
   });

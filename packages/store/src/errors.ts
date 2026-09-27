@@ -10,6 +10,7 @@ export type StoreErrorCode =
   | 'REENTRANT' // 한 매장의 트랜잭션 안에서 또 트랜잭션(명령은 await 없이 한 번에 돈다, D4)
   | 'NOT_FOUND'
   | 'NOT_TEST_SHOP' // 견본 자료(load-sample)는 시험 매장(shops.is_test)에만 넣는다
+  | 'ACCOUNT_TENANT_MISMATCH' // 있는 계정이 이 매장의 사람이 아니다(비밀번호 재발급의 매장 경계)
   | 'FAULT'; // 시험의 고장 고리(opts.fault)
 
 export class StoreError extends Error {

@@ -245,6 +245,17 @@ export const APP_STRINGS_KO = {
   settingsOffline: '설정 변경 · 연결 후 가능',
   settingsUnreadable: '연결 끊김 · 설정 조회 실패 · 자동 재시도',
 
+  // 매장 설정의 다른 탭(features-1 §4-4, 문구 표 3-20 확인 대기). 카드 · 목록 칸 · 항목 판 · 바뀐 곳은 읽기 모델(shopSettings)이 쓴다.
+  // 여기에는 비밀번호 재발급 창(서버 모드)의 말만 둔다.
+  /** 비밀번호 재발급: 먼저 요청한 관리자의 비밀번호(숫자판 제목, 표시는 ● ● ● ●). */
+  pinOwn: '본인 비밀번호',
+  /** 새 비밀번호 창 제목(그 직원 이름). */
+  pinNewTitle: '새 비밀번호 · {name}',
+  /** 새 비밀번호 창의 한 줄(한 번만 보인다, 직원에게 알려 준다). */
+  pinOnce: '1회 표시 · 직원 전달',
+  /** 기기 막기 창의 주 버튼(그 기기 이름). */
+  blockDevice: '기기 막기 · {label}',
+
   // ── 서버 연결(계획 work/impl-server/plan.md 6-3 · 8절, 문구 표 3-17 확인 대기): 기기 등록 · 로그인 · 로그아웃 · 연결 끊김 화면.
   //    `연결 끊김` · `마지막 연결 {time}`은 부품 문구(t.offline · t.lastSync), `입력` · `정정` · `닫기`는 숫자판의 말이다.
   titleEnroll: '기기 등록 · 스키노트',
@@ -275,6 +286,64 @@ export const APP_STRINGS_KO = {
   noVehicles: '차량 없음 · 관리자 확인 필요',
   /** 기기 선택 화면이 번호 등록으로 바뀜(서버가 열린 등록을 끔 · 기한 지남): 기기 등록 숫자판의 첫 한 줄. */
   chooseClosed: '기기 선택 종료 · 등록 번호 필요',
+
+  // ── 할인 적용(features-1 §6, 문구 표 3-20 확인 대기): 접수증 옆 동작의 창. 창 제목 · 요약 · 주 버튼은 읽기 모델(discountSheet)이 쓴다.
+  /** 칸 줄(장비 · 리프트권)의 이름표(3-20 `대상`). */
+  discountTarget: '대상',
+  /** 할인 고르기 줄의 이름표. */
+  discountChoice: '할인',
+  /** 환불 줄 자리의 읽는 이름 · 수단 버튼 묶음. */
+  refundRow: '환불',
+
+  // ── 접수 취소 · 품목 취소 · 품목 추가(features-1 §5, 문구 표 3-20 확인 대기): 창 제목 · 줄 · 요약 · 주 버튼은 읽기 모델(cancelSheet ·
+  //    orderDraft addTo · checkoutSheet addTo)이 쓴다. 여기에는 창 틀의 이름표만.
+  /** 접수 취소의 구분 줄(`취소 요청` · `연락 없음`). */
+  cancelReason: '구분',
+  /** 돈 줄(`환불` · `미수 결제` · `환불 없음`)의 이름표. */
+  cancelMoney: '환불',
+  /** 품목 취소의 수량 칸 묶음 이름(읽는 이름). */
+  cancelPieces: '취소 품목',
+  titleAddItems: '품목 추가 · 스키노트',
+
+  // ── 즉시 교환(features-1 §7, 문구 표 3-20 확인 대기): 창 제목 · 품목 버튼 · 수량 줄 이름 · 요약 · 주 버튼은 읽기 모델(exchangeSheet)이 쓴다.
+  /** 교환 품목 줄(`헬멧 중 사이즈 · 2개`)의 이름표. */
+  exchangeItem: '교환 품목',
+  /** 수량 줄의 이름표(`반납 사이즈` · `지급 예정 사이즈`와 −/+). */
+  exchangeQty: '수량',
+  /** 지급 사이즈 고르기(그 종류의 다른 사이즈)의 이름표. */
+  exchangeSize: '지급 사이즈',
+
+  // ── 리프트권 · 인쇄 · 전화(features-1 §8, 문구 표 3-20 확인 대기): 화면 제목 · 탭 · 표 머리 · 줄 · 창의 글 · 주 버튼은 읽기 모델(ticketBoard ·
+  //    ticketLossSheet · spareSheet · phoneReveal)이 쓴다. 여기에는 창 · 화면 틀의 이름표와 인쇄 머리만.
+  titleTickets: '리프트권 · 스키노트',
+  titlePrint: '인쇄 · 스키노트',
+  /** 리프트권 화면을 읽지 못함. */
+  ticketsUnreadable: '리프트권 현황 확인 불가 · 재시도 필요',
+  /** 현황 탭 오른쪽 차량 칸 묶음의 읽는 이름. */
+  ticketVehicles: '차량 예비권',
+  /** 분실 처리 · 분실 회수 · 예비권 창의 수량 칸 묶음 이름(읽는 이름). */
+  ticketPieces: '권종 수량',
+  /** 인쇄 머리의 매장 전화(`전화 010-0000-0000`). */
+  printShopPhone: '전화 {phone}',
+  /** 인쇄 바닥의 쪽(`1 / 2쪽`)과 인쇄 시각. */
+  printPage: '{page} / {pages}쪽',
+  printedAt: '인쇄 {time}',
+  /** 이어지는 쪽의 제목(`(계속)`, 문구 표 1-4). */
+  printContinued: '{title} (계속)',
+  /** 인쇄 수거 목록 제목(`12월 26일 (토) 수거 목록 · 1호 차량`). */
+  printCollections: '{date} 수거 목록 · {vehicle}',
+  /** 인쇄할 것이 없는 목록. */
+  printEmpty: '수거 대상 없음',
+  /** 인쇄 문서를 읽지 못함(창 대신 한 줄). */
+  printUnreadable: '인쇄 불가 · 재시도 필요',
+
+  // ── 확인 필요(features-1 §9, 문구 표 3-20 확인 대기): 제목 · 탭 · 줄의 문장 · 버튼 · 처리 완료 줄 · 환불 창의 줄과 주 버튼 · 마감의 막는 단계는
+  //    읽기 모델(reviewList · refundSheet · closingSheet.step)이 쓴다. 여기에는 창 · 화면 틀의 이름표만.
+  titleReview: '확인 필요 · 스키노트',
+  /** 확인 필요 목록을 읽지 못함. */
+  reviewUnreadable: '확인 필요 목록 확인 불가 · 재시도 필요',
+  /** 확인 필요 한 줄의 버튼 묶음(읽는 이름). */
+  reviewActions: '확인 필요 처리',
 } as const;
 
 /** 앱 화면 문구를 부르고 {이름} 자리를 채운다. */

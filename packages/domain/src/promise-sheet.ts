@@ -12,11 +12,12 @@ import {
   ACTION_LABELS, DomainError, type ChoiceOption, type CommandEnvelope, type PlacePick, type PromiseInput, type PromiseSheetParams,
   type PromiseSheetView, type RichText, type SlotPick,
 } from '@skinote/contract';
-import { productOf } from './catalog.ts';
+import { lineDayPrice, extraDays } from './extension.ts';
 import type { DomainLines, FxCharge, FxLine, FxOrder, FxPromise, FxPromiseSplit, FxReturnSlot, ShopRegistry, ShopState } from './model.ts';
 import { bucketLeft, currentReturn, lineBuckets, returnPromises, samePromise, type FxBucket } from './promises.ts';
 import { conflict, done, nothing, rejected, unsupported, type Result } from './result.ts';
-import { findOrder, placeLabel, placeShortLabel, slotAt, vehicleLabel } from './rules.ts';
+import { CANCEL_WORDS } from './cancel-words.ts';
+import { activeAreas, activeSlots, activeVehicles, findOrder, isCancelledOrder, liveQty, placeLabel, placeShortLabel, slotAt, usablePlace, vehicleLabel } from './rules.ts';
 import { businessDateOf, dayWord, hm, kstAt, kstDate, MINUTE, shopCutoff } from './time.ts';
 import type { ViewContext } from './views.ts';
 
@@ -126,14 +127,16 @@ function resolvePromise(state: ShopState, input: PromiseInput, source: FxPromise
   let at = source.at;
   if (input.slot) {
     const date = dateOf(state, input.slot.day);
-    const slot = state.settings.returnSlots.find((s) => s.key === input.slot!.slotKey);
+    // 숨긴 반납 타임은 지금 일정의 타임일 때만(plan E12: 고르기는 쓰는 것 + 지금 값).
+    const slot = activeSlots(state.settings, pickOf(state, source).slot.slotKey).find((s) => s.key === input.slot!.slotKey);
     if (slot) at = slotAt(date, slot);
     else if (input.slot.slotKey === '') at = source.at + dayDiff(date, bizDate(state, source.at)) * DAY;
     else return { unsupported: true };
   }
   if (input.mode === 'store') return { at, mode: 'store' };
-  if (!knownPlace(state.registry, input.placeKey)) return { unsupported: true };
-  const vehicles = state.registry.vehicles;
+  // 숨긴 장소 · 사용 종료한 차량은 지금 일정의 것일 때만.
+  if (!usablePlace(state.registry, input.placeKey, source.placeId)) return { unsupported: true };
+  const vehicles = activeVehicles(state.registry, source.vehicleId);
   const vehicleId = input.vehicleId ?? source.vehicleId ?? vehicles[0]?.id;
   if (!vehicles.some((v) => v.id === vehicleId)) return { unsupported: true };
   return { at, mode: 'vehicle', placeId: input.placeKey!, vehicleId: vehicleId! };
@@ -164,9 +167,6 @@ function planLine(o: FxOrder, l: FxLine, want: number, target: FxPromise): LineM
   }
   return { l, want, takes, moving: want - rest };
 }
-
-/** 연장에 쓰는 1일 값: 요금표 값(catalog 14: 할인은 고르지 않으면 연장에 적용하지 않는다). 목록에 없는 옛 줄은 줄 값 ÷ 수. */
-const dayPrice = (reg: Pick<ShopRegistry, 'products'>, l: FxLine) => productOf(reg, l.productKey ?? l.kind)?.price ?? (l.qty > 0 ? l.amount / l.qty : 0);
 
 /** 새 일정의 id(접수 안에서 차례: p1 · p2 …). 차량 업무 id의 셋째 마디가 된다. */
 function newSplitId(splits: readonly FxPromiseSplit[]): string {
@@ -202,32 +202,22 @@ function nextSplits(o: FxOrder, moves: readonly LineMove[], target: FxPromise, n
 }
 
 /**
- * 연장 값(장비만, catalog 14): 원래 반납 일정(값을 받은 날)보다 늦은 나눈 일정마다 1일 값 × 수량 × 늦은 날. 줄마다 이미 적은 연장
- * (청구 조정의 합)과의 차이만 이번에 적는다: 날을 되돌리면 음수(연장 취소), 같은 날로 여러 번 옮겨도 한 번만 받는다.
+ * 연장 값(장비만, catalog 14 · extension.ts): 옮기는 수마다 (새 일정의 늘어난 날 − 나온 일정의 늘어난 날) × 그 줄의 1일 값. 늘어난 날은 원래 반납
+ * 일정(값을 받은 날)보다 늦은 날이다. 늘면 연장(수량 · 늘어난 날), 줄면 연장 취소(음수)이고, 같은 날로 여러 번 옮겨도 한 번만 받는다. 옮기지 않는 수 ·
+ * 취소한 수 · 환불 없음은 이 셈에 들지 않는다(앞 셈은 줄의 청구 조정 합을 '받은 연장'으로 보아 취소 조정까지 세었다, 2026-09-27 점검).
  */
 type ChargePart = FxCharge extends infer C ? (C extends FxCharge ? Omit<C, 'id' | 'at'> : never) : never;
 
-function extensionOf(state: ShopState, o: FxOrder, moves: readonly LineMove[], target: FxPromise, now: number): { amount: number; parts: ChargePart[] } {
-  const after = nextSplits(o, moves, target, now);
-  const mainDate = bizDate(state, o.giveBack.at);
+function extensionOf(state: ShopState, o: FxOrder, moves: readonly LineMove[], target: FxPromise): { amount: number; parts: ChargePart[] } {
+  const to = extraDays(state, o, target);
   const parts: ChargePart[] = [];
   for (const m of moves) {
-    if (m.l.section === 'lift' || m.l.qty <= 0) continue;
-    const unitDays = after.filter((row) => row.lineId === m.l.id)
-      .reduce((sum, row) => sum + Math.max(0, dayDiff(bizDate(state, row.promise.at), mainDate)) * row.quantity, 0);
-    const price = dayPrice(state.registry, m.l);
-    const want = Math.round(price * unitDays);
-    const mine = (o.charges ?? []).filter((c) => c.lineId === m.l.id);
-    const had = mine.reduce((sum, c) => sum + c.amount, 0);
-    // 이미 받은 연장 날: 늘어난 몫의 날 × 수에서 되돌린 몫(연장 취소 금액 ÷ 1일 값)을 뺀다.
-    const hadDays = mine.reduce((sum, c) => sum + (c.kind === 'extension' ? c.days * c.quantity : price > 0 ? c.amount / price : 0), 0);
-    if (want === had) continue;
-    if (want > had) {
-      const days = m.moving > 0 ? Math.max(0, Math.round((unitDays - hadDays) / m.moving)) : 0;
-      parts.push({ kind: 'extension', lineId: m.l.id, quantity: m.moving, days, amount: want - had });
-    } else {
-      parts.push({ kind: 'extension_undo', lineId: m.l.id, amount: want - had });
-    }
+    if (m.l.section === 'lift' || m.l.qty <= 0 || m.moving <= 0) continue;
+    const unitDays = m.takes.reduce((sum, { b, n }) => sum + n * (to - extraDays(state, o, b.promise)), 0);
+    const amount = Math.round(lineDayPrice(state.registry, m.l) * unitDays);
+    if (amount === 0) continue;
+    if (amount > 0) parts.push({ kind: 'extension', lineId: m.l.id, quantity: m.moving, days: Math.max(1, Math.round(unitDays / m.moving)), amount });
+    else parts.push({ kind: 'extension_undo', lineId: m.l.id, amount });
   }
   return { amount: parts.reduce((sum, x) => sum + x.amount, 0), parts };
 }
@@ -246,7 +236,7 @@ function lineNote(reg: Pick<ShopRegistry, 'areas'>, o: FxOrder, l: FxLine): stri
   if (open.length > 1) {
     return open.map((b) => (b.promise.mode === 'vehicle' ? placeShortLabel(reg, b.promise.placeId) : '매장') + ' ' + bucketLeft(b)).join(' · ');
   }
-  return '대여 ' + l.qty + countWordOf(l);
+  return '대여 ' + liveQty(l) + countWordOf(l);
 }
 
 const NONE: RichText = [{ text: '없음', tone: 'grey' }];
@@ -264,14 +254,14 @@ export function promiseSheet(ctx: ViewContext, params: PromiseSheetParams): Prom
   const start = pickOf(state, base);
   const slot = params.slot ?? start.slot;
   const place = params.place ?? start.place;
-  const vehicleId = params.vehicleId ?? base.vehicleId ?? state.registry.vehicles[0]?.id ?? '';
+  const vehicleId = params.vehicleId ?? base.vehicleId ?? activeVehicles(state.registry)[0]?.id ?? '';
   const input: PromiseInput = { mode: place.mode, slot, ...(place.mode === 'vehicle' ? { placeKey: place.placeKey, vehicleId } : {}) };
   const resolved = resolvePromise(state, input, base);
   const target = 'unsupported' in resolved ? null : resolved;
 
   // ② 반납 시각: 반납 타임(고른 날의 시각이 지났거나 10분 안이면 누를 수 없음) + 날.
   const date = dateOf(state, slot.day);
-  const slots: ChoiceOption[] = state.settings.returnSlots.map((s) => {
+  const slots: ChoiceOption[] = activeSlots(state.settings, start.slot.slotKey).map((s) => {
     const reason = timeReason(slotAt(date, s), ctx.now);
     // 지금 일정의 타임이 이미 지났으면(지연 반납) 고른 것으로 보이지 않는다: 새 일정은 다른 타임을 골라야 한다.
     return { key: s.key, label: s.label + ' ' + slotTime(s), short: slotTime(s), selected: slot.slotKey === s.key && !reason, enabled: !reason, ...(reason ? { reason } : {}) };
@@ -289,8 +279,9 @@ export function promiseSheet(ctx: ViewContext, params: PromiseSheetParams): Prom
   });
 
   // ③ ④ 장소 · 차량.
-  const areas = state.registry.areas.map((a) => ({ key: a.id, label: a.label, lodging: a.lodging, places: a.places.map((p) => ({ key: p.id, label: p.label })) }));
-  const vehicles: ChoiceOption[] = state.registry.vehicles.map((v) => ({ key: v.id, label: v.label, selected: place.mode === 'vehicle' && vehicleId === v.id, enabled: true }));
+  // 고르기: 쓰는 구역 · 장소 · 차량 + 지금 일정의 값(숨겼거나 사용 종료했어도 골라 둔 채 남는다, plan E12).
+  const areas = activeAreas(state.registry, base.placeId).map((a) => ({ key: a.id, label: a.label, lodging: a.lodging, places: a.places.map((p) => ({ key: p.id, label: p.label })) }));
+  const vehicles: ChoiceOption[] = activeVehicles(state.registry, base.vehicleId).map((v) => ({ key: v.id, label: v.label, selected: place.mode === 'vehicle' && vehicleId === v.id, enabled: true }));
 
   // ① 변경 품목.
   const qty = (lineId: string, max: number) => Math.min(max, Math.max(0, Math.floor(params.quantities?.[lineId] ?? 0)));
@@ -299,9 +290,10 @@ export function promiseSheet(ctx: ViewContext, params: PromiseSheetParams): Prom
   }));
 
   const common = { basis, title, lines, slots, days, calendar, areas, place, vehicles, vehicleRowVisible: place.mode === 'vehicle' };
-  if (baseLines.length === 0) {
-    // 옮길 것이 없다(모두 반납 · 수거): 창 대신 한 줄.
-    return { ...common, summary: { changed: NONE, kept: NONE }, notice: '반납 완료', primary: { label: ACTION_LABELS.change_promise, alts: [], enabled: false } };
+  if (baseLines.length === 0 || isCancelledOrder(o)) {
+    // 옮길 것이 없다(모두 반납 · 수거): 창 대신 한 줄. 모두 취소한 접수는 `취소`(내준 적이 없는 것을 `반납 완료`라 하지 않는다, 2026-09-27 점검).
+    const notice = isCancelledOrder(o) ? CANCEL_WORDS.status : '반납 완료';
+    return { ...common, summary: { changed: NONE, kept: NONE }, notice, primary: { label: ACTION_LABELS.change_promise, alts: [], enabled: false } };
   }
 
   // ⑤ 요약과 주 버튼.
@@ -327,7 +319,7 @@ export function promiseSheet(ctx: ViewContext, params: PromiseSheetParams): Prom
     ]
     : NONE;
 
-  const extension = target ? extensionOf(state, o, moves, target, ctx.now) : { amount: 0, parts: [] };
+  const extension = target ? extensionOf(state, o, moves, target) : { amount: 0, parts: [] };
   const notice = target && liftDayChange(state, moves, target) ? LIFT_SAME_DAY : undefined;
   const timeBad = target ? timeReason(target.at, ctx.now) : PAST;
   const changed: RichText = target && moves.length
@@ -385,7 +377,7 @@ export function changePromise(state: ShopState, envelope: CommandEnvelope<'promi
   }
   if (moves.length === 0) return nothing('변경 없음');
   if (liftDayChange(state, moves, target)) return rejected(LIFT_SAME_DAY);
-  const extension = extensionOf(state, o, moves, target, now);
+  const extension = extensionOf(state, o, moves, target);
   if (extension.amount !== 0 && envelope.expect?.quoteHash !== quoteHash(extension.amount)) {
     return conflict('QUOTE_CHANGED', '받을 금액 변경됨 · 재시도 필요');
   }

@@ -151,10 +151,13 @@ describe('V4 창의 읽기 모델(checkoutSheet) — 16:25 이민호 팀 · 권 
   it('할인 적용: 칸마다 하나(10% · 10원 단위), 제목 줄 `10% 할인 · 225,000원 → 202,500원`, 가격(quoteHash)이 바뀐다', async () => {
     const { client } = at(45, false, 'numbered');
     const plain = await client.query('checkoutSheet', { draft: MINHO });
-    expect(pick(plain.sections[0]!.discounts!)).toEqual(['할인 없음*', '10% 할인']);
+    // 견본 할인: 두 칸의 10%, 장비 5,000원(features-1 §3-2, 리프트권 20%는 리프트권 칸에만).
+    // 끝은 직접 입력(features-1 §6-2: 종류 판 → 숫자판 → 사유 키보드).
+    expect(pick(plain.sections[0]!.discounts!)).toEqual(['할인 없음*', '10% 할인', '장비 5,000원 할인', '직접 입력']);
+    expect(pick(plain.sections[1]!.discounts!)).toEqual(['할인 없음*', '10% 할인', '리프트권 20% 할인', '직접 입력']);
     const view = await client.query('checkoutSheet', { draft: MINHO, choices: [{ sectionKey: 'gear', methodKey: 'card', discountKey: 'ten_percent' }] });
     expect([view.sections[0]?.discount, view.sections[0]?.discountShort, view.sections[0]?.amount]).toEqual(['10% 할인 · 225,000원 → 202,500원', '10% 할인', 202_500]);
-    expect(pick(view.sections[0]!.discounts!)).toEqual(['할인 없음', '10% 할인*']);
+    expect(pick(view.sections[0]!.discounts!)).toEqual(['할인 없음', '10% 할인*', '장비 5,000원 할인', '직접 입력']);
     expect(view.primary.label).toBe('접수 확정 · 카드 202,500원 · 현금 160,000원');
     expect(view.expect?.quoteHash).not.toBe(plain.expect?.quoteHash);
     expect(view.expect?.quoteHash).toMatch(/gear-ten_percent=202500/);
@@ -276,7 +279,9 @@ describe('접수 확정(order.create)', () => {
     const o = orderOf(state(), '0042');
     expect(o.payments.map((p) => [p.section, p.methodKey, p.amount, p.drawerId ?? ''])).toEqual([['gear', 'card', 202_500, ''], ['lift', 'cash', 140_000, 'counter']]);
     expect(o.lines.filter((l) => l.section === 'gear').reduce((sum, l) => sum + l.amount, 0)).toBe(202_500);
-    expect(o.discounts).toEqual([{ sectionKey: 'gear', discountKey: 'ten_percent', label: '10% 할인', amount: 22_500, at: expect.any(Number) }]);
+    expect(o.discounts).toEqual([{ id: o.id + ':da1', sectionKey: 'gear', discountKey: 'ten_percent', kind: 'percent', label: '10% 할인', value: 10, amount: 22_500, at: expect.any(Number) }]);
+    // 할인 몫이 있는 줄은 할인 앞 값(gross)을 가진다(접수증 품목 금액 칸은 할인 앞 값, 할인은 출처 줄).
+    expect(o.lines.filter((l) => l.section === 'gear').every((l) => l.gross !== undefined && l.gross > l.amount)).toBe(true);
     expect(ownDue(o)).toBe(0);
   });
 

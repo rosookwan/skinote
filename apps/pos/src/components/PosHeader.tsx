@@ -1,9 +1,10 @@
 // 포스 화면들의 머리줄(ui 3-6): 장부(홈) · 끝 4자리 찾기 · 메뉴(menu_entries, 등급 칸 수) · 더 보기 · 알림 · 관리 · 나가기.
 // 끝 4자리는 어느 화면에서든 숫자판(아래에서 올라오는 판)을 열고, 한 팀이면 그 접수증을 바로 연다(N10).
 // 메뉴는 화면 키(screen_key)의 경로로 간다(router의 screenRoute: 수거 목록 #/collections/:date, 관리 #/manage).
-// 아직 없는 화면(리프트권 · 확인 필요 · 사이즈 요청)은 한 문장 알림으로 알린다.
+// 리프트권은 리프트권 화면(#/tickets, features-1 §8-2), 확인 필요는 확인 필요 화면(#/review, §9-3: 메뉴 버튼 안에 열린 확인 필요의 수, 좁으면
+// `더 보기`에 합친 수). 알림 종은 알림(늦은 반납 · 긴급 요청 · 방문 결과)만 보인다. 아직 없는 화면(사이즈 요청)은 한 문장 알림으로 알린다.
 // 서버에 붙은 카운터가 끊기면 매장 이름 자리에 회색 이름표 `연결 끊김 · 마지막 연결 16:48`(AppHeader connection, 계획 6-4).
-import { menuFor, type MenuEntryRow, type ReviewItem } from '@skinote/contract';
+import { menuFor, type MenuEntryRow, type ReviewListView } from '@skinote/contract';
 import { AppHeader, Keypad, t, useDeviceProfile, type AppHeaderMore } from '@skinote/ui';
 import { useMemo, useState, type ReactNode } from 'react';
 import { useClient, useConfig, useConnection, useLive } from '../app/client.tsx';
@@ -41,7 +42,7 @@ export function usePosHeader(from: 'ledger' | 'slip' | 'collection' | 'other', c
   const [note, setNote] = useState<string | undefined>(undefined);
   const [sheet, setSheet] = useState<Sheet | null>(null);
   const [message, setMessage] = useState<Message | null>(null);
-  const reviews = useLive<ReviewItem[]>('reviews', (c) => c.query('reviewList', {}), finding || sheet !== null || message !== null);
+  const reviews = useLive<ReviewListView>('reviews', (c) => c.query('reviewList', {}), finding || sheet !== null || message !== null);
   const menu = useMemo(() => (config ? menuFor(config.menuEntries, 'pos', profile.key, config.features, null) : []), [config, profile.key]);
 
   const leave = (proceed: () => void) => (guard ? guard(proceed) : proceed());
@@ -90,12 +91,15 @@ export function usePosHeader(from: 'ledger' | 'slip' | 'collection' | 'other', c
     });
   };
 
-  const alerts = reviews.data ?? [];
+  const alerts = reviews.data?.notices ?? [];
+  // 메뉴 `확인 필요`의 수(열린 확인 필요): 그 화면(screen_key review_list)을 여는 메뉴마다.
+  const menuCounts = useMemo(() => Object.fromEntries(menu.filter((m) => m.screen_key === 'review_list').map((m) => [m.key, reviews.data?.count ?? 0])), [menu, reviews.data?.count]);
   const element = (
     <AppHeader
       shopName={config?.shopName ?? ''}
       menu={menu}
       alertCount={alerts.length}
+      menuCounts={menuCounts}
       {...(currentKey ? { currentKey } : {})}
       onHome={() => leave(() => go({ name: 'ledger', date: null }))}
       onFind={() => { setDigits(''); setNote(undefined); setFinding(true); }}

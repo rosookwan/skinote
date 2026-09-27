@@ -77,12 +77,15 @@ const FLAGS = /** @type {Record<string, { key: string, kind: 'bool' | 'value' | 
   '--minutes': { key: 'minutes', kind: 'value' },
   '--device': { key: 'device', kind: 'value' },
   '--open-all': { key: 'openAll', kind: 'bool' },
+  '--role': { key: 'role', kind: 'value' },
+  '--amount': { key: 'amount', kind: 'value' },
+  '--percent': { key: 'percent', kind: 'value' },
 });
 
-const OPS = ['provision', 'load-sample', 'reset-test-shop', 'device-code', 'rotate-pin', 'revoke-device', 'status'];
+const OPS = ['provision', 'load-sample', 'reset-test-shop', 'device-code', 'rotate-pin', 'revoke-device', 'set-limit', 'status'];
 /** 매장 파일을 혼자 써야 하는 명령(서버가 돌면 거절, deploy/shop-cli.sh는 서버를 잠깐 멈춘다). */
 export const EXCLUSIVE_OPS = Object.freeze(['provision', 'load-sample', 'reset-test-shop']);
-const USAGE = '쓰는 법: node bin/shop.js <provision|load-sample|reset-test-shop|device-code|rotate-pin|revoke-device|status> --shop <매장 id> …  (또는 --stdin)';
+const USAGE = '쓰는 법: node bin/shop.js <provision|load-sample|reset-test-shop|device-code|rotate-pin|revoke-device|set-limit|status> --shop <매장 id> …  (또는 --stdin)';
 
 /** @param {string[]} argv @returns {{ op: string, args: CliArgs, stdin: boolean }} */
 export function parseArgs(argv) {
@@ -301,7 +304,7 @@ function loadSample(config, shopId, args, io) {
     }
     let result;
     try {
-      result = store.importDay({ date, orders: day.orders, pins: day.pins, deposits: day.deposits, paymentGroups: day.paymentGroups }, 'import:sample:' + date, now,
+      result = store.importDay({ date, orders: day.orders, pins: day.pins, deposits: day.deposits, paymentGroups: day.paymentGroups, reviews: day.reviews ?? [] }, 'import:sample:' + date, now,
         { key: 'system:cli', name: 'system:cli' });
     } catch (error) {
       if (/** @type {{ code?: unknown }} */ (error).code === 'NOT_TEST_SHOP') throw new CliError(EXIT.data, '견본 자료는 시험 매장에만 넣습니다');
@@ -362,6 +365,14 @@ function describe(op, result) {
       return `등록 번호\t${result.formatted}\n기기\t${result.label} (${result.kind}${result.vehicleId ? ' · ' + result.vehicleId : ''})\n유효\t${result.expiresAt}까지\n`;
     case 'rotate-pin':
       return `직원\t역할\t비밀번호\n${result.staff}\t${result.role}\t${result.pin}\n`;
+    case 'set-limit': {
+      const l = result.limits ?? {};
+      const parts = [
+        ...(l.maxDiscountAmount !== undefined ? [`금액 ${l.maxDiscountAmount}원`] : []),
+        ...(l.maxDiscountPercentBp !== undefined ? [`비율 ${l.maxDiscountPercentBp / 100}%`] : []),
+      ];
+      return `역할\t${result.role}\n직접 입력 할인 한도\t${parts.length ? parts.join(' · ') : '없음'}\n`;
+    }
     case 'revoke-device':
       if (result.openAll) return `스스로 붙은 시험 기기 ${result.revoked}대 끊음 · 끝낸 세션 ${result.sessions}개 · 닫은 알림 연결 ${result.streams}개\n`;
       return `기기 ${result.label} ${result.revoked ? '끊음' : '이미 끊겨 있음'} · 끝낸 세션 ${result.sessions}개 · 닫은 알림 연결 ${result.streams}개\n`;
@@ -412,7 +423,8 @@ export async function runShopCli(argv, io) {
     if (op === 'rotate-pin' && (args.staff?.length ?? 0) > 1) throw new CliError(EXIT.usage, 'rotate-pin은 --staff 하나');
     const opArgs = op === 'rotate-pin' ? { staff: args.staff?.[0], pinDigits: args.pinDigits }
       : op === 'device-code' ? { kind: args.kind, label: args.label, vehicle: args.vehicle, minutes: args.minutes }
-        : op === 'revoke-device' ? { device: args.device, ...(args.openAll === true ? { openAll: true } : {}) } : {};
+        : op === 'revoke-device' ? { device: args.device, ...(args.openAll === true ? { openAll: true } : {}) }
+          : op === 'set-limit' ? { role: args.role, amount: args.amount, percent: args.percent } : {};
     lock = acquireWriterLock(config.dataDir, shopId);
     if (!lock) {
       // 서버가 돈다: 관리 소켓으로 보낸다(서버가 자기 연결로 처리한다).

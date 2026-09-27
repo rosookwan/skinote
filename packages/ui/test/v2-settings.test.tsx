@@ -99,3 +99,37 @@ describe('V8에서 쓰는 부품 바꿈', () => {
     expect(on).toMatch(/<button type="button" class="sn-key is-go">입력<\/button>/);
   });
 });
+
+describe('매장 설정의 목록 카드(features-1 §4-4): 칸 격자 · 둘째 줄 · 숨김 · 더하기 · (계속) · 가는 버튼', () => {
+  const run = { kind: 'op' as const, op: { op: 'area.hide' as const, id: 'x', hidden: true } };
+  const AREA: RuleCardView = {
+    key: 'area:seolcheon', title: '설천', changed: false, inline: false, rows: [], notes: [],
+    list: {
+      items: [
+        { key: 'area:seolcheon', label: '설천', tag: '구역', run },
+        { key: 'place:p', label: '설천 주차장', tag: '숨김', muted: true, run },
+        { key: 'place:q', label: '설천 하우스 앞', run },
+      ],
+      add: { key: 'place-add', label: '장소 추가', run },
+    },
+  };
+  it('칸마다 이름과 둘째 줄, 숨긴 칸은 옅게, 더하기는 끝 칸, 이어지는 카드는 제목 뒤 (계속)', () => {
+    const html = render(<RuleCard card={AREA} onOption={none} onValue={none} listColumns={3} />);
+    expect(visible(html)).toBe('설천 설천 구역 설천 주차장 숨김 설천 하우스 앞 장소 추가');
+    expect(html).toContain('--rule-list-cols:3');
+    expect(html).toMatch(/class="sn-button sn-rule-item is-muted"[^>]*aria-label="설천 주차장 · 숨김"/);
+    expect(html).toMatch(/class="sn-button sn-rule-item is-add"/);
+    expect(visible(render(<RuleCard card={{ ...AREA, continued: true }} onOption={none} onValue={none} listColumns={3} />))).toMatch(/^설천 \(계속\)/);
+  });
+  it('높이: 칸 네 개 · 세 칸 → 두 줄(28 + 제목 28 + 사이 4 + 52 · 8 · 52 = 172), 한 칸이면 네 줄', () => {
+    const p = DEVICE_PROFILES.pos;
+    expect(ruleCardHeight(AREA, p, 3)).toBe(172);
+    expect(ruleCardHeight(AREA, p, 1)).toBe(28 + 28 + 4 + 4 * 52 + 3 * 8);
+  });
+  it('줄 끝의 가는 버튼(`운영 규칙 ›`)과 분 · 비율 숫자판', () => {
+    const card: RuleCardView = { key: 'cutoff', title: '영업일 기준 시각', changed: false, inline: false, rows: [{ key: 'c', label: '06:00', options: [], link: { label: '운영 규칙', to: 'rules' } }], notes: [] };
+    expect(visible(render(<RuleCard card={card} onOption={none} onValue={none} />))).toBe('영업일 기준 시각 06:00 운영 규칙 ›');
+    expect(visible(render(<NumberPad mode="minutes" title="야간 수거 준비" value="60" onChange={none} onSubmit={none} />))).toContain('60분');
+    expect(visible(render(<NumberPad mode="percent" title="할인 비율" value="15" onChange={none} onSubmit={none} />))).toContain('15%');
+  });
+});

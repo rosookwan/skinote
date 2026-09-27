@@ -11,7 +11,7 @@ import {
 } from '@skinote/contract';
 import { fillRows } from '@skinote/layout';
 import {
-  FooterBar, Icon, Pager, RichLine, StampMark, TextFit, formatWon, t, useCommandDraft, useElementSize, useUi, type DeviceProfile,
+  FooterBar, Icon, Pager, ReviewStepLine, RichLine, StampMark, TextFit, formatWon, t, useCommandDraft, useElementSize, useUi, type DeviceProfile,
 } from '@skinote/ui';
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
@@ -84,6 +84,8 @@ export function ClosingScreen({ date }: { date: string | null }) {
   const [pad, setPad] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ title: string; lines: string[] } | null>(null);
   const [confirming, setConfirming] = useState(false);
+  // 막는 단계의 `재확인`(features-1 §9-3): 창을 연 채 다시 물은 답. 창을 닫으면 버린다(목록은 새 알림으로 다시 읽는다).
+  const [rechecked, setRechecked] = useState<ClosingSheetView | null>(null);
   const [leftPage, setLeftPage] = useState(0);
   const [carryPage, setCarryPage] = useState(0);
   const [attempt, setAttempt] = useState(0);
@@ -159,11 +161,22 @@ export function ClosingScreen({ date }: { date: string | null }) {
       setNotice({ title: say('closing'), lines: [say('sendFailed')] });
     });
   };
+  // 막힌 마감(보낼 기록이 남은 기사 기기): 주 버튼은 막는 단계의 창을 연다(읽기 모델 step, 연결 끊김은 한 줄만).
+  const stepped = !offline && next?.kind === 'close' && view?.step !== undefined;
   const onPrimary = () => {
+    if (stepped) { setRechecked(null); setConfirming(true); return; }
     if (!next || !next.enabled) return;
     // 영업 중 마감(반납 예정 · 차량 미입고 · 마지막 반납 타임 전)은 한 번 묻는다(읽기 모델 confirm).
     if (next.kind === 'close') { if (view?.confirm) setConfirming(true); else close(); }
     else if (next.targetKey) setPad(next.targetKey);
+  };
+  const closeConfirm = () => { setConfirming(false); setRechecked(null); };
+  // `재확인`: 지금 자료로 다시 묻는다. 막힘이 풀렸으면 창을 닫는다(주 버튼 `마감`이 다시 눌린다).
+  const recheck = () => {
+    client.query('closingSheet', params).then((fresh) => {
+      if (fresh.step) setRechecked(fresh);
+      else closeConfirm();
+    }, () => setNotice({ title: say('closing'), lines: [say('sendFailed')] }));
   };
   const onAction = (row: CashCheckRow) => {
     if (!row.action) return;
@@ -171,7 +184,9 @@ export function ClosingScreen({ date }: { date: string | null }) {
     setPad(row.key);
   };
   const onCarry = (item: CarryItem) => {
-    if (item.orderId) go({ name: 'slip', orderId: item.orderId });
+    // 안 돌아온 리프트권은 리프트권 화면의 미반납 탭(분실 처리 · 전화, features-1 §8-2).
+    if (item.ticketTab) go({ name: 'tickets', tab: item.ticketTab });
+    else if (item.orderId) go({ name: 'slip', orderId: item.orderId });
     else if (item.tabKey && view) go({ name: 'ledger', date: view.date }, { state: { ledger: { tab: item.tabKey, page: 0, selected: null } } });
   };
   const toLedger = () => go({ name: 'ledger', date: view?.date ?? date });
@@ -198,7 +213,8 @@ export function ClosingScreen({ date }: { date: string | null }) {
   const carryStyle = { '--pos-closing-carry-row': layout.carryRowPx + 'px', '--pos-closing-carry-head': layout.carryHeadPx + 'px' } as CSSProperties;
   const methods = leftShown.flatMap((x) => (x.kind === 'method' ? [x.row] : []));
   const cash = leftShown.flatMap((x) => (x.kind === 'cash' ? [x.row] : []));
-  const primaryReady = next !== null && next.enabled && !busy && !(next.kind === 'close' && (blocked !== undefined || !draft));
+  const primaryReady = (stepped && !busy) || (next !== null && next.enabled && !busy && !(next.kind === 'close' && (blocked !== undefined || !draft)));
+  const step = confirming ? (rechecked ?? view)?.step : undefined;
 
   return (
     <div className="sn-screen">
@@ -251,7 +267,7 @@ export function ClosingScreen({ date }: { date: string | null }) {
                   <Pager page={carryAt} pageCount={carryPages} onChange={setCarryPage} />
                 </div>
                 <ul className="pos-closing-carry">
-                  {carryShown.map((item) => <CarryLine key={item.key} item={item} onPress={item.orderId || item.tabKey ? () => onCarry(item) : undefined} />)}
+                  {carryShown.map((item) => <CarryLine key={item.key} item={item} onPress={item.orderId || item.tabKey || item.ticketTab ? () => onCarry(item) : undefined} />)}
                 </ul>
               </section>
             ) : null}
@@ -298,7 +314,18 @@ export function ClosingScreen({ date }: { date: string | null }) {
         />
       ) : null}
       {notice ? <NoticeDialog title={notice.title} lines={notice.lines} onClose={() => setNotice(null)} /> : null}
-      {confirming && view?.confirm && next?.kind === 'close' ? (
+      {confirming && step && next?.kind === 'close' ? (
+        <NoticeDialog
+          title={next.label}
+          lines={[]}
+          closeLabel={step.choices.find((c) => c.key === 'close')?.label ?? t('close')}
+          actions={step.choices.filter((c) => c.key === 'recheck').map((c) => ({ label: c.label, primary: true, onPress: recheck }))}
+          onClose={closeConfirm}
+        >
+          <div className="pos-closing-step"><ReviewStepLine step={step} /></div>
+        </NoticeDialog>
+      ) : null}
+      {confirming && !step && view?.confirm && next?.kind === 'close' ? (
         <NoticeDialog
           title={view.confirm.title}
           lines={[view.confirm.line]}

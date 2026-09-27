@@ -13,7 +13,7 @@
 
 import { defaultUiConfig } from '@skinote/contract';
 import { PRODUCTION_LINES, ledgerView, queryScope, runQuery } from '@skinote/domain';
-import { acquireWriterLock, currentSetting, openShopStore } from '@skinote/store';
+import { acquireWriterLock, currentSetting, logPiiAccess, openShopStore } from '@skinote/store';
 
 /**
  * @typedef {import('@skinote/store').ShopStore} ShopStore
@@ -33,6 +33,8 @@ import { acquireWriterLock, currentSetting, openShopStore } from '@skinote/store
  * @typedef {import('./databases.js').DatabaseEntry} DatabaseEntry
  * @typedef {import('./secrets.js').Secrets} Secrets
  * @typedef {{ kind: 'shop' } | { kind: 'vehicle', vehicleIds: string[] }} QueryScope
+ * @typedef {{ viewer?: { roleKey: string, permissions: readonly string[], staffId?: string, limits?: { maxDiscountAmount?: number, maxDiscountPercentBp?: number } }, deviceId?: string }} QueryReader
+ *   누가 묻나(세션의 역할 권한 · 직원 id · 기기): 읽기 모델이 막힌 것을 회색으로 그리고, 매장 설정 `차량 · 직원`이 직원이 쓴 기기를 싣는다.
  * @typedef {{
  *   cutoff: string,
  *   idleMinutes: { counter: number, driver: number },
@@ -44,6 +46,8 @@ import { acquireWriterLock, currentSetting, openShopStore } from '@skinote/store
  *   shopName(now: number): string,
  *   staff(): StaffRow[],
  *   permissions(roleKey: string): Map<string, string>,
+ *   roleLimits(roleKey: string): { maxDiscountAmount?: number, maxDiscountPercentBp?: number },
+ *   setRoleLimits(roleKey: string, limits: { maxDiscountAmount?: number, maxDiscountPercentBp?: number } | null): boolean,
  *   devices: DeviceRows,
  *   isTest(): boolean,
  *   vehicles(now: number): { id: string, name: string }[],
@@ -52,10 +56,12 @@ import { acquireWriterLock, currentSetting, openShopStore } from '@skinote/store
  *   orderCount(now: number): number,
  *   config(now: number): UiConfig,
  *   ledgerView(viewKey: string, params: ViewParams, now: number): LedgerViewResult,
- *   query(name: QueryName, params: unknown, now: number): unknown,
+ *   query(name: QueryName, params: unknown, now: number, reader?: QueryReader): unknown,
  *   queryScope(name: string, params: unknown, now: number): QueryScope | null,
  *   command(envelope: AnyCommandEnvelope, actor: Actor, now: number, guard?: Guard): StoreOutcome,
+ *   logPii(entry: import('@skinote/store').PiiAccess): void,
  * }} ShopPort
+ *   logPii: 개인정보 열람 한 번(전화 창의 온전한 번호 · 수거 목록 인쇄, features-1 E16 · E17).
  */
 
 /** sys_setting_definitions의 기본값(매장 설정 행이 없을 때). */
@@ -80,8 +86,15 @@ export function openShopPort(entry, { secrets, onCommit, log }) {
     ...(onCommit ? { onCommit } : {}),
     ...(log ? { log } : {}),
   });
-  /** @param {number} now */
-  const readContext = now => ({ config: config(now), now, lines: PRODUCTION_LINES });
+  /** @param {number} now @param {QueryReader} [reader] */
+  const readContext = (now, reader) => ({
+    config: config(now), now, lines: PRODUCTION_LINES, ...(reader?.viewer ? { viewer: reader.viewer } : {}),
+  });
+  /**
+   * 직원이 마지막으로 로그인한 기기(매장 설정 `차량 · 직원`의 `기기 막기`). 묻는 기기 자신은 뺀다(자기 기기를 막아 로그인을 잃지 않게).
+   * @param {string | undefined} askingDevice
+   */
+  const staffDevices = askingDevice => Object.fromEntries([...store.devices.lastUsers()].map(([staffId, list]) => [staffId, list.filter(d => d.id !== askingDevice)]));
   /** @param {number} now @returns {UiConfig} */
   const config = now => {
     const state = store.state(now);
@@ -93,6 +106,8 @@ export function openShopPort(entry, { secrets, onCommit, log }) {
     shopName: now => store.state(now).registry.shopName,
     staff: () => store.staff(),
     permissions: roleKey => store.permissions(roleKey),
+    roleLimits: roleKey => store.roleLimits(roleKey),
+    setRoleLimits: (roleKey, limits) => store.setRoleLimits(roleKey, limits),
     devices: store.devices,
     // 시험 매장인지(shops.is_test)와 쓰는 차량(열린 기기 등록의 차량 고르기: id와 이름만).
     isTest: () => store.isTest(),
@@ -116,10 +131,13 @@ export function openShopPort(entry, { secrets, onCommit, log }) {
     orderCount: now => store.state(now).orders.length,
     config,
     ledgerView: (viewKey, params, now) => ledgerView(store.state(now), viewKey, params, readContext(now)),
-    query: (name, params, now) => runQuery(store.state(now), name, /** @type {any} */ (params), readContext(now)),
+    query: (name, params, now, reader) => runQuery(store.state(now), name, /** @type {any} */ (params), {
+      ...readContext(now, reader), ...(name === 'shopSettings' ? { staffDevices: staffDevices(reader?.deviceId) } : {}),
+    }),
     // 기사 세션의 업무 · 접수 조회가 닿는 차량(없는 업무 · 접수는 null: 기사 세션은 거절, permissions.js).
     queryScope: (name, params, now) => queryScope(store.state(now), /** @type {any} */ (name), params),
     command: (envelope, actor, now, guard) => store.command(envelope, actor, now, guard),
+    logPii: entry => { logPiiAccess(/** @type {any} */ (db), shopId, entry); },
   };
 }
 

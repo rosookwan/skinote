@@ -8,8 +8,8 @@ import type { FxLine, FxOrder, ShopRegistry, ShopState } from './model.ts';
 import { backHeldRefund, depositDueForIssued } from './deposits.ts';
 import { bucketLeft, currentReturn, lineBuckets, openReturns } from './promises.ts';
 import {
-  backCount, bizDay, coveredOrders, findOrder, isVehiclePickup, isVehicleReturn, lateAtOf, moneyLateAt, othersDue, ownDue,
-  paidTotal, pendingIssue, pendingReturn, placeLabel, unitCount, vehicleLabel, charged,
+  backCount, bizDay, coveredOrders, findOrder, isVehiclePickup, isVehicleReturn, lateAtOf, liveQty, moneyLateAt, onVanToDeliver, othersDue, ownDue,
+  paidTotal, pendingIssue, pendingReturn, placeLabel, returnQty, unitCount, vehicleLabel, charged,
 } from './rules.ts';
 import { bizHm, businessDateOf, dayWord, hm, iso, onBizDay, when, type BizDay } from './time.ts';
 
@@ -70,25 +70,30 @@ export type LineStampFn = (reg: Reg, o: FxOrder, l: FxLine, step: StampStepRow, 
 
 /** 줄 하나의 도장(줄 단위 규칙). null이면 그 단계가 이 줄에 해당 없음(na). */
 export function lineStamp(reg: Reg, o: FxOrder, l: FxLine, step: StampStepRow, steps: Steps, today: BizDay): StampCell | null {
+  // 모두 취소한 줄(지급 전에 취소, features-1 E6)은 지급 · 적재 · 반납 · 발권 단계가 해당 없음이다.
+  const live = liveQty(l);
+  if (live === 0 && l.issued === 0 && step.rule_key !== 'qty_collected' && step.rule_key !== 'task_received') return null;
   switch (step.rule_key) {
     case 'qty_loaded': {
       if (!isVehiclePickup(o)) return null;
-      return countState(step.key, Math.max(l.loaded, l.issued), l.qty, l.loadedAt ?? l.issuedAt, today);
+      return countState(step.key, Math.max(l.loaded, l.issued), live, l.loadedAt ?? l.issuedAt, today);
     }
     case 'qty_issued': {
-      if (isVehiclePickup(o) && l.issued < l.qty) {
+      if (isVehiclePickup(o) && l.issued < live) {
         const load = stepOfRule(steps, 'qty_loaded');
-        if (Math.max(l.loaded, l.issued) < l.qty) return blocked(step, load);
+        if (Math.max(l.loaded, l.issued) - (l.unloaded ?? 0) < live) return blocked(step, load);
         // 실은 뒤의 지급(전달)은 기사가 한다: 카운터 칸은 보라 '차량 17:00'(N1 · N6).
         const vehicle = vehicleLabel(reg, o.pickup.vehicleId);
         return { stepKey: step.key, state: 'delegated', at: iso(o.pickup.at), delegatedTo: vehicle, pressNote: delegatedNote(step, vehicle, o.pickup.at, '배달') };
       }
-      return countState(step.key, l.issued, l.qty, l.issuedAt, today);
+      return countState(step.key, l.issued, live, l.issuedAt, today);
     }
     case 'qty_returned': {
       if (!l.returnable) return null;
       const back = backCount(l);
-      if (back >= l.qty) return { stepKey: step.key, state: 'done', ...stampAt(latest(l.returnedAt, l.collectedAt), today) };
+      // 반납은 내준 것까지 센다(돌아온 뒤 취소한 것 · 취소 뒤에 건넨 것도, E6).
+      const need = returnQty(l);
+      if (back >= need) return { stepKey: step.key, state: 'done', ...stampAt(latest(l.returnedAt, l.collectedAt), today) };
       if (l.issued === 0) return blocked(step, stepOfRule(steps, 'qty_issued'));
       // 남은 몫이 모두 차량 일정이면 차량 담당(가장 이른 일정). 일정 변경으로 일부를 매장 직접으로 옮겼으면 카운터가 받는다.
       const open = lineBuckets(o, l).filter((b) => b.planned > 0 && bucketLeft(b) > 0).sort((a, b) => a.promise.at - b.promise.at);
@@ -98,10 +103,10 @@ export function lineStamp(reg: Reg, o: FxOrder, l: FxLine, step: StampStepRow, s
         // 일부가 이미 돌아왔으면(부분 반납) 돌아온 수를 함께(`2/3`): 나중에 접수증을 보는 사람이 하나도 안 돌아온 줄로 읽지 않게.
         return {
           stepKey: step.key, state: 'delegated', at: iso(van.promise.at), delegatedTo: vehicle, pressNote: delegatedNote(step, vehicle, van.promise.at, '수거'),
-          ...(back > 0 ? { progress: { done: back, total: l.qty } } : {}),
+          ...(back > 0 ? { progress: { done: back, total: need } } : {}),
         };
       }
-      return countState(step.key, back, l.qty, latest(l.returnedAt, l.collectedAt), today);
+      return countState(step.key, back, need, latest(l.returnedAt, l.collectedAt), today);
     }
     case 'qty_collected': {
       // 차량 수거(받음): 내준 것 중 돌아온 수(차량이 받았거나 손님이 매장에 가져옴).
@@ -117,7 +122,7 @@ export function lineStamp(reg: Reg, o: FxOrder, l: FxLine, step: StampStepRow, s
     case 'ticket_secured': {
       // 발권 기록은 아직 따로 없다: 권(리프트권) 줄은 건네면 발권된 것으로 본다.
       if (l.section !== 'lift') return null;
-      return countState(step.key, l.issued, l.qty, l.issuedAt, today);
+      return countState(step.key, l.issued, live, l.issuedAt, today);
     }
     default:
       return null;
@@ -149,6 +154,10 @@ export function payStamp(state: ShopState, o: FxOrder, step: Pick<StampStepRow, 
 
 /** 줄 단위 규칙마다 한 줄에서 채워야 할 수(받음은 내준 수, 입고는 받은 수, 나머지는 줄 수량). */
 const NEED: Partial<Record<StampRuleKey, (l: FxLine) => number>> = {
+  qty_loaded: liveQty,
+  qty_issued: liveQty,
+  qty_returned: returnQty,
+  ticket_secured: liveQty,
   qty_collected: (l) => l.issued,
   task_received: (l) => l.collected,
 };
@@ -214,13 +223,15 @@ export const DELIVER_WORD = '배달';
 export function driverLineStamp(reg: Reg, o: FxOrder, l: FxLine, step: StampStepRow, steps: Steps, today: BizDay): StampCell | null {
   if (step.rule_key !== 'qty_issued' || !isVehiclePickup(o)) return lineStamp(reg, o, l, step, steps, today);
   const label = DELIVER_WORD;
-  if (l.issued >= l.qty) return { stepKey: step.key, state: 'done', label, ...stampAt(l.issuedAt, today) };
-  const onVanQty = Math.max(l.loaded, l.issued) - l.issued;
+  const live = liveQty(l);
+  if (live === 0 && l.issued === 0) return null;
+  if (l.issued >= live) return { stepKey: step.key, state: 'done', label, ...stampAt(l.issuedAt, today) };
+  const onVanQty = onVanToDeliver(l);
   if (onVanQty <= 0) {
     const load = stepOfRule(steps, 'qty_loaded');
     return { stepKey: step.key, state: 'blocked', label, blockedBy: { stepKey: load?.key ?? step.key, message: blockedMessage({ label }, load) } };
   }
-  return l.issued > 0 ? { stepKey: step.key, state: 'partial', label, progress: { done: l.issued, total: l.qty } } : { stepKey: step.key, state: 'todo', label };
+  return l.issued > 0 ? { stepKey: step.key, state: 'partial', label, progress: { done: l.issued, total: live } } : { stepKey: step.key, state: 'todo', label };
 }
 
 /** 기사 기기의 칸 도장(단계 사슬 first_open, 적재 → 배달): 줄은 driverLineStamp로 모으고, 배달 단계는 모인 도장도 `배달`이다. */
@@ -244,11 +255,11 @@ const CHANNEL_LABEL = { phone: '전화 예약', walk_in: '현장 접수' } as co
 
 /** 줄 단위 규칙마다 '남은 수'(이 단계에서 아직 할 수): 품목 요약과 주 버튼의 수. */
 const LEFT: Partial<Record<StampRuleKey, (l: FxLine) => number>> = {
-  qty_loaded: (l) => l.qty - Math.max(l.loaded, l.issued),
-  qty_issued: (l) => l.qty - l.issued,
-  qty_returned: (l) => (l.returnable ? l.qty - backCount(l) : 0),
+  qty_loaded: (l) => Math.max(0, liveQty(l) - Math.max(l.loaded, l.issued)),
+  qty_issued: (l) => Math.max(0, liveQty(l) - l.issued),
+  qty_returned: (l) => (l.returnable ? Math.max(0, returnQty(l) - backCount(l)) : 0),
   qty_collected: (l) => (l.returnable ? Math.max(0, l.issued - backCount(l)) : 0),
-  ticket_secured: (l) => (l.section === 'lift' ? l.qty - l.issued : 0),
+  ticket_secured: (l) => (l.section === 'lift' ? Math.max(0, liveQty(l) - l.issued) : 0),
 };
 
 /**
@@ -285,7 +296,7 @@ export function returnLateAt(state: ShopState, o: FxOrder): number | undefined {
 /** 차량 배달의 늦음 기준(싣기 전에는 약속 시각, 실은 뒤에는 + 차량 여유). 매장 수령은 늦음이 없다. */
 export function deliverLateAt(state: ShopState, o: FxOrder): number | undefined {
   if (!isVehiclePickup(o) || !pendingIssue(o)) return undefined;
-  const loaded = o.lines.every((l) => Math.max(l.loaded, l.issued) >= l.qty);
+  const loaded = o.lines.every((l) => Math.max(l.loaded, l.issued) - (l.unloaded ?? 0) >= liveQty(l));
   return loaded ? lateAtOf(state.settings, o.pickup) : o.pickup.at;
 }
 
@@ -323,7 +334,7 @@ export function checklist(state: ShopState, o: FxOrder, steps: Steps, slipStepKe
     if (left) {
       // 끝난 일은 그 단계가 걸린 줄 모두, 남은 일은 남은 수만.
       const applies = (l: FxLine) => lineStamp(state.registry, o, l, step, steps, today) !== null;
-      items = cell.state === 'done' ? itemsOf(o.lines.filter(applies), (l) => l.qty) : itemsOf(o.lines, left);
+      items = cell.state === 'done' ? itemsOf(o.lines.filter(applies), step.rule_key === 'qty_returned' ? returnQty : liveQty) : itemsOf(o.lines, left);
       figure = figureOf(o.lines, left);
     }
     switch (step.rule_key) {

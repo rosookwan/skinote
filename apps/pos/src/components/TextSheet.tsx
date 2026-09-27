@@ -13,12 +13,14 @@ export interface TextSheetProps {
   maxLength: number;
   onSubmit: (value: string) => void;
   onClose: () => void;
+  /** 빈 글을 받지 않는다(매장 설정의 이름: 구역 · 장소 · 차량 · 직원 · 할인 이름). 빈 글에는 `입력`이 넘기지 않는다. */
+  required?: boolean;
 }
 
 /** 이름 · 사유로 받는 글: 낱자모(조합이 끝나지 않은 자모)가 없다. */
 const complete = (text: string) => !hasLoneJamo(text);
 
-export function TextSheet({ title, value, placeholder, maxLength, onSubmit, onClose }: TextSheetProps) {
+export function TextSheet({ title, value, placeholder, maxLength, onSubmit, onClose, required = false }: TextSheetProps) {
   return (
     <HangulKeyboard
       title={title}
@@ -27,7 +29,7 @@ export function TextSheet({ title, value, placeholder, maxLength, onSubmit, onCl
       maxLength={maxLength}
       onSubmit={onSubmit}
       onClose={onClose}
-      accept={complete}
+      accept={required ? (text) => complete(text) && text.trim().length > 0 : complete}
       note={t('textIncomplete')}
     />
   );

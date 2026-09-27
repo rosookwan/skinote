@@ -42,6 +42,27 @@ const PAYLOADS: { [T in CommandType]: CommandPayloads[T] } = {
   'cash.transfer_confirm': { transferId: 'van:v1', countedAmount: 84_000, reasonKey: 'manual', reasonNote: '잔돈 교환' },
   'closing.close': { date: '2026-12-26', drawerCounts: [{ drawerId: 'counter', countedAmount: 510_000, expectedAmount: -3_000, reasonKey: 'unknown' }], deferredTransferIds: ['van:v2'], overrideReason: '늦은 반납' },
   'setting.set': { changes: [{ key: 'shops::business_day_cutoff', value: '05:00' }, { key: 'deposit_rules:lift_ticket_card:active', value: 0 }, { key: 'x_y:z:w', value: true }, { key: 'shop_settings:prepayment_mode:amount', value: null }] },
+  'registry.update': {
+    changes: [
+      { op: 'shop.set', name: '첫 매장', phone: '01000000000' }, { op: 'area.add', ref: 'n1', label: '설천 입구' }, { op: 'place.add', ref: 'n2', areaId: 'new:n1', label: '매표소' },
+      { op: 'place.hide', id: 'seolcheon_parking', hidden: true }, { op: 'area.move', id: 'manseon', toIndex: 0 }, { op: 'slot.add', ref: 'n3', label: '저녁', time: '20:00' },
+      { op: 'slot.update', id: 'night', time: '22:30' }, { op: 'price.set', productKey: 'ski', amount: 45_000 },
+      { op: 'discount.add', ref: 'n4', label: '장비 5,000원 할인', kind: 'amount', value: 5_000, sections: ['gear'] }, { op: 'discount.active', id: 'ten_percent', active: false },
+      { op: 'vehicle.add', ref: 'n5', label: '3호 차량' }, { op: 'vehicle.active', id: 'v2', active: false }, { op: 'setting.default_slot', slotId: 'new:n3' },
+      { op: 'setting.night_notice', minutes: 30 }, { op: 'setting.vehicle_late', minutes: 60, nightMinutes: 90 },
+    ],
+  },
+  'staff.set': {
+    changes: [{ op: 'staff.add', ref: 'n1', name: '박준', role: 'driver', vehicleId: 'new:n5' }, { op: 'staff.update', id: RID, role: 'counter', vehicleId: null }, { op: 'staff.active', id: RID2, active: false }],
+  },
+  'discount.apply': { orderId: 'o21', sectionKey: 'gear', choice: { manual: { kind: 'amount', value: 5_000, reason: '단골' } } },
+  'payment.refund': { orderId: 'o21', cause: 'discount', refunds: [{ paymentId: 'o21:pay:1', methodKey: 'cash', amount: 22_500 }] },
+  'order.cancel': { orderId: 'o22', scope: 'lines', lines: [{ lineId: 'o22-l3', quantity: 3 }], reasonKey: 'no_show', decision: 'apply_to_due' },
+  'order.add': { orderId: 'o21', items: [{ productKey: 'helmet', variantKey: '중', quantity: 1 }], choices: [{ sectionKey: 'gear', methodKey: 'cash' }], payer: 'self' },
+  'exchange.swap': { orderId: 'o21', lineId: 'o21-l2', quantity: 1, from: '100', to: '105', planned: false },
+  'stock.write_off': { orderId: 'o26', lines: [{ lineId: 'o26-l3', quantity: 1 }], reasonKey: 'lost' },
+  'asset.found': { orderId: 'o26', lines: [{ lineId: 'o26-l3', quantity: 1 }] },
+  'review.resolve': { reviewId: 'r261226-review-1', resolutionKey: 'acknowledged' },
   'route.move': { taskId: 'collect:o21', anchorTaskId: null, position: 'top' },
   'route.reset': { vehicleId: 'v1', date: '2026-12-26' },
   'task.pin': { taskId: 'collect:o21', note: '조기 반납' },
@@ -72,6 +93,15 @@ const PARAMS: { [Q in QueryName]: QueryParams[Q] } = {
   fieldPaySheet: { taskId: 'collect:o21', amount: 35_000, methodKey: 'cash', afterTicket: RID2 },
   addTicketSheet: { taskId: 'deliver:o5', productKey: 'night_adult', quantity: 2 },
   shopRules: { changes: [{ key: 'shop_settings:same_day_cancel_refund_default:decision', value: 'no_refund' }] },
+  shopSettings: { tab: 'fleet', changes: [{ op: 'vehicle.add', ref: 'n1', label: '3호 차량' }, { op: 'staff.update', id: RID, vehicleId: 'new:n1' }] },
+  discountSheet: { orderId: 'o21', sectionKey: 'lift', choice: { none: true }, methods: { 'o21:pay:1': 'cash' } },
+  cancelSheet: { orderId: 'o22', scope: 'order', picked: [{ lineId: 'o22-l1', quantity: 1 }], reasonKey: 'no_show', decision: 'no_refund', methods: { 'o22-p1': 'cash' } },
+  exchangeSheet: { orderId: 'o22', lineId: 'o22-l3', from: '중', planned: true, quantity: 2, to: '대' },
+  ticketBoard: { date: '2026-12-26', tab: 'unreturned' },
+  ticketLossSheet: { orderId: 'o26', direction: 'loss', picked: [{ lineId: 'o26-l3', quantity: 1 }] },
+  spareSheet: { vehicleId: 'v1', direction: 'load', picked: [{ productKey: 'night_adult', quantity: 0 }] },
+  phoneReveal: { orderId: 'o26' },
+  refundSheet: { orderId: 'o21', methods: { 'o21-p1': 'cash' } },
 };
 
 describe('명령 봉투', () => {
@@ -189,11 +219,47 @@ describe('명령 봉투', () => {
   });
 });
 
+describe('매장 설정 바꿈(registry.update · staff.set)', () => {
+  const ok = (type: 'registry.update' | 'staff.set', change: unknown) => parseEnvelope(envelope(type, { changes: [change] })).ok;
+  it('op마다 모양을 고르고 모르는 op · 칸 · 범위 밖을 거절한다', () => {
+    expect(ok('registry.update', { op: 'area.add', ref: 'n1', label: '설천' })).toBe(true);
+    expect(ok('registry.update', { op: 'area.add', ref: 'n1', label: '' })).toBe(false);
+    expect(ok('registry.update', { op: 'area.add', ref: 'N 1', label: '설천' })).toBe(false);
+    expect(ok('registry.update', { op: 'area.add', ref: 'n1', label: '가'.repeat(21) })).toBe(false);
+    expect(ok('registry.update', { op: 'area.add', ref: 'n1', label: '<b>' })).toBe(false);
+    expect(ok('registry.update', { op: 'area.drop', id: 'x' })).toBe(false);
+    expect(ok('registry.update', { op: 'staff.add', ref: 'n1', name: '박준', role: 'driver' })).toBe(false);
+    expect(ok('staff.set', { op: 'area.add', ref: 'n1', label: '설천' })).toBe(false);
+    expect(ok('registry.update', { op: 'price.set', productKey: 'ski', amount: 0 })).toBe(false);
+    expect(ok('registry.update', { op: 'price.set', productKey: 'ski', amount: WIRE_LIMITS.priceMax + 1 })).toBe(false);
+    expect(ok('registry.update', { op: 'slot.add', ref: 'n1', label: '저녁', time: '2000' })).toBe(false);
+    expect(ok('registry.update', { op: 'setting.vehicle_late', minutes: 60, nightMinutes: WIRE_LIMITS.minutesMax + 1 })).toBe(false);
+    expect(ok('registry.update', { op: 'discount.add', ref: 'n1', label: '할인', kind: 'fixed', value: 10, sections: ['gear'] })).toBe(false);
+    expect(ok('registry.update', { op: 'discount.add', ref: 'n1', label: '할인', kind: 'percent', value: 10, sections: [] })).toBe(false);
+    expect(ok('registry.update', { op: 'shop.set', phone: '010-0000' })).toBe(false);
+    expect(ok('staff.set', { op: 'staff.add', ref: 'n1', name: '박준', role: 'owner' })).toBe(false);
+    expect(ok('staff.set', { op: 'staff.update', id: RID, vehicleId: null })).toBe(true);
+    expect(parseEnvelope(envelope('registry.update', { changes: [] })).ok, 'empty').toBe(false);
+    const many = Array.from({ length: WIRE_LIMITS.registryOps + 1 }, (_, i) => ({ op: 'area.add', ref: 'n' + i, label: '구역' + i }));
+    expect(parseEnvelope(envelope('registry.update', { changes: many })).ok).toBe(false);
+  });
+  it('비밀번호 재발급 · 기기 막기 본문(비밀번호는 문제 글에 없다)', () => {
+    expect(parseAuthBody('staffPin', { staffId: RID, ownPin: '4821' }).ok).toBe(true);
+    expect(parseAuthBody('staffPin', { staffId: RID + ':n1', ownPin: '482190' }).ok).toBe(true);
+    const bad = parseAuthBody('staffPin', { staffId: RID, ownPin: '48x1' });
+    expect(bad.ok ? '' : bad.problems.join(' ')).not.toContain('48x1');
+    expect(parseAuthBody('staffPin', { staffId: RID, ownPin: '4821', pin: '1234' }).ok).toBe(false);
+    expect(parseAuthBody('deviceBlock', { deviceId: RID }).ok).toBe(true);
+    expect(parseAuthBody('deviceBlock', { deviceId: 'dev-1' }).ok).toBe(false);
+  });
+});
+
 /** 조회마다 꼭 있어야 하는 칸 하나(없으면 BAD_INPUT). */
 const REQUIRED: { [Q in QueryName]: string | null } = {
   orderSlip: 'orderId', findLast4: 'last4', confirmDraft: 'actionKey', reviewList: null, vehicleLoad: 'vehicleId', returnSheet: 'orderId',
   promiseSheet: 'orderId', orderDraft: 'draft', checkoutSheet: 'draft', groupPaySheet: 'orderId', partialPaySheet: 'payerOrderId', closingSheet: null,
-  taskSheet: 'taskId', fieldPaySheet: 'taskId', addTicketSheet: 'taskId', shopRules: null,
+  taskSheet: 'taskId', fieldPaySheet: 'taskId', addTicketSheet: 'taskId', shopRules: null, shopSettings: 'tab', discountSheet: 'orderId', cancelSheet: 'scope',
+  exchangeSheet: 'orderId', ticketBoard: null, ticketLossSheet: 'direction', spareSheet: 'vehicleId', phoneReveal: 'orderId', refundSheet: 'orderId',
 };
 
 describe('조회', () => {
@@ -293,5 +359,69 @@ describe('기기 등록 · 로그인 본문', () => {
     expect(isEnrollCode('12345678901')).toBe(false);
     expect(isPin('0000')).toBe(true);
     expect(isPin('00000000')).toBe(false);
+  });
+});
+
+describe('할인 적용 · 환불 본문(features-1 §3-5)', () => {
+  it('고른 것은 매장 할인 · 직접 입력 · 할인 없음 중 하나, 직접 입력은 사유가 있어야 하고 20자까지', () => {
+    const ok = (choice: unknown) => parseEnvelope(envelope('discount.apply', { orderId: 'o21', sectionKey: 'gear', choice })).ok;
+    expect(ok({ ruleKey: 'ten_percent' })).toBe(true);
+    expect(ok({ none: true })).toBe(true);
+    expect(ok({ manual: { kind: 'percent', value: 15, reason: '단골 손님' } })).toBe(true);
+    expect(ok({ none: false })).toBe(false);
+    expect(ok({ manual: { kind: 'amount', value: 5_000, reason: '' } })).toBe(false);
+    expect(ok({ manual: { kind: 'amount', value: 5_000, reason: '가'.repeat(21) } })).toBe(false);
+    expect(ok({ manual: { kind: 'amount', value: 0, reason: '단골' } })).toBe(false);
+    expect(ok({ ruleKey: 'ten_percent', none: true })).toBe(false);
+    expect(parseEnvelope(envelope('discount.apply', { orderId: 'o21', sectionKey: 'deposit', choice: { none: true } })).ok).toBe(false);
+  });
+
+  it('환불은 줄 1 ~ 10, 금액 1원 이상, 까닭은 정해진 셋', () => {
+    const refund = (payload: unknown) => parseEnvelope(envelope('payment.refund', payload)).ok;
+    const line = { paymentId: 'o21:pay:1', methodKey: 'cash', amount: 5_000 };
+    expect(refund({ orderId: 'o21', cause: 'overpaid', refunds: [line] })).toBe(true);
+    expect(refund({ orderId: 'o21', cause: 'discount', refunds: [] })).toBe(false);
+    expect(refund({ orderId: 'o21', cause: 'discount', refunds: Array.from({ length: 11 }, () => line) })).toBe(false);
+    expect(refund({ orderId: 'o21', cause: 'discount', refunds: [{ ...line, amount: 0 }] })).toBe(false);
+    expect(refund({ orderId: 'o21', cause: 'gift', refunds: [line] })).toBe(false);
+  });
+
+  it('접수 확정의 직접 입력 할인(CheckoutChoice.manual)', () => {
+    const choices = [{ sectionKey: 'gear', methodKey: 'card', discountKey: 'manual', manual: { kind: 'amount', value: 5_000, reason: '단골' } }];
+    expect(parseEnvelope(envelope('order.create', { draft: structuredClone(draft), choices, payerOrderId: null })).ok).toBe(true);
+    expect(parseEnvelope(envelope('order.create', { draft: structuredClone(draft), choices: [{ ...choices[0], manual: { kind: 'amount', value: 5_000 } }], payerOrderId: null })).ok).toBe(false);
+  });
+});
+
+describe('리프트권 명령(features-1 §8-1)', () => {
+  it('적재는 업무 품목 또는 차량 예비권, 입고는 예비권을 더할 수 있다', () => {
+    expect(parseEnvelope(envelope('stock.load', { vehicleId: 'v1', spares: [{ productKey: 'night_adult', quantity: 6 }] })).ok).toBe(true);
+    expect(parseEnvelope(envelope('stock.receive', { vehicleId: 'v1', taskIds: [], spares: [{ productKey: 'night_adult', quantity: 2 }] })).ok).toBe(true);
+    const zero = parseEnvelope(envelope('stock.load', { vehicleId: 'v1', spares: [{ productKey: 'night_adult', quantity: 0 }] }));
+    expect(zero.ok ? '' : zero.problems.join(' ')).toMatch(/payload\.spares\[0\]\.quantity/);
+    const mixed = parseEnvelope(envelope('stock.load', { vehicleId: 'v1', spares: [{ productKey: 'night_adult', quantity: 1 }], taskId: 'deliver:o5' }));
+    expect(mixed.ok ? '' : mixed.problems.join(' ')).toMatch(/payload\.taskId: 모르는 칸/);
+    expect(parseEnvelope(envelope('stock.load', { vehicleId: 'v1', spares: [] })).ok, 'empty spares').toBe(false);
+    const many = Array.from({ length: WIRE_LIMITS.spares + 1 }, (_, i) => ({ productKey: 'p' + i, quantity: 1 }));
+    expect(parseEnvelope(envelope('stock.load', { vehicleId: 'v1', spares: many })).ok).toBe(false);
+  });
+  it('분실 처리는 줄이 하나 이상, 까닭은 lost만', () => {
+    expect(parseEnvelope(envelope('stock.write_off', { orderId: 'o26', lines: [], reasonKey: 'lost' })).ok).toBe(false);
+    expect(parseEnvelope(envelope('stock.write_off', { orderId: 'o26', lines: [{ lineId: 'o26-l3', quantity: 1 }], reasonKey: 'broken' })).ok).toBe(false);
+    expect(parseEnvelope(envelope('asset.found', { orderId: 'o26', lines: [] })).ok).toBe(false);
+  });
+  it('리프트권 화면 · 창 · 전화의 인자', () => {
+    expect(parseQuery({ name: 'ticketBoard', params: {} }).ok).toBe(true);
+    expect(parseQuery({ name: 'ticketBoard', params: { tab: 'other' } }).ok).toBe(false);
+    expect(parseQuery({ name: 'ticketLossSheet', params: { orderId: 'o26', direction: 'keep' } }).ok).toBe(false);
+    expect(parseQuery({ name: 'spareSheet', params: { vehicleId: 'v1', direction: 'unload', picked: [{ productKey: 'night_adult', quantity: -1 }] } }).ok).toBe(false);
+    expect(parseQuery({ name: 'phoneReveal', params: { orderId: 'o26', phone: '010' } }).ok).toBe(false);
+  });
+  it('확인 필요 처리는 확인 필요 id와 방법 acknowledged만, 환불 창은 접수와 수단', () => {
+    expect(parseEnvelope(envelope('review.resolve', { reviewId: 'r1', resolutionKey: 'applied' })).ok).toBe(false);
+    expect(parseEnvelope(envelope('review.resolve', { reviewId: 'r 1', resolutionKey: 'acknowledged' })).ok).toBe(false);
+    expect(parseEnvelope(envelope('review.resolve', { reviewId: 'r1', resolutionKey: 'acknowledged', note: '확인' })).ok).toBe(false);
+    expect(parseQuery({ name: 'refundSheet', params: { orderId: 'o21' } }).ok).toBe(true);
+    expect(parseQuery({ name: 'refundSheet', params: { orderId: 'o21', methods: { 'o21-p1': 'cash', x: 'a b' } } }).ok).toBe(false);
   });
 });
