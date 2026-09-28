@@ -113,14 +113,14 @@ describe('lift tickets, phone and print on the real shop file', () => {
     }
   });
 
-  test('phone reveal and the printed collection list each write one pii_access_log row; a driver sees only its own vehicle\'s orders', async () => {
+  test('phone reveal and the printed collection list (full numbers) each write one pii_access_log row; a driver sees only its own vehicle\'s orders', async () => {
     const { orderId, phone } = await issuedOrder();
     const reveal = await ask('phoneReveal', { orderId });
     assert.equal(reveal.number.replace(/\D/g, ''), phone);
     const list = await (await counter.query('ledgerView', { viewKey: 'collection_list', vehicleId: 'v1', deviceClass: 'print' })).json();
     const row = list.rows.find((/** @type {any} */ r) => r.orderId === orderId);
-    assert.equal(row.cells['action:call'].phone, '010-****-' + phone.slice(-4));
-    assert.equal(JSON.stringify(list).includes(phone), false, 'the printed list carries no full number');
+    // 인쇄 수거 목록은 기사가 들고 나가 전화하는 종이라 온전한 번호다(2026-09-28). 대신 인쇄마다 list_print 한 줄.
+    assert.equal(row.cells['action:call'].phone, phone.slice(0, 3) + '-' + phone.slice(3, 7) + '-' + phone.slice(7));
     const driverReveal = await driver.query('phoneReveal', { orderId });
     assert.equal(driverReveal.status, 200, 'the driver\'s own vehicle');
     // 매장 반납 팀(차량 업무 없음)의 번호는 기사가 볼 수 없다.
@@ -142,7 +142,7 @@ describe('lift tickets, phone and print on the real shop file', () => {
     });
   });
 
-  test('only phoneReveal carries the full number: lists, slip, task sheet and pins are masked (counter and driver); a printed slip writes a list_print row', async () => {
+  test('only phoneReveal and the printed collection list carry the full number: lists, slip, task sheet and pins are masked (counter and driver); a printed slip stays masked and writes a list_print row', async () => {
     const { orderId, phone } = await issuedOrder();
     const dashed = phone.slice(0, 3) + '-' + phone.slice(3, 7) + '-' + phone.slice(7);
     const full = (/** @type {unknown} */ x) => { const text = JSON.stringify(x); return text.includes(phone) || text.includes(dashed); };

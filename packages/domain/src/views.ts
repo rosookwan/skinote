@@ -413,8 +413,9 @@ export function collectionList(ctx: ViewContext, params: ViewParams): LedgerView
       else if (column.renderer_key === 'items') cells[column.column_key] = { renderer: 'items', items: itemCounts(o.lines.filter((l) => l.returnable), (l) => l.issued - l.returned - (l.lost ?? 0)) };
       else {
         const cell = cellFor(ctx, o, column);
-        // 인쇄 판(A4, features-1 E16)의 전화 칸은 가린 번호(`010-****-0025`, deployment 10-5): 종이에는 온전한 번호를 적지 않는다.
-        if (cell?.renderer === 'action' && printed) cells[column.column_key] = { ...cell, phone: maskPhone(o.phone) };
+        // 인쇄 판(A4, features-1 E16)의 전화 칸은 온전한 번호(`010-0000-0025`, deployment 10-5): 기사가 들고 나가 전화하는 종이다(첫 매장 답
+        // 2026-09-28, 예전 포스트잇 대신). 인쇄할 때마다 서버가 개인정보 열람 한 줄(list_print)을 남긴다.
+        if (cell?.renderer === 'action' && printed) cells[column.column_key] = { ...cell, ...(o.phone ? { phone: phoneText(o.phone) } : {}) };
         else if (cell) cells[column.column_key] = cell;
       }
     }

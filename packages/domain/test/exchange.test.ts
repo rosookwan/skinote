@@ -40,14 +40,14 @@ const check = (s: ShopState, ...ids: string[]) => {
 const rows = (s: ShopState, orderId: string) => orderSlip({ state: s, config, now: NOW }, orderId)!.adjustments?.map((a) => a.parts.map((p) => p.text).join(' · ')) ?? [];
 
 describe('즉시 교환 창(exchangeSheet)', () => {
-  it('손님에게 있는 의류(김민재): 교환 품목 · 반납 사이즈 · 지급 사이즈(다른 사이즈) · 사이즈를 고르기 전에는 주 버튼이 막힘', () => {
+  it('손님에게 있는 의류(김민재): 교환 품목 · 교환 전 사이즈 · 지급 사이즈(다른 사이즈) · 사이즈를 고르기 전에는 주 버튼이 막힘', () => {
     const s = first();
     const clothes = line(s, 'o21', 'clothes');
     const view = sheet(s, { orderId: 'o21' });
     expect(view.title).toBe('즉시 교환 · 김민재 팀');
     expect(view.items.map((i) => i.label)).toEqual(['의류 사이즈 ' + clothes.variantKey + ' · 1벌']);
     expect(view.items[0]).toMatchObject({ lineId: clothes.id, from: clothes.variantKey, planned: false, selected: true });
-    expect(view.quantity).toEqual({ name: '반납 사이즈', note: '사이즈 ' + clothes.variantKey, input: { value: 1, min: 1, max: 1, unit: '벌' } });
+    expect(view.quantity).toEqual({ name: '교환 전 사이즈', note: '사이즈 ' + clothes.variantKey, input: { value: 1, min: 1, max: 1, unit: '벌' } });
     expect(view.sizes.map((x) => x.label)).toEqual(['90', '95', '100', '105', '110'].filter((x) => x !== clothes.variantKey));
     expect(view.primary).toEqual({ label: '즉시 교환 · 의류 1벌', alts: ['즉시 교환 · 의류 1벌', '즉시 교환'], enabled: false });
     expect(view.command).toBeUndefined();

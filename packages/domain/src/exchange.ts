@@ -21,7 +21,7 @@ import type { ViewContext } from './views.ts';
 export const EXCHANGE_WORDS = Object.freeze({
   /** 동작 이름(시드 sys_actions.exchange_swap). */
   action: ACTION_LABELS.exchange_swap,
-  held: '반납 사이즈',
+  held: '교환 전 사이즈',
   planned: '지급 예정 사이즈',
   keep: '금액 유지',
   none: '교환 불가 · 교환 대상 없음',

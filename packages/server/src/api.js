@@ -26,8 +26,8 @@ function shopProblem(error) {
 }
 
 /**
- * 이 조회가 남길 개인정보 열람 한 줄(없으면 null): 전화 창의 온전한 번호(phone_reveal, 접수), 인쇄 판 수거 목록(list_print, 목록 · 줄 수), 인쇄 판
- * 대여 접수증(list_print, 접수). 그 밖의 읽기 모델에는 온전한 번호가 없다(가린 번호, domain maskPhone).
+ * 이 조회가 남길 개인정보 열람 한 줄(없으면 null): 전화 창의 온전한 번호(phone_reveal, 접수), 인쇄 판 수거 목록(list_print, 목록 · 줄 수 — 온전한
+ * 번호, 2026-09-28), 인쇄 판 대여 접수증(list_print, 접수 — 가린 번호). 그 밖의 읽기 모델에는 온전한 번호가 없다(가린 번호, domain maskPhone).
  * @param {import('@skinote/contract').WireQuery} q @param {unknown} result
  * @returns {{ action: 'phone_reveal' | 'list_print', subjectType: 'order' | 'list', subjectId?: string, itemCount?: number } | null}
  */

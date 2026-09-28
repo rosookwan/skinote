@@ -264,15 +264,17 @@ describe('전화 · 인쇄(features-1 §8-3 · §8-4)', () => {
     expect(maskPhone('')).toBe('');
   });
 
-  it('인쇄 수거 목록: 팀 · 가린 번호 · 품목 · 반납 · 차량(도장 없음), 인쇄 접수증: 가린 연락처', () => {
+  it('인쇄 수거 목록: 팀 · 온전한 번호 · 품목 · 반납 · 차량(도장 없음), 인쇄 접수증: 가린 연락처', () => {
     const s = first();
     const list = ledgerView(s, 'collection_list', { vehicleId: 'v1', deviceClass: 'print' }, ctx());
     expect(list.deviceClass).toBe('print');
     const row = list.rows.find((r) => r.orderId === 'o25')!;
     expect(Object.keys(row.cells)).toEqual(['team', 'action:call', 'items', 'promise', 'vehicle']);
-    expect(row.cells['action:call']).toEqual({ renderer: 'action', actionKey: 'call', enabled: true, phone: '010-****-0025' });
-    // 손님 번호는 가린 것뿐(머리의 매장 전화 010-0000-0000은 손님 정보가 아니다).
-    expect(JSON.stringify(list)).not.toMatch(/010-0000-(?!0000)\d{4}/);
+    // 기사가 들고 나가 전화하는 종이라 온전한 번호(2026-09-28). 화면의 수거 목록은 그대로 가린 번호.
+    expect(row.cells['action:call']).toEqual({ renderer: 'action', actionKey: 'call', enabled: true, phone: '010-0000-0025' });
+    expect(JSON.stringify(list)).not.toMatch(/010-\*{4}-\d{4}/);
+    const screen = ledgerView(s, 'collection_list', { vehicleId: 'v1', deviceClass: 'driver_tablet' }, ctx());
+    expect(JSON.stringify(screen)).not.toMatch(/010-0000-(?!0000)\d{4}/);
     expect(list.printHead).toEqual({ shopName: s.registry.shopName, shopPhone: '010-0000-0000' });
     const slip = runQuery(s, 'orderSlip', { orderId: 'o25', deviceClass: 'print' }, ctx());
     expect(slip.fields.find((f) => f.key === 'phone')?.value).toBe('010-****-0025');

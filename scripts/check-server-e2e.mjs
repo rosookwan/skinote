@@ -741,7 +741,8 @@ async function ticketsE2E({ APP, a, e }) {
 }
 
 /**
- * 인쇄 · 전화(features-1 §8-5): A의 수거 목록 `인쇄`(인쇄 창은 막아 두고 부른 수 · 인쇄 문서의 글을 남김) → 한 번 · 팀과 가린 번호(`010-****-xxxx`)만,
+ * 인쇄 · 전화(features-1 §8-5): A의 수거 목록 `인쇄`(인쇄 창은 막아 두고 부른 수 · 인쇄 문서의 글을 남김) → 한 번 · 팀과 온전한 번호(`010-0000-xxxx`,
+ * 기사가 들고 나가는 종이, 2026-09-28),
  * E(기사 휴대폰)의 수거 목록 줄 `전화` → 창의 주 버튼이 `tel:` 링크, A의 접수증 `전화` → 번호만(`tel:` 없음).
  */
 async function printCallE2E({ APP, a, e }) {
@@ -754,8 +755,8 @@ async function printCallE2E({ APP, a, e }) {
   await a.locator('.sn-footer [data-primary="true"]').click();
   await a.waitForFunction(() => window.__printed > 0, null, { timeout: STEP_MS }).catch(() => {});
   const printed = await a.evaluate(() => ({ n: window.__printed, text: window.__printText ?? '' }));
-  check('인쇄: A의 수거 목록 `인쇄` → 인쇄 창 한 번 · 인쇄 문서에 가린 번호(010-****-xxxx)만',
-    printed.n === 1 && /010-\*{4}-\d{4}/.test(printed.text) && !/010-0000-(?!0000)\d{4}/.test(printed.text), printed.n + ' · ' + printed.text.slice(0, 80));
+  check('인쇄: A의 수거 목록 `인쇄` → 인쇄 창 한 번 · 인쇄 문서에 온전한 번호(010-0000-xxxx) · 가린 번호 없음',
+    printed.n === 1 && /010-0000-(?!0000)\d{4}/.test(printed.text) && !/010-\*{4}-\d{4}/.test(printed.text), printed.n + ' · ' + printed.text.slice(0, 80));
   await e.goto(APP);
   await e.waitForSelector('.sn-ledger tr.sn-row', { timeout: STEP_MS });
   const call = e.locator('.sn-ledger tr.sn-row button.sn-cell-action').first();

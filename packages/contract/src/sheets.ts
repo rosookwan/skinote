@@ -625,7 +625,7 @@ export interface ExchangeSheetView extends ReadModelHead {
   title: string;
   /** 교환 품목(손님에게 있는 것, 없으면 지급 전 것; 줄 · 사이즈마다). 고른 것이 selected. 없으면 빈 목록(notice). */
   items: ExchangeItemOption[];
-  /** 수량 줄: 이름(`반납 사이즈` · `지급 예정 사이즈`), 둘째 줄(옛 사이즈 이름 `중 사이즈`), −/+ 범위. 품목이 없으면 없음. */
+  /** 수량 줄: 이름(`교환 전 사이즈` · `지급 예정 사이즈`), 둘째 줄(옛 사이즈 이름 `중 사이즈`), −/+ 범위. 품목이 없으면 없음. */
   quantity?: { name: string; note: string; input: QuantityInput };
   /** 지급 사이즈(그 종류의 다른 사이즈, 매장 목록 차례). 고른 것이 selected. */
   sizes: ChoiceOption[];

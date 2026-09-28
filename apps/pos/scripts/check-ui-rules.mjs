@@ -1815,8 +1815,8 @@ async function printChecks(w, name) {
 }
 
 /**
- * A4 인쇄(features-1 §8-5 rules walk `printWalk`): 카운터 수거 목록의 `인쇄`와 접수증 옆 동작 `인쇄`가 인쇄 창을 한 번 열고 인쇄 문서에 가린 번호
- * (`010-****-0025`)만 있는지, 인쇄 문서 화면(#/print/…, 794 × 1123, 인쇄 매체)을 인쇄 등급으로 재는지(쪽마다: 화면 규칙 + printChecks).
+ * A4 인쇄(features-1 §8-5 rules walk `printWalk`): 카운터 수거 목록의 `인쇄`와 접수증 옆 동작 `인쇄`가 인쇄 창을 한 번 열고 수거 목록에는 온전한 번호
+ * (`010-0000-0025`, 기사가 들고 나가는 종이, 2026-09-28), 접수증에는 가린 번호(`010-****-0025`)만 있는지, 인쇄 문서 화면(#/print/…, 794 × 1123, 인쇄 매체)을 인쇄 등급으로 재는지(쪽마다: 화면 규칙 + printChecks).
  */
 async function printWalk(w) {
   const page = w.page;
@@ -1827,9 +1827,8 @@ async function printWalk(w) {
   await page.waitForFunction((n) => (window.__skinotePrinted ?? 0) > n, before, { timeout: 10_000 }).catch(() => {});
   const list = await printed(page);
   if (list.n !== before + 1) w.fail('print-collection', '수거 목록 `인쇄`가 인쇄 창을 한 번 열지 않음(' + (list.n - before) + '번)');
-  if (!/김민수/.test(list.text) || !/010-\*{4}-0025/.test(list.text)) w.fail('print-collection', '인쇄 수거 목록에 팀 · 가린 번호가 없음');
-  // 손님 번호는 가린 것뿐(머리의 매장 전화 010-0000-0000은 손님 정보가 아니다).
-  if (/010-0000-(?!0000)\d{4}/.test(list.text)) w.fail('print-collection', '인쇄 수거 목록에 온전한 번호가 있음');
+  if (!/김민수/.test(list.text) || !/010-0000-0025/.test(list.text)) w.fail('print-collection', '인쇄 수거 목록에 팀 · 온전한 번호가 없음');
+  if (/010-\*{4}-\d{4}/.test(list.text)) w.fail('print-collection', '인쇄 수거 목록에 가린 번호가 있음');
   await w.settle();
   if (await page.locator('.pos-print-host').count()) w.fail('print-collection', '인쇄 창 뒤에도 인쇄 문서가 남음');
   await w.scene('print-collection-after');
