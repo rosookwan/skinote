@@ -25,7 +25,7 @@ export const EMPTY_NEW_ORDER: NewOrderState = {
 export function hasDraft(state: NewOrderState): boolean {
   const d = state.draft;
   return d.leader.name.trim() !== '' || d.leader.phone !== '' || d.leader.party > 0 || d.items.length > 0 || d.channel !== 'walk_in'
-    || d.pickup.mode !== 'store' || d.returnSet !== undefined;
+    || d.pickup.mode !== 'store' || d.returnSet !== undefined || d.customerPickup === true;
 }
 
 /** 서버에 물을 인자(초안 + 연 종류 · 규격). */

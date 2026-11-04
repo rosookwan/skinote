@@ -13,9 +13,10 @@ export interface PiiAccess {
   actorKey: string;
   /** 본 기기(devices.id). 없으면 NULL. */
   deviceId?: string;
-  action: 'phone_reveal' | 'list_print';
-  /** 무엇을: 접수(order) · 목록(list). */
-  subjectType: 'order' | 'list';
+  /** working_copy: 기사 기기에 내려 준 차량 범위 사본(온전한 번호를 실은 접수 수, work/impl-offline/plan.md O4 · deployment 10-4). */
+  action: 'phone_reveal' | 'list_print' | 'working_copy';
+  /** 무엇을: 접수(order) · 목록(list) · 사본(copy, `차량:날짜`). */
+  subjectType: 'order' | 'list' | 'copy';
   subjectId?: string;
   /** 목록이면 줄 수(1 이상). */
   itemCount?: number;

@@ -62,11 +62,13 @@ export interface RulesLayout {
  * 카드의 칸 · 쪽(spec 3-9): 칸 수는 잰 본문 폭으로(두 칸 사이 16), 칸 높이는 잰 본문 높이 − 위 여백 12, 카드 높이는 ruleCardHeight(부품과 같은
  * 값), 카드 사이 8. 1024×600은 한 쪽(반납 · 보증금 | 결제 · 환불 · 영업일 기준 시각), 1024×569 · 529는 두 쪽, 좁은 포스는 한 칸 두 쪽.
  */
-export function rulesLayout(profile: DeviceProfile, box: Size | null, cards: readonly Pick<RuleCardView, 'inline' | 'rows' | 'notes'>[]): RulesLayout {
+export function rulesLayout(profile: DeviceProfile, box: Size | null, cards: readonly Pick<RuleCardView, 'inline' | 'rows' | 'notes'>[], compactCards = false): RulesLayout {
   if (!box) return { columns: 1, pages: [[[]]] };
   // 카드 한 장의 가장 작은 폭(DeviceProfile pages: 누르는 곳 9칸 = 468px, 시안 카드 474): 칸 폭이 이보다 좁으면 한 칸(좁은 포스 875 · 907).
   const columns = cardColumns(box.width, profile.minTargetPx * profile.pages.ruleCardMinTargets, profile.space.l);
-  const heights = cards.map((card) => ruleCardHeight(card, profile));
+  // 긴급 띠 때문에 카드 한 장보다 본문이 낮으면 안 여백만 줄인다. 글자와 버튼 크기는 그대로다.
+  const cardProfile = compactCards ? { ...profile, space: { ...profile.space, m: profile.space.xs, s: profile.space.xs } } : profile;
+  const heights = cards.map((card) => ruleCardHeight(card, cardProfile));
   return { columns, pages: packCards(heights, box.height - profile.space.m, profile.space.s, columns) };
 }
 
@@ -173,7 +175,8 @@ function RulesScreen() {
   const bodyRef = useRef<HTMLDivElement>(null);
   const box = useElementSize(bodyRef);
   const cards = view?.cards ?? [];
-  const layout = rulesLayout(profile, box, cards);
+  const compactCards = box !== null && cards.some((card) => ruleCardHeight(card, profile) > box.height - profile.space.m);
+  const layout = rulesLayout(profile, box, cards, compactCards);
   const at = Math.min(page, layout.pages.length - 1);
   const shown = layout.pages[at] ?? [[]];
 
@@ -213,7 +216,7 @@ function RulesScreen() {
 
   const colStyle = { '--pos-rules-cols': layout.columns } as CSSProperties;
   const body = (
-    <div ref={bodyRef} className="pos-rules-body" style={colStyle}>
+    <div ref={bodyRef} className={'pos-rules-body' + (compactCards ? ' has-compact-cards' : '')} style={colStyle}>
       {!view && live.error ? <p className="pos-sheet-note" role="status">{say('settingsUnreadable')}</p> : null}
       {view && box ? Array.from({ length: layout.columns }, (_, c) => (
         <div key={c} className="pos-rules-col">

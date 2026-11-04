@@ -117,8 +117,13 @@ export function writePins(ctx: WriteContext): void {
   after.pins.forEach((pin, i) => {
     const prev = before.pins[i];
     if (prev) {
-      const same = (p: FxPin) => JSON.stringify([p.orderId, p.taskId ?? null, p.at, p.note ?? null]);
+      const same = (p: FxPin) => JSON.stringify([p.orderId, p.taskId ?? null, p.at, p.note ?? null, p.requestedAt ?? null, p.vehicleId ?? null]);
       if (same(prev) !== same(pin)) unmapped('빨리 확인의 칸이 바뀌었다: ' + pin.id);
+      if (prev.releasedAt !== pin.releasedAt) {
+        if (prev.releasedAt !== undefined || pin.releasedAt === undefined) unmapped('긴급 해제가 바뀌었다: ' + pin.id);
+        run(ctx.db, "UPDATE task_pins SET released_at = ?, released_by = ?, release_reason_key = 'manual', updated_rev = ?, version = version + 1 WHERE shop_id = ? AND id = ?",
+          isoOf(pin.releasedAt), ctx.actor.key, ctx.rev, ctx.shopId, pin.id);
+      }
       if (prev.status === pin.status) return;
       run(ctx.db, `UPDATE notifications SET lifecycle_key = ?, delivered_at = coalesce(delivered_at, ?), acknowledged_at = ?, acknowledged_by = ?, updated_rev = ?,
         version = version + 1 WHERE shop_id = ? AND id = ?`,
@@ -133,8 +138,8 @@ export function writePins(ctx: WriteContext): void {
         at, ctx.actor.key, ctx.rev, ctx.shopId, str(r.id));
     }
     insert(ctx.db, 'notifications', {
-      shop_id: ctx.shopId, id: 'pin:' + pin.id, recipient_scope_key: 'vehicle', recipient_vehicle_id: task.vehicleId, type_key: 'pin', source_key: 'pin:' + pin.id,
-      source_request_id: ctx.requestId, order_id: pin.orderId, task_id: taskId, title: '빨리 확인', params_json: JSON.stringify({ promiseAt: pin.at }),
+      shop_id: ctx.shopId, id: 'pin:' + pin.id, recipient_scope_key: 'vehicle', recipient_vehicle_id: pin.vehicleId ?? task.vehicleId, type_key: 'pin', source_key: 'pin:' + pin.id,
+      source_request_id: ctx.requestId, order_id: pin.orderId, task_id: taskId, title: '빨리 확인', params_json: JSON.stringify({ promiseAt: pin.at, ...(pin.requestedAt !== undefined ? { requestedAt: pin.requestedAt } : {}) }),
       attention_required: 1, lifecycle_key: pin.status, ...(pin.status !== 'requested' ? { delivered_at: at } : {}),
       ...(pin.status === 'acknowledged' ? { acknowledged_at: at, acknowledged_by: ctx.actor.key } : {}), created_at: at, created_rev: ctx.rev,
     });
@@ -219,14 +224,16 @@ export function loadDispatch(db: Db, shopId: string, byId: Map<string, FxOrder>)
     o.charges = [...(o.charges ?? []), charge];
   }
   // 빨리 확인.
-  const pins: FxPin[] = all(db, `SELECT p.id, p.task_id, p.message, n.params_json, n.lifecycle_key, t.order_id FROM task_pins p
+  const pins: FxPin[] = all(db, `SELECT p.id, p.task_id, p.message, p.pinned_at, p.released_at, n.recipient_vehicle_id, n.params_json, n.lifecycle_key, t.order_id FROM task_pins p
       JOIN notifications n ON n.shop_id = p.shop_id AND n.id = p.notification_id JOIN tasks t ON t.shop_id = p.shop_id AND t.id = p.task_id
       WHERE p.shop_id = ? ORDER BY p.rowid`, shopId).map((r) => {
     const orderId = str(r.order_id);
     const taskId = str(r.task_id);
-    const params = JSON.parse(text(r.params_json) ?? '{}') as { promiseAt?: number };
+    const params = JSON.parse(text(r.params_json) ?? '{}') as { promiseAt?: number; requestedAt?: number };
     return {
-      id: str(r.id), orderId, ...(taskId !== mainCollect(orderId) ? { taskId } : {}), at: params.promiseAt ?? 0,
+      id: str(r.id), orderId, ...(params.requestedAt !== undefined || taskId !== mainCollect(orderId) ? { taskId } : {}), at: params.promiseAt ?? 0,
+      ...(params.requestedAt !== undefined ? { requestedAt: msOf(str(r.pinned_at)) } : {}), ...(text(r.released_at) ? { releasedAt: msOf(str(r.released_at)) } : {}),
+      ...(params.requestedAt !== undefined && text(r.recipient_vehicle_id) ? { vehicleId: str(r.recipient_vehicle_id) } : {}),
       ...(text(r.message) !== undefined ? { note: str(r.message) } : {}), status: str(r.lifecycle_key) as FxPin['status'],
     };
   });

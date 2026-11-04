@@ -22,10 +22,5 @@ export function addDays(date: string, days: number): string {
   return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
 }
 
-/** 판단 없이 JSON을 같은 글로(키 차례 고정): 지문 · 해시 · 비교에 쓴다. */
-export function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
-  if (Array.isArray(value)) return '[' + value.map((v) => (v === undefined ? 'null' : canonicalJson(v))).join(',') + ']';
-  const entries = Object.entries(value as Record<string, unknown>).filter(([, v]) => v !== undefined).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  return '{' + entries.map(([k, v]) => JSON.stringify(k) + ':' + canonicalJson(v)).join(',') + '}';
-}
+/** 판단 없이 JSON을 같은 글로(키 차례 고정): 지문 · 해시 · 비교에 쓴다. 기기와 같은 함수(@skinote/contract canonical.ts, work/impl-offline/plan.md O5). */
+export { canonicalJson } from '@skinote/contract';

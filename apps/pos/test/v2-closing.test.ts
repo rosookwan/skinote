@@ -25,9 +25,9 @@ const ms = (h: number, m: number, day = 0) => kstAt('2026-12-26', day, h, m);
 const iso = (h: number, m: number, day = 0) => new Date(ms(h, m, day)).toISOString();
 const DATE = '2026-12-26';
 
-/** 15:40에서 minutes만큼(뒷이야기 켬: 27일 00:30 = 530분, 00:40 = 540분). 카운터 기기. */
-function at(minutes: number, story = true, shop: SampleShop = 'first') {
-  const client = new FixtureClient({ realNow: () => 1_800_000_000_000, story, shop });
+/** 15:40에서 minutes만큼(뒷이야기 켬: 27일 00:30 = 530분, 00:40 = 540분). 카운터 기기. vanLink: 끊긴 기사 기기를 카운터가 보는 모양(체험 ?van=). */
+function at(minutes: number, story = true, shop: SampleShop = 'first', vanLink?: 'stuck' | 'asleep') {
+  const client = new FixtureClient({ realNow: () => 1_800_000_000_000, story, shop, ...(vanLink ? { vanLink } : {}) });
   client.advanceClock(minutes);
   const state = () => (client as unknown as { state: FxState }).state;
   return { client, state };
@@ -299,8 +299,8 @@ describe('V6 돈통 점검 · 마감(closing.close)', () => {
     expect(carryOf(closed).at(-1)).toEqual(['미확인 현금 인계 · 35,000원', '1호 차량 · 23:48 입고', false]);
   });
 
-  it('기사 기기에 보낼 것이 남으면 막힘: 차량 줄 `전송 대기 1`, 한 줄 `1호 차량 · 전송 대기 있음`, 마감 주 버튼 막힘 · 명령 거절', async () => {
-    const { client, state } = at(540);
+  it('기사 기기가 대기 수를 알리고 보내지 못하면(?van=stuck) 막힘: 차량 줄 `전송 대기 1`, 한 줄 `1호 차량 · 전송 대기 있음`, 마감 주 버튼 막힘 · 명령 거절', async () => {
+    const { client, state } = at(540, true, 'first', 'stuck');
     client.setDevice('driver');
     client.setOffline(true);
     const list = await client.ledgerView('collection_list', { vehicleId: 'v1' });
@@ -310,7 +310,7 @@ describe('V6 돈통 점검 · 마감(closing.close)', () => {
     client.setDevice('counter');
     const counted = await check(client, { date: DATE }, 'counter', '540000');
     const view = await client.query('closingSheet', counted.params);
-    expect(parts(cashOf(view, 'van').note)).toBe('23:48 입고 · 전송 대기 1');
+    expect(parts(cashOf(view, 'van').note)).toBe('마지막 연결 00:40 · 전송 대기 1');
     expect(view.blocked).toBe('1호 차량 · 전송 대기 있음');
     expect(view.next).toMatchObject({ kind: 'close', enabled: false });
     expect(await send(client, view, view.command, view.expect)).toMatchObject({ outcome: 'rejected', error: { message: '1호 차량 · 전송 대기 있음' } });

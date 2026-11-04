@@ -5,6 +5,10 @@
 // 직원 목록 · 보내기는 부르는 쪽(session.tsx)이 한다. 시험 매장의 열린 등록으로 스스로 붙은 기기면 매장 이름 줄에 기기 종류 · 차량을
 // 더하고(`시험 매장 · 기사 휴대폰 · 1호 차량`) 바닥줄에 `기기 선택`(보통 버튼: 이 기기의 등록을 끊고 기기 선택으로)을 둔다.
 // 체험판 미리 보기(#/preview/login)가 같은 화면을 예시 이름으로 그린다.
+// 앱 잠금(work/impl-offline/plan.md O15 d · §8-1): 기사 기기가 켜지거나 뒤에서 돌아올 때 같은 화면에 기억한 기사의 타일 하나와 비밀번호 판이 곧바로
+// 열린다(기기에서 본다: 서버가 없어도 된다). 틀리면 `비밀번호 불일치 · 재입력 필요`, 다섯 번 틀릴 때마다 `로그인 잠김 · {시각} 이후 가능`이 남고(기기에서
+// 풀 수 없으면 `로그인 잠김 · 연결 후 가능`) 숫자 키와 `입력`을 누를 수 없다(locked, work/impl-offline/plan.md §17 R3-24). 판 위의 한 줄(note)은 이 기기의
+// `전송 대기 {n}`. 미리 보기 #/preview/lock.
 import type { StaffTile } from '@skinote/contract';
 import { cardColumns } from '@skinote/layout';
 import { NumberPad, Pager, TextFit, t, useDeviceProfile, useElementSize } from '@skinote/ui';
@@ -27,6 +31,10 @@ export interface LoginScreenProps {
   onChooseDevice?: () => void;
   /** `기기 선택`을 보내는 중. */
   choosing?: boolean;
+  /** 앱 잠금: 처음부터 이 사람(타일 하나)의 비밀번호 판을 연다. */
+  openFor?: StaffTile;
+  /** 잠김의 한 줄(`로그인 잠김 · {시각} 이후 가능` · `로그인 잠김 · 연결 후 가능`): 판에 남고 숫자 키 · `입력`을 누를 수 없다. */
+  locked?: string;
 }
 
 /** 비밀번호 보내기의 답: null = 됨, 글 = 판의 한 줄, 잠김 = 한 줄 + 풀리는 시각(ISO). */
@@ -39,12 +47,12 @@ export function staffGrid(box: { width: number; height: number }, tile: { height
   return { columns, rows, perPage: columns * rows };
 }
 
-export function LoginScreen({ shopName, staff, note, onPin, deviceLine, onChooseDevice, choosing = false }: LoginScreenProps) {
+export function LoginScreen({ shopName, staff, note, onPin, deviceLine, onChooseDevice, choosing = false, openFor, locked: lockedLine }: LoginScreenProps) {
   const profile = useDeviceProfile();
   const boxRef = useRef<HTMLDivElement>(null);
   const box = useElementSize(boxRef);
   const [page, setPage] = useState(0);
-  const [picked, setPicked] = useState<StaffTile | null>(null);
+  const [picked, setPicked] = useState<StaffTile | null>(openFor ?? null);
   const [digits, setDigits] = useState('');
   const [padNote, setPadNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -56,7 +64,7 @@ export function LoginScreen({ shopName, staff, note, onPin, deviceLine, onChoose
     const timer = setTimeout(() => { setLockedUntil(null); setPadNote(null); }, Math.max(0, lockedUntil - Date.now()));
     return () => clearTimeout(timer);
   }, [lockedUntil]);
-  const locked = lockedUntil !== null;
+  const locked = lockedUntil !== null || lockedLine !== undefined;
 
   const tiles = staff ?? [];
   // 타일: 높이는 큰 고르기 버튼(plain.choicePx), 가장 작은 폭은 그 세 배(이름 열 자가 두 줄 안에 든다).
@@ -128,7 +136,8 @@ export function LoginScreen({ shopName, staff, note, onPin, deviceLine, onChoose
           onSubmit={submit}
           onClose={() => { setPicked(null); setDigits(''); if (!locked) setPadNote(null); }}
           accept={() => !busy && !locked}
-          {...(busy ? { note: t('processing') } : padNote ? { note: padNote } : {})}
+          keysDisabled={locked}
+          {...(busy ? { note: t('processing') } : lockedLine ? { note: lockedLine } : padNote ? { note: padNote } : {})}
         />
       ) : null}
     </div>

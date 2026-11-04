@@ -2,7 +2,9 @@
 // 끊어 보임). 번호는 운영자가 명령줄로 한 번 받은 12자리다(화면에 영어 글자가 없어 숫자만). `입력`을 누르면 부르는 쪽(session.tsx)이
 // 서버에 보내고, 틀리면 한 줄(`등록 번호 불일치 · 재입력 필요` …)이 숫자판 표시 칸 아래에 뜬다. 시험 매장의 기기 선택이 번호 등록으로
 // 바뀌어 온 때는 처음부터 한 줄(notice: `기기 선택 종료 · 등록 번호 필요`)이 있고, 숫자를 누르면 사라진다.
-// 서버의 연결 끊김 화면(OfflineScreen)도 여기 둔다: `연결 끊김` · `마지막 연결 16:48` · `재시도`, 5초마다 저절로 다시 묻는다.
+// 서버의 연결 끊김 화면(OfflineScreen)도 여기 둔다: `연결 끊김` · `마지막 연결 16:48` · `재시도`, 5초마다 저절로 다시 묻는다. 기사 기기에 서버로 가지
+// 않은 기록이 있으면 `전송 대기 3`(보냄 대기는 남는다, work/impl-offline/plan.md §8-1), 되살린 서버가 모르는 기기면 `기기 등록 없음 · 공급자 연락`,
+// 기기에 저장할 곳이 없으면 `이 기기 연결 끊김 기록 불가`(notice).
 // 둘 다 체험판 미리 보기(#/preview/enroll)가 규칙 검사를 위해 그린다(보내는 일은 부르는 쪽이 정한다).
 import { NumberPad, formatTime, t, useUi } from '@skinote/ui';
 import { useEffect, useState } from 'react';
@@ -63,10 +65,16 @@ export interface OfflineScreenProps {
   onRetry: () => void;
   /** 저절로 다시 묻는 간격(밀리초). 없으면 5초. */
   retryEveryMs?: number;
+  /** 이 기기의 서버에 가지 않은 기록 수(기사 기기). 0이면 줄이 없다. */
+  pending?: number;
+  /** 한 줄(`기기 등록 없음 · 공급자 연락` · `이 기기 저장 불가`). */
+  notice?: string;
+  /** 기사 기기: 목록 · 번호를 연결될 때까지 볼 수 없다는 한 줄(`수거 목록 · 연결 후 조회 가능`, work/impl-offline/plan.md §17 R3-30). */
+  driver?: boolean;
 }
 
 /** 서버 모드인데 서버에 닿지 않을 때(시작 · 로그인 전). 체험판으로 가지 않는다(D7). */
-export function OfflineScreen({ lastSyncAt, onRetry, retryEveryMs = 5_000 }: OfflineScreenProps) {
+export function OfflineScreen({ lastSyncAt, onRetry, retryEveryMs = 5_000, pending = 0, notice, driver = false }: OfflineScreenProps) {
   const { timezone } = useUi();
   useEffect(() => {
     document.title = say('appName');
@@ -78,6 +86,9 @@ export function OfflineScreen({ lastSyncAt, onRetry, retryEveryMs = 5_000 }: Off
       <main className="pos-card" role="alert">
         <h1 className="pos-card-title">{t('offline')}</h1>
         {lastSyncAt ? <p className="pos-card-line">{t('lastSync', { time: formatTime(lastSyncAt, timezone) })}</p> : null}
+        {pending > 0 ? <p className="pos-card-line pos-card-waiting">{t('pendingCount', { n: pending })}</p> : null}
+        {driver ? <p className="pos-card-line">{say('listLater')}</p> : null}
+        {notice ? <p className="pos-card-line pos-card-waiting">{notice}</p> : null}
         <div className="pos-card-row">
           <button type="button" className="sn-primary" data-primary="true" onClick={onRetry}>{say('retry')}</button>
         </div>

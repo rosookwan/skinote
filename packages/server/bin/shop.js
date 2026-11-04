@@ -15,6 +15,10 @@
 //   node bin/shop.js revoke-device --shop <id> --device <기기 이름|id> → 기기 끊기(세션 · 알림 연결이 끝남)                           [온라인 가능]
 //   node bin/shop.js revoke-device --shop <id> --open-all → 열린 등록으로 스스로 붙은 기기(`시험 기기 N`)를 모두 끊기                [온라인 가능]
 //   node bin/shop.js status        --shop <id> → rev · 영업일 · 접수 수 · 기기 · 직원 수(이름 없음), 스스로 붙은 기기마다 한 줄          [온라인 가능]
+//   node bin/shop.js held          --shop <id> --list | --apply <요청번호> | --dismiss <요청번호> → 보류된 기사 기록(요청번호 · 기기 · 명령 ·
+//                                  받은 때 · 까닭, 본문 없음) · 반영(그 자리에서 적용) · 미반영(work/impl-offline/plan.md O21)                [온라인 가능]
+//   revoke-device는 기사 기기가 알린 보낼 기록 수를 알림으로만 보인다(묻지 않고 끊는다: 그 수는 기기가 정하고, 끊은 뒤에 온 기록은 보류되어
+//                                  held --apply로 반영한다, work/impl-offline/plan.md §17 R3-14). --force는 옛 스크립트를 위해 받기만 한다.
 //   node bin/shop.js --stdin       표준 입력의 { "op": "…", "args": { … } } 한 JSON(deploy.sh --shop-cli). args.spec은 명세 객체여도 된다.
 //
 // [혼자] 명령은 매장의 쓰는 사람 잠금을 스스로 잡는다: 서버가 돌고 있으면 거절한다(서버를 멈추거나 deploy.sh --shop-cli).
@@ -80,12 +84,16 @@ const FLAGS = /** @type {Record<string, { key: string, kind: 'bool' | 'value' | 
   '--role': { key: 'role', kind: 'value' },
   '--amount': { key: 'amount', kind: 'value' },
   '--percent': { key: 'percent', kind: 'value' },
+  '--force': { key: 'force', kind: 'bool' },
+  '--list': { key: 'list', kind: 'bool' },
+  '--apply': { key: 'apply', kind: 'value' },
+  '--dismiss': { key: 'dismiss', kind: 'value' },
 });
 
-const OPS = ['provision', 'load-sample', 'reset-test-shop', 'device-code', 'rotate-pin', 'revoke-device', 'set-limit', 'status'];
+const OPS = ['provision', 'load-sample', 'reset-test-shop', 'device-code', 'rotate-pin', 'revoke-device', 'set-limit', 'status', 'held'];
 /** 매장 파일을 혼자 써야 하는 명령(서버가 돌면 거절, deploy/shop-cli.sh는 서버를 잠깐 멈춘다). */
 export const EXCLUSIVE_OPS = Object.freeze(['provision', 'load-sample', 'reset-test-shop']);
-const USAGE = '쓰는 법: node bin/shop.js <provision|load-sample|reset-test-shop|device-code|rotate-pin|revoke-device|set-limit|status> --shop <매장 id> …  (또는 --stdin)';
+const USAGE = '쓰는 법: node bin/shop.js <provision|load-sample|reset-test-shop|device-code|rotate-pin|revoke-device|set-limit|status|held> --shop <매장 id> …  (또는 --stdin)';
 
 /** @param {string[]} argv @returns {{ op: string, args: CliArgs, stdin: boolean }} */
 export function parseArgs(argv) {
@@ -373,9 +381,17 @@ function describe(op, result) {
       ];
       return `역할\t${result.role}\n직접 입력 할인 한도\t${parts.length ? parts.join(' · ') : '없음'}\n`;
     }
+    case 'held':
+      if (result.held) {
+        return ['요청번호\t기기\t번호\t명령\t받은 때\t까닭\t미반영', ...result.held.map((/** @type {any} */ h) =>
+          [h.requestId, h.deviceLabel ?? '', h.deviceSeq ?? '', h.type, h.receivedAt, h.reason, h.dismissed ? '예' : ''].join('\t'))].join('\n') + '\n';
+      }
+      if (result.dismissed) return `보류 기록 ${result.requestId} 미반영\n`;
+      return `보류 기록 ${result.requestId} 반영 · ${result.outcome}${result.reviews?.length ? ' · 확인 필요 ' + result.reviews.join(', ') : ''}\n`;
     case 'revoke-device':
       if (result.openAll) return `스스로 붙은 시험 기기 ${result.revoked}대 끊음 · 끝낸 세션 ${result.sessions}개 · 닫은 알림 연결 ${result.streams}개\n`;
-      return `기기 ${result.label} ${result.revoked ? '끊음' : '이미 끊겨 있음'} · 끝낸 세션 ${result.sessions}개 · 닫은 알림 연결 ${result.streams}개\n`;
+      return `기기 ${result.label} ${result.revoked ? '끊음' : '이미 끊겨 있음'} · 끝낸 세션 ${result.sessions}개 · 닫은 알림 연결 ${result.streams}개\n`
+        + (result.reportedPending ? `기기가 알린 보낼 기록 ${result.reportedPending}건 · 끊은 뒤 온 기록은 보류(held --list)\n` : '');
     default:
       return JSON.stringify(result) + '\n';
   }
@@ -423,8 +439,10 @@ export async function runShopCli(argv, io) {
     if (op === 'rotate-pin' && (args.staff?.length ?? 0) > 1) throw new CliError(EXIT.usage, 'rotate-pin은 --staff 하나');
     const opArgs = op === 'rotate-pin' ? { staff: args.staff?.[0], pinDigits: args.pinDigits }
       : op === 'device-code' ? { kind: args.kind, label: args.label, vehicle: args.vehicle, minutes: args.minutes }
-        : op === 'revoke-device' ? { device: args.device, ...(args.openAll === true ? { openAll: true } : {}) }
-          : op === 'set-limit' ? { role: args.role, amount: args.amount, percent: args.percent } : {};
+        : op === 'revoke-device' ? { device: args.device, ...(args.openAll === true ? { openAll: true } : {}), ...(args.force === true ? { force: true } : {}) }
+          : op === 'set-limit' ? { role: args.role, amount: args.amount, percent: args.percent }
+            : op === 'held' ? { ...(args.list === true ? { list: true } : {}), ...(typeof args.apply === 'string' ? { apply: args.apply } : {}), ...(typeof args.dismiss === 'string' ? { dismiss: args.dismiss } : {}) }
+              : {};
     lock = acquireWriterLock(config.dataDir, shopId);
     if (!lock) {
       // 서버가 돈다: 관리 소켓으로 보낸다(서버가 자기 연결로 처리한다).
@@ -435,7 +453,7 @@ export async function runShopCli(argv, io) {
       } catch (error) {
         throw new CliError(EXIT.unavailable, `관리 소켓에 붙지 못했습니다(${/** @type {{ code?: string }} */ (error).code ?? 'ERROR'})`);
       }
-      if (!answer.ok) throw new CliError(answer.code === 'BAD_ARGS' || answer.code === 'NOT_FOUND' || answer.code === 'AMBIGUOUS' ? EXIT.data : EXIT.unavailable, `${answer.message}(${answer.code})`);
+      if (!answer.ok) throw new CliError(answer.code === 'BAD_ARGS' || answer.code === 'NOT_FOUND' || answer.code === 'AMBIGUOUS' || answer.code === 'DEVICE_PENDING' ? EXIT.data : EXIT.unavailable, `${answer.message}(${answer.code})`);
       io.out(describe(op, answer.result));
       return EXIT.ok;
     }

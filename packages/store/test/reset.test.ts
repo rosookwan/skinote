@@ -5,8 +5,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { sampleSpec } from '@skinote/domain/sample';
 import type { ShopSpec } from '@skinote/domain';
-import { all, isStoreError, num, one, openShopStore, readInstance, readResetCarry, rebuildShop, sha256, type ResetCarry } from '../src/index.ts';
-import { migrated, MINUTE, rowCounts, secrets, SHOP, T0 } from './helpers.ts';
+import { all, isStoreError, num, one, openShopStore, readInstance, readResetCarry, rebuildShop, run, sha256, type Actor, type ResetCarry } from '../src/index.ts';
+import { envelope, migrated, MINUTE, rowCounts, secrets, SHOP, T0 } from './helpers.ts';
 
 const HOUR = 60 * MINUTE;
 
@@ -82,7 +82,7 @@ test('rebuildShop keeps staff ids and accounts, devices (with keys, numbers and 
   assert.ok(store.devices.codeByHash(sha256('555555555555')), 'an unused code still routes to its row');
   assert.equal(store.devices.codeByHash(sha256('333333333333')), undefined);
   assert.equal(num(one(db, "SELECT value FROM shop_counters WHERE counter_key = 'device_short_no'")?.value), 4, 'device numbers are never reused');
-  assert.deepEqual(readInstance(db, SHOP), { epochId: made.epoch, epochNo: 2, revFloor: 1_000_000 });
+  assert.deepEqual(readInstance(db, SHOP), { epochId: made.epoch, epochNo: 2, revFloor: 1_000_000, restoredUpToRev: null }, 'a reset epoch is not a restore: restoredUpToRev stays null');
   assert.notEqual(made.epoch, readInstance(old.db, SHOP)?.epochId);
   assert.deepEqual(all(db, 'PRAGMA foreign_key_check'), []);
   // 다음 등록은 다음 기기 번호, 다음 rev는 바닥 위.
@@ -109,4 +109,30 @@ test('rebuildShop refuses staff that differ from the carry and writes nothing; a
   // 그다음 제대로 하면 된다.
   rebuildShop(db, SHOP, nextSpec(carry), T0, { carry, epoch: { no: 2, revFloor: 0 } });
   assert.equal(num(one(db, 'SELECT count(*) AS n FROM shops')?.n), 1);
+});
+
+test('rebuildShop carries each device’s contiguous end (§17-4): the fresh shop does not report the old numbers as missing', () => {
+  const old = oldShop();
+  // 1호 기사 휴대폰이 옛 매장에 7번까지 보냈다.
+  run(old.db, 'UPDATE devices SET last_device_seq = 7 WHERE id = ?', old.van1.id);
+  const carry = readResetCarry(old.db, SHOP);
+  const db = migrated('shop');
+  const made = rebuildShop(db, SHOP, nextSpec(carry), T0 + HOUR, { carry, epoch: { no: 2, revFloor: 1_000_000 } });
+  const cursor = one(db, "SELECT epoch_id, last_device_seq FROM device_sync_cursors WHERE device_id = ? AND stream_key = 'changes'", old.van1.id);
+  assert.deepEqual([cursor?.epoch_id, num(cursor?.last_device_seq)], [made.epoch, 7]);
+  assert.equal(num(one(db, 'SELECT count(*) AS n FROM device_sync_cursors WHERE device_id = ?', old.pos.id)?.n), 0, 'nothing to carry for a device that never sent a queued record');
+  assert.deepEqual(all(db, 'PRAGMA foreign_key_check'), []);
+  const store = openShopStore(db, SHOP, { secrets: secrets() });
+  assert.equal(store.devices.highWater(old.van1.id), 7);
+  // 새로 만든 뒤의 첫 심장 박동(noteLink)도 이어진 끝을 건드리지 않는다.
+  const head = store.head(T0 + HOUR);
+  store.devices.noteLink(old.van1.id, { queueDepth: 1, lastSeq: 8, clockOffsetMs: 0, appVersion: 'test', offlineCapable: true, epoch: head.epoch }, T0 + HOUR);
+  // 새 매장의 첫 보냄 대기 기록(8번): 1 ~ 7은 빈 번호가 아니다(기기가 옛 기록을 새 매장에 다시 보내지 않게, 카운터의 확인 필요에 남지 않게).
+  const driver: Actor = { key: 'staff:' + carry.staff[2]!.id, name: carry.staff[2]!.name, roleKey: 'driver', deviceId: old.van1.id, vehicleId: 'v1' };
+  const env = { ...envelope('notification.ack', { notificationId: 'none' }, { epoch: head.epoch, rev: head.rev }), deviceSeq: 8, ageMs: 0, clockAnchor: 'mono-abcdefgh', madeAt: new Date(T0).toISOString() };
+  store.commandQueued(env as never, driver, { deviceId: old.van1.id, deviceSeq: 8, occurredAt: T0 + HOUR, receivedAt: T0 + HOUR, timeSource: 'monotonic', deviceLabel: '1호차 휴대폰' });
+  assert.equal(num(one(db, 'SELECT count(*) AS n FROM command_log WHERE device_id = ? AND device_seq = 8', old.van1.id)?.n), 1);
+  const g = store.devices.gaps(old.van1.id);
+  assert.deepEqual([g.missing, g.count], [[], 0]);
+  assert.equal(num(one(db, "SELECT last_device_seq AS n FROM device_sync_cursors WHERE device_id = ? AND stream_key = 'changes'", old.van1.id)?.n), 8);
 });

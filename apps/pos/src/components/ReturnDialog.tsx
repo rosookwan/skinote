@@ -143,7 +143,8 @@ export interface ReturnDialogProps {
 
 export function ReturnDialog({ orderId, lineIds, onClose, onNotice }: ReturnDialogProps) {
   const client = useClient();
-  const { profile } = useUi();
+  const { profile, viewport } = useUi();
+  const compact = viewport.width < profile.counter.compactBelowPx;
   const [params, setParams] = useState<ReturnSheetParams>(() => ({ orderId, ...(lineIds?.length ? { lineIds } : {}) }));
   const [loaded, setLoaded] = useState<{ key: string; view: ReturnSheetView } | null>(null);
   /**
@@ -226,7 +227,10 @@ export function ReturnDialog({ orderId, lineIds, onClose, onNotice }: ReturnDial
   };
 
   // 한 쪽의 품목 칸 줄 수(DeviceProfile pages, spec 3-1: 세 줄까지 한 쪽, 창 500 ≤ 1024×529의 한도 505).
-  const pages = returnPages(view.lines, profile.pages.returnPieceRows);
+  const ordered = returnPages(view.lines, profile.pages.returnPieceRows).flat(2);
+  // 작은 화면은 한 품목씩 확인하며 정산과 실행 버튼 자리를 계속 남긴다.
+  const rows = compact ? 1 : profile.pages.returnPieceRows;
+  const pages = Array.from({length: Math.max(1, Math.ceil(ordered.length / rows))}, (_, i) => ordered.slice(i * rows, (i + 1) * rows).map(line => [line]));
   const rowCount = Math.max(1, ...pages.map((p) => p.length));
   const current = Math.min(page, pages.length - 1);
   const ready = view.primary.enabled && view.command !== undefined && (refundOnly ? refund.draft !== null : draft !== null) && !stale && !spent;
@@ -237,7 +241,8 @@ export function ReturnDialog({ orderId, lineIds, onClose, onNotice }: ReturnDial
       <DialogFrame
         title={view.title}
         onClose={onClose}
-        className="pos-return"
+        wide
+        className={'pos-return pos-detail' + (compact ? ' is-compact' : '')}
         {...(refundOnly && refund.draft ? { requestId: refund.draft.requestId } : draft ? { requestId: draft.requestId } : {})}
         pager={pages.length > 1 ? <Pager page={current} pageCount={pages.length} onChange={setPage} /> : null}
         primary={(
@@ -250,8 +255,10 @@ export function ReturnDialog({ orderId, lineIds, onClose, onNotice }: ReturnDial
           />
         )}
       >
+        <div className="pos-detail-columns"><section className="pos-detail-section"><h3>{say('detailReturnItems')}</h3>
         <p className="pos-return-lead"><RichLine runs={view.lead} /></p>
         <ReturnPieces
+          singleColumn stacked={compact}
           rows={pages[current] ?? []}
           rowCount={rowCount}
           groupLabel={(line) => say(line.mode === 'count' ? 'qtyOf' : 'piecesOf', { item: line.ariaLabel ?? line.label })}
@@ -259,6 +266,7 @@ export function ReturnDialog({ orderId, lineIds, onClose, onNotice }: ReturnDial
           onQuantity={(lineId, value) => change(withLineQuantity(params, view, lineId, value))}
           onPicker={setPicker}
         />
+        </section><section className="pos-detail-section pos-detail-settlement"><h3>{say('counterMoney')}</h3>
         {error ? (
           <p className="pos-return-left is-alert" role="alert"><RichLine runs={[{ text: error, strong: true }]} /></p>
         ) : (
@@ -272,6 +280,8 @@ export function ReturnDialog({ orderId, lineIds, onClose, onNotice }: ReturnDial
             <ChoiceRow options={view.refundMethods} label={say('refundMethodGroup')} onPress={(key) => change(withRefundMethod(params, key))} />
           </div>
         ) : null}
+        <p className="pos-detail-note">{say('detailReturnSeparate')}</p>
+        </section></div>
       </DialogFrame>
       {pickerLine ? (
         <PiecePickSheet line={pickerLine} onPiece={(assetId) => change(togglePiece(params, view, pickerLine.lineId, assetId))} onClose={() => setPicker(null)} />

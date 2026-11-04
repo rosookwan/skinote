@@ -137,7 +137,7 @@ export function App() {
     return (
       <DeviceProfileProvider role="driver" timezone={config?.timezone ?? 'Asia/Seoul'}>
         <Suspense fallback={null}>
-          <OfflineScreen lastSyncAt={session.lastSyncAt} onRetry={() => session.retryToday?.()} />
+          <OfflineScreen lastSyncAt={session.lastSyncAt} onRetry={() => session.retryToday?.()} pending={client.connection().pendingCount} />
         </Suspense>
       </DeviceProfileProvider>
     );

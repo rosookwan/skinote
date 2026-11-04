@@ -58,8 +58,8 @@ export function assertMoney(state: ShopState): void {
   // 6. 마감: 그날의 결제 수단 표 합(환불 줄 포함) = 그날 올린 받은 돈(보증금 결제 뺌) − 그날 올린 환불.
   const date = state.businessDate;
   const sheet = closingSheet({ state, config, now: state.orders.reduce((max, o) => Math.max(max, ...o.payments.map((p) => p.at)), 0) + 1 }, { date });
-  const posted = (ms: number) => postingDate(state, ms) === date;
-  const paidDay = state.orders.reduce((sum, o) => sum + o.payments.filter((p) => p.methodKey !== 'deposit' && posted(p.at)).reduce((n, p) => n + p.amount, 0), 0);
+  const posted = (ms: number, recordedAt?: number) => postingDate(state, ms, recordedAt) === date;
+  const paidDay = state.orders.reduce((sum, o) => sum + o.payments.filter((p) => p.methodKey !== 'deposit' && posted(p.at, p.recordedAt)).reduce((n, p) => n + p.amount, 0), 0);
   const backDay = state.orders.reduce((sum, o) => sum + (o.refunds ?? []).filter((r) => posted(r.at)).reduce((n, r) => n + r.amount, 0), 0);
   expect(sheet.methods.reduce((sum, m) => sum + m.amount, 0), 'closing methods').toBe(paidDay - backDay);
 }

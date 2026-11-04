@@ -1,10 +1,12 @@
-// 기기 등록 · 로그인 요청(계획 work/impl-server/plan.md 5-1 · 6-3). 로그인 전 길이라 CSRF 머리가 없다(서버는 Origin과 주소마다 제한으로
+// 기기 등록 · 로그인 요청(계획 work/impl-server/plan.md 5-1 · 6-3)과 세션이 끝난 기사 기기의 전달(work/impl-offline/plan.md §4-5). 로그인 전 길이라
+// CSRF 머리가 없다(서버는 Origin과 주소마다 제한으로
 // 지킨다). 답은 { ok, value } 또는 실패의 상태 · 코드(연결 없음은 status 0, code NETWORK). 비밀값(등록 번호 · 비밀번호)은 본문에만 있고
 // 기록 · 주소에 남기지 않는다. 등록 방법 묻기(GET)와 시험 매장의 열린 등록(종류 · 차량을 골라 스스로 등록), 스스로 붙은 기기의
 // 놓기(서명, 204)도 여기 있다.
 import {
   API_V2, enrollCodeDigits, isEnrollMode,
-  type Challenge, type DeviceKind, type DevicePublicKey, type EnrolledDevice, type EnrollMode, type SessionInfo, type StaffList,
+  type Challenge, type DeliverRequest, type DeliverResponse, type DeviceKind, type DevicePublicKey, type EnrolledDevice, type EnrollMode, type SessionInfo,
+  type StaffList,
 } from '@skinote/contract';
 import { isSessionInfo } from './runtime.ts';
 
@@ -21,6 +23,10 @@ export interface AuthApi {
   login(ticket: string, staffId: string, pin: string): Promise<AuthAnswer<SessionInfo>>;
   /** 스스로 붙은 기기가 자기 등록을 끊는다(열린 등록이 켜진 동안만, 로그인과 같은 서명). 됨은 204(값 없음). */
   openRelease(deviceId: string, nonce: string, signature: string): Promise<AuthAnswer<null>>;
+  /**
+   * 세션이 끝난 기사 기기의 보냄 대기 전달(work/impl-offline/plan.md O6 · §4-5): 한 번 값(challenge)에 `skinote-deliver-v1` 서명 + 항목마다의 서명.
+   */
+  deliver(body: DeliverRequest): Promise<AuthAnswer<DeliverResponse>>;
 }
 
 const TIMEOUT_MS = 10_000;
@@ -68,5 +74,6 @@ export function createAuthApi(baseUrl: string, fetchImpl: typeof fetch = (input,
       (v): v is StaffList => isObject(v) && typeof v.ticket === 'string' && Array.isArray(v.staff) && typeof v.shopName === 'string'),
     login: (ticket, staffId, pin) => post(API_V2.login, { ticket, staffId, pin }, isSessionInfo),
     openRelease: (deviceId, nonce, signature) => send(API_V2.openRelease, { deviceId, nonce, signature }, (v): v is null => v === null, 204),
+    deliver: (body) => post(API_V2.deliver, body, (v): v is DeliverResponse => isObject(v) && Array.isArray(v.results) && isObject(v.device) && typeof v.epoch === 'string'),
   };
 }

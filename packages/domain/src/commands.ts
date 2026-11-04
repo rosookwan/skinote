@@ -11,7 +11,8 @@ import { applyDiscount, refundPayments, type DiscountViewer } from './discounts.
 import { closeDay, confirmTransfer, transferCash } from './closing.ts';
 import { takeGroupPayment } from './group-pay.ts';
 import { returnDeposit, takeDeposit } from './deposits.ts';
-import { addTicket, fieldCollect, fieldDepositReturn, findDeliverTask, onVanToDeliver, setPaymentPromise } from './driver.ts';
+import { addTicket, deliverDone, fieldCollect, fieldDepositReturn, findDeliverTask, onVanToDeliver, setPaymentPromise } from './driver.ts';
+import { ghostTask, movedMeanwhileReviews, pullBackMoved } from './queued.ts';
 import { addItems, cancelOrder } from './order-edit.ts';
 import { exchangeSwap } from './exchange.ts';
 import { foundTickets, lostNow, moveSpares, writeOffTickets } from './tickets.ts';
@@ -97,12 +98,19 @@ function run(state: ShopState, envelope: AnyCommandEnvelope, now: number, lines:
       if (!task) return rejected('업무 없음');
       const o = task.order;
       // 보냄 대기로 온 배달(기기에서 이미 건넨 사실, sync 8-12 · features-1 E23): 그사이 취소했어도 차에 실린 것까지 적는다(돌려받을 것이 된다).
-      const deliverable = envelope.deviceSeq !== undefined ? vanLoaded : onVanToDeliver;
-      if (!o.lines.some((l) => deliverable(l) > 0)) return pendingIssue(o) ? rejected('배달 불가 · 적재 대기') : nothing('배달 완료');
+      // 적재 기록이 없으면(카운터가 적재를 적지 않은 채 차가 나감) 건넨 수만큼 적재를 함께 적는다(건너뛴 단계, work/impl-offline/plan.md §5-1, 수량 줄만).
+      const queuedFact = envelope.deviceSeq !== undefined;
+      const deliverable = queuedFact ? (l: FxLine) => (numbered(l) ? vanLoaded(l) : Math.max(vanLoaded(l), liveQty(l) - l.issued)) : onVanToDeliver;
+      if (!o.lines.some((l) => deliverable(l) > 0)) return pendingIssue(o) && !queuedFact ? rejected('배달 불가 · 적재 대기') : nothing('배달 완료');
       const plan = planStock(o, p.lines, deliverable, (l, qty, requested, taken) => issueNumbers(state, l, qty, requested, taken));
       if ('error' in plan) return rejected(plan.error);
       if (plan.length === 0) return nothing('배달 완료');
       for (const { l, qty, ids } of plan) {
+        const onVan = vanLoaded(l);
+        if (queuedFact && !numbered(l) && qty > onVan) {
+          l.loaded = Math.max(l.loaded, l.issued) + (qty - onVan);
+          l.loadedAt = now;
+        }
         l.issued += qty;
         l.issuedAt = now;
         if (ids.length) l.assetIds = [...(l.assetIds ?? []), ...ids];
@@ -153,35 +161,41 @@ function run(state: ShopState, envelope: AnyCommandEnvelope, now: number, lines:
     case 'stock.collect': {
       // 차량 수거: 그 업무(반납 일정)의 몫만. 일정 변경으로 나눈 일정은 그 일정의 수거 수를 따로 센다(promises.ts).
       const p = envelope.payload;
-      const task = findTask(state, p.taskId);
-      if (!task) return rejected('업무 없음');
-      const o = task.order;
-      // 보냄 대기로 온 수거(기기에서 이미 받은 사실, features-1 E20): 그사이 분실 처리한 권을 받아 왔으면 그 몫의 분실 처리를 먼저 되돌린다.
+      // 보냄 대기로 온 수거(기기에서 이미 받은 사실, features-1 E20 · work/impl-offline/plan.md §5-1): 수거한 뒤에 다른 차량으로 옮긴 몫은 이 업무로
+      // 되돌리고(다른 차량이 이미 받은 수는 그대로), 그사이 분실 처리한 권을 받아 왔으면 그 몫의 분실 처리를 먼저 되돌린다.
       const queuedFact = envelope.deviceSeq !== undefined;
-      const outOf = (l: FxLine) => { const b = l.returnable ? taskBucket(task, l) : undefined; return b ? bucketOut(b) : 0; };
-      const reversible = (l: FxLine) => { const b = l.returnable ? taskBucket(task, l) : undefined; return b && queuedFact ? Math.min(b.lost, lostNow(l)) : 0; };
+      const pulled = queuedFact ? pullBackMoved(state, envelope, now) : [];
+      const task = findTask(state, p.taskId);
+      const o = task?.order ?? (queuedFact ? findOrder(state, orderIdOfTask(p.taskId)) : undefined);
+      if (!o) return rejected('업무 없음');
+      const bucketOf = (l: FxLine) => (task && l.returnable ? taskBucket(task, l) : undefined);
+      const outOf = (l: FxLine) => { const b = bucketOf(l); return b ? bucketOut(b) : 0; };
+      const reversible = (l: FxLine) => { const b = bucketOf(l); return b && queuedFact ? Math.min(b.lost, lostNow(l)) : 0; };
       const plan = planStock(o, p.lines, (l) => outOf(l) + reversible(l), backNumbers);
       if ('error' in plan) return rejected(plan.error);
-      // 보냄 대기로 온 수거가 남은 것보다 많이 받았다고 하면(그사이 매장 반납 · 다른 기록) 확인 필요로 적는다(features-1 E18). 움직임은 남은 것만.
+      // 보냄 대기로 온 수거가 남은 것보다 많이 받았다고 하면(그사이 매장 반납 · 다른 차량의 수거 · 다른 기록) 확인 필요로 적는다(features-1 E18).
+      // 움직임은 남은 것만: 일부만 적으면 partially_applied, 아무것도 적지 못하면 needs_review(sync 8-3).
+      let exceeded = false;
       if (queuedFact) {
         const asked = new Map<string, number>();
         for (const x of p.lines) {
           const l = o.lines.find((y) => y.id === x.lineId);
           if (l) asked.set(l.id, (asked.get(l.id) ?? 0) + quantityOf(l, x.quantity, x.assetIds ? [...new Set(x.assetIds)] : undefined));
         }
-        collectReviews(state, envelope, task, asked, plan, now, options.actor);
+        exceeded = collectReviews(state, envelope, task ?? ghostTask(o, p.taskId), asked, plan, now, options.actor).some((r) => r.kindKey === 'collect_exceeds');
+        if (pulled.length) movedMeanwhileReviews(state, o, envelope, p.taskId, pulled, now);
       }
-      if (plan.length === 0) return nothing('수거 완료');
+      if (plan.length === 0) return exceeded ? { outcome: 'needs_review', error: { code: 'COLLECT_EXCEEDS', message: '수거 수량 확인' } } : nothing('수거 완료');
       for (const { l, qty, ids } of plan) {
         const reverse = Math.max(0, qty - outOf(l));
         if (reverse > 0) l.lost = Math.max(0, (l.lost ?? 0) - reverse);
         l.collected += qty;
         l.collectedAt = now;
         if (ids.length) l.backAssetIds = [...(l.backAssetIds ?? []), ...ids];
-        const split = task.key ? splitRow(o, task.key, l.id) : undefined;
+        const split = task?.key ? splitRow(o, task.key, l.id) : undefined;
         if (split) split.collected = (split.collected ?? 0) + qty;
       }
-      return done;
+      return exceeded ? { outcome: 'partially_applied' } : done;
     }
     case 'payment.take': {
       const p = envelope.payload;
@@ -300,22 +314,43 @@ function run(state: ShopState, envelope: AnyCommandEnvelope, now: number, lines:
       for (const id of ids) delete state.routeRanks[id];
       return done;
     }
+    case 'order.customer_pickup': {
+      const p = envelope.payload;
+      const o = findOrder(state, p.orderId);
+      if (!o) return rejected('접수 없음');
+      if ((o.customerPickup === true) === p.enabled) return nothing('손님 픽업 변경 없음');
+      if ((o.customerPickup === true) !== p.expected) return rejected('손님 픽업 변경됨 · 다시 확인');
+      if (p.enabled) o.customerPickup = true;
+      else delete o.customerPickup;
+      return done;
+    }
     case 'task.pin': {
       // 빨리 확인: 수거 목록 맨 위에 고정하고 기사 기기에 알린다. 같은 업무를 두 번 누르면 '이미 됨'(sync 4-5).
       const p = envelope.payload;
-      const task = findTask(state, p.taskId);
-      if (!task || collectDone(taskOrder(task))) return rejected('차량 수거 대상 없음');
+      const delivery = isDeliverTaskId(p.taskId);
+      const task = delivery ? findDeliverTask(state, p.taskId) : findTask(state, p.taskId);
+      if (!task?.promise.vehicleId || (delivery ? deliverDone(task.order) : collectDone(taskOrder(task as FxTask)))) return rejected('차량 업무 대상 없음');
       if (openPins(state).some((pin) => pinTaskId(state, pin) === task.id)) return nothing('긴급 요청 완료');
+      // 차량 변경 뒤 다시 요청하면 옛 담당의 요청을 해제한다. 같은 요청 재전송은 기존 봉투 결과를 돌려준다.
+      for (const pin of state.pins) if (pinTaskId(state, pin) === task.id && pin.releasedAt === undefined) pin.releasedAt = now;
       state.pins.push({
-        id: 'pin' + (state.pins.length + 1), orderId: task.order.id, ...(task.key ? { taskId: task.id } : {}), at: task.promise.at,
-        ...(p.note ? { note: p.note } : {}), status: 'requested',
+        id: envelope.requestId, orderId: task.order.id, taskId: task.id, at: task.promise.at,
+        requestedAt: now, vehicleId: task.promise.vehicleId, ...(p.note ? { note: p.note } : {}), status: 'requested',
       });
+      return done;
+    }
+    case 'task.unpin': {
+      const pin = state.pins.find((x) => x.id === envelope.payload.pinId);
+      if (!pin) return rejected('알림 없음');
+      if (pin.releasedAt !== undefined) return nothing('긴급 해제 완료');
+      pin.releasedAt = now;
       return done;
     }
     case 'notification.ack': {
       const p = envelope.payload;
       const pin = state.pins.find((x) => x.id === p.notificationId);
       if (!pin) return rejected('알림 없음');
+      if (!openPins(state).some((x) => x.id === pin.id)) return nothing('긴급 종료');
       if (pin.status === 'acknowledged') return nothing('확인 완료');
       pin.status = 'acknowledged';
       return done;
@@ -326,12 +361,18 @@ function run(state: ShopState, envelope: AnyCommandEnvelope, now: number, lines:
       const outcomeKey = p.outcomeKey;
       if (!isVisitOutcome(state.registry, outcomeKey)) return rejected('등록되지 않은 사유');
       // 다시 갈 때는 분 단위로 적는다(약속 시각은 'HH:MM', plan §3-3 6).
-      const retryAt = p.retry?.at ? floorMinute(Date.parse(p.retry.at)) : undefined;
+      const asked = p.retry?.at ? floorMinute(Date.parse(p.retry.at)) : undefined;
+      // 보냄 대기로 온 방문(work/impl-offline/plan.md §5-1): 방문은 적고, 그사이 업무가 옮겨졌거나 · 끝났거나 · 뒤의 방문이 다시 갈 때를 정했으면
+      // 다시 갈 때는 옮기지 않는다(나중의 결정이 이긴다).
+      const queuedFact = envelope.deviceSeq !== undefined;
+      const laterVisit = (o: FxOrder, kind: 'deliver' | undefined) => (o.visits ?? []).some((v) => v.kind === kind && v.at > now);
       // 배달 실패(배달 업무): 재방문은 배달 시각(수령 일정)을 옮긴다.
       if (isDeliverTaskId(p.taskId)) {
         const delivery = findDeliverTask(state, p.taskId);
-        if (!delivery) return rejected('업무 없음');
-        const o = delivery.order;
+        const o = delivery?.order ?? (queuedFact ? findOrder(state, orderIdOfTask(p.taskId)) : undefined);
+        if (!o) return rejected('업무 없음');
+        const keep = queuedFact && (!delivery || deliverDone(o) || laterVisit(o, 'deliver'));
+        const retryAt = keep ? undefined : asked;
         o.visits = [...(o.visits ?? []), { at: now, kind: 'deliver', outcomeKey, beforeAt: o.pickup.at, ...(retryAt !== undefined ? { retryAt } : {}) }];
         if (retryAt !== undefined && Number.isFinite(retryAt)) o.pickup = { ...o.pickup, at: retryAt };
         return done;
@@ -339,6 +380,8 @@ function run(state: ShopState, envelope: AnyCommandEnvelope, now: number, lines:
       const task = findTask(state, p.taskId);
       const o = task?.order ?? findOrder(state, orderIdOfTask(p.taskId));
       if (!o) return rejected('업무 없음');
+      const keep = queuedFact && (!task || collectDone(taskOrder(task)) || laterVisit(o, undefined));
+      const retryAt = keep ? undefined : asked;
       const before = task?.promise.at ?? o.giveBack.at;
       o.visits = [...(o.visits ?? []), { at: now, outcomeKey, beforeAt: before, ...(retryAt !== undefined ? { retryAt } : {}) }];
       if (retryAt !== undefined && Number.isFinite(retryAt)) {
@@ -360,11 +403,11 @@ function run(state: ShopState, envelope: AnyCommandEnvelope, now: number, lines:
       // 새 접수 확정(V4): 접수 · 품목 줄 · 일정 · 칸별 수납 · 보증금 입금 · 결제 팀이 한 명령(checkout.ts).
       return createOrder(state, envelope, now, lines, options.orderIds ?? 'sequence', options.viewer);
     case 'field.collect':
-      // 기사 현장 수납(V7, 차량 지갑 · 오프라인 허용, driver.ts).
-      return fieldCollect(state, envelope, now);
+      // 기사 현장 수납(V7, 차량 지갑 · 오프라인 허용, driver.ts). 보냄 대기로 늦게 온 돈은 서버가 받은 때를 함께 적는다(§5-2).
+      return fieldCollect(state, envelope, now, fieldOptions(options));
     case 'field.add_ticket':
       // 차량 예비권으로 리프트권 추가(권 줄 · 값 · 보증금 입금을 한 명령으로, driver.ts).
-      return addTicket(state, envelope, now, lines);
+      return addTicket(state, envelope, now, lines, fieldOptions(options));
     case 'field.deposit_return':
       // 수거 현장의 권 보증금 반환(차량 지갑, 수거에 이어짐, driver.ts).
       return fieldDepositReturn(state, envelope, now);
@@ -420,6 +463,11 @@ function run(state: ShopState, envelope: AnyCommandEnvelope, now: number, lines:
   }
 }
 
+/** 기사 명령의 선택(서버가 받은 때 · 명령을 한 기기). */
+const fieldOptions = (options: ApplyOptions) => ({
+  ...(options.recordedAt !== undefined ? { recordedAt: options.recordedAt } : {}), ...(options.actor?.deviceId ? { deviceId: options.actor.deviceId } : {}),
+});
+
 /**
  * 끊긴 기사 기기가 보냄 대기에 넣을 수 있는 명령(sync 8-2): 계약의 OFFLINE_COMMANDS(sys_offline_commands 시드) 기사 태블릿 몫 그대로. 매장 입고 ·
  * 적재(카운터가 적음) · 후불 처리(결제 약속은 결정)는 연결이 필요하다. 기사 휴대폰도 같은 목록이다.
@@ -451,6 +499,10 @@ export interface ApplyOptions {
    * (features-1 E10). 없으면 모두 허락.
    */
   viewer?: DiscountViewer;
+  /** 서버가 받은 때(보냄 대기 명령: now는 일어난 때, work/impl-offline/plan.md §5-2). 없으면 now. */
+  recordedAt?: number;
+  /** 기기의 확인 전 검사(§5-8): epoch를 보지 않는다(창을 연 뒤 사본이 새로 와도 창이 실패하지 않게). 돈의 바탕 · 남은 수는 그대로 본다. */
+  prevalidate?: boolean;
 }
 
 /**
@@ -461,29 +513,36 @@ export function applyCommand(state: ShopState, envelope: AnyCommandEnvelope, now
   const seen = state.outcomes[envelope.requestId];
   if (seen) return seen;
   const base = { requestId: envelope.requestId, asOfRev: envelope.basis.rev, epoch: state.epoch, changes: [] };
-  if (envelope.basis.epoch !== state.epoch) {
+  // 보냄 대기로 온 기사 기록(기기 번호가 있음, sync 8-12 · work/impl-offline/plan.md §5-1)은 이미 일어난 사실이다: epoch · 앞 명령 · 돈의 바탕(expect)
+  // 칸의 있음을 보지 않고 적으며, 처리기가 거절하면 아무것도 적지 않은 superseded로 돌려준다(되보내도 같은 결과).
+  const queued = envelope.deviceSeq !== undefined;
+  if (!queued && !options.prevalidate && envelope.basis.epoch !== state.epoch) {
     // 자료를 처음으로 되돌리거나 복구한 뒤 옛 창에서 누른 것.
     return { ...base, outcome: 'conflict', rev: state.rev, rebased: false, error: { code: 'EPOCH_CHANGED', message: lines.epochChanged } };
   }
   // 돈 명령은 창이 본 바탕(expect: 받을 금액 · 보관 보증금 · 예상 현금 …)과 함께 와야 한다(sync 4-2). 없으면 적용하지 않는다.
-  if (!hasRequiredExpect(envelope.type, envelope.expect)) {
+  if (!queued && !hasRequiredExpect(envelope.type, envelope.expect)) {
     return { ...base, outcome: 'rejected', rev: state.rev, rebased: false, error: { code: 'EXPECT_REQUIRED', message: '받을 금액 미확인 · 미수납 · 재시도 필요' } };
   }
   // 이어진 명령(sync 2절 4): 먼저 적용되어야 할 명령(dependsOn)이 적용되지 않았으면(받지 못함 · 거절 · 충돌 · 멈춤) 돈이 아닌
   // 명령은 멈춘다(blocked). 돈 명령은 멈추지 않는다(받은 돈은 사실이고, 바탕 expect가 지킨다, 8-3). 이미 된 일(superseded)은 된 것으로 본다.
   const reviewsBefore = state.reviews?.length ?? 0;
-  const result: Result = !MONEY_COMMANDS.has(envelope.type) && unmetDependency(state, envelope.dependsOn)
+  let result: Result = !queued && !MONEY_COMMANDS.has(envelope.type) && unmetDependency(state, envelope.dependsOn)
     ? { outcome: 'blocked', error: { code: 'DEPENDENCY_NOT_APPLIED', message: '처리 불가 · 이전 단계 대기' } }
     : run(state, envelope, now, lines, options);
+  if (queued && (result.outcome === 'rejected' || result.outcome === 'conflict' || result.outcome === 'blocked')) {
+    result = { outcome: 'superseded', ...(result.error ? { error: result.error } : {}) };
+  }
+  const wrote = result.outcome === 'applied' || result.outcome === 'partially_applied';
   // 취소한 접수에 온 보냄 대기 기사 기록(features-1 E23): 사실은 적고 확인 필요 `취소된 업무`를 남긴다.
-  if (result.outcome === 'applied') cancelledTaskReview(state, envelope, now, options.actor);
+  if (wrote) cancelledTaskReview(state, envelope, now, options.actor);
   // 적은 것이 확인 필요뿐이어도(이미 매장에 반납된 보냄 대기 수거: 결과는 `처리 완료`) 상태가 바뀌었으므로 rev가 오른다.
-  if (result.outcome === 'applied' || (state.reviews?.length ?? 0) > reviewsBefore) state.rev += 1;
+  if (wrote || (state.reviews?.length ?? 0) > reviewsBefore) state.rev += 1;
   const outcome: CommandOutcome = {
     ...base,
     outcome: result.outcome,
     rev: state.rev,
-    rebased: result.outcome === 'applied' && envelope.basis.rev !== state.rev - 1,
+    rebased: wrote && envelope.basis.rev !== state.rev - 1,
     ...(result.error ? { error: result.error } : {}),
     ...(result.result ? { result: result.result } : {}),
   };

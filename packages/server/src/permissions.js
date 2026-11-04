@@ -12,7 +12,7 @@
 //     초안은 그 업무 · 접수가 자기 차량에 있을 때만(도메인 queryScope). 장부 · 접수증 · 끝 4자리 · 카운터의 판은 403.
 // 도둑맞기 쉬운 기사 휴대폰으로 모든 손님과 돈을 읽을 수 없게 한다.
 
-import { isDriverDevice } from '@skinote/contract';
+import { DRIVER_QUERY_RULES, isDriverDevice } from '@skinote/contract';
 import { PRODUCTION_LINES } from '@skinote/domain';
 
 /**
@@ -48,6 +48,8 @@ export const COMMAND_PERMISSIONS = Object.freeze({
   'payment.take': { perm: 'payment.take' },
   'payment_promise.set': { perm: 'payment.take', driverPerm: 'payment.collect_field', vehicle: true, leaveUnpaid: true },
   'promise.change': { perm: 'order.promise.change' },
+  // 기존 접수 권한으로 표시만 변경한다. 기사 범위를 새로 열지 않는다.
+  'order.customer_pickup': { perm: 'order.create' },
   // 새 접수의 직접 입력 할인은 discount.manual도(features-1 E10). 한도 · 권한이 걸린 매장 할인은 도메인이 세션의 권한 · 한도로 본다.
   'order.create': {
     perm: 'order.create',
@@ -137,41 +139,8 @@ export function commandGuard(who, permissions, envelope, log = () => {}) {
   };
 }
 
-/** 조회 이름마다 기사 세션의 규칙. */
-/** @type {Readonly<Record<string, 'allow' | 'own_list' | 'own_vehicle' | 'task_scope' | 'deny'>>} */
-export const DRIVER_QUERY_RULES = Object.freeze({
-  config: 'allow',
-  'ledgerView:collection_list': 'own_list',
-  'ledgerView:delivery_list': 'own_list',
-  'ledgerView:day_ledger': 'deny',
-  vehicleLoad: 'own_vehicle',
-  taskSheet: 'task_scope',
-  fieldPaySheet: 'task_scope',
-  addTicketSheet: 'task_scope',
-  confirmDraft: 'task_scope',
-  orderSlip: 'deny',
-  findLast4: 'deny',
-  reviewList: 'deny',
-  orderDraft: 'deny',
-  checkoutSheet: 'deny',
-  groupPaySheet: 'deny',
-  partialPaySheet: 'deny',
-  promiseSheet: 'deny',
-  returnSheet: 'deny',
-  closingSheet: 'deny',
-  shopRules: 'deny',
-  shopSettings: 'deny',
-  discountSheet: 'deny',
-  cancelSheet: 'deny',
-  exchangeSheet: 'deny',
-  ticketBoard: 'deny',
-  ticketLossSheet: 'deny',
-  spareSheet: 'deny',
-  // 전화 창(features-1 §8-4): 자기 차량의 업무(배달 · 수거)가 있는 접수만(도메인 queryScope).
-  phoneReveal: 'task_scope',
-  // 초과 수납의 환불 창(features-1 §9-1): 카운터 화면.
-  refundSheet: 'deny',
-});
+/** 조회 이름마다 기사 세션의 규칙: 계약(@skinote/contract driver-queries.ts)의 표 하나를 기사 기기의 사본 읽기(LocalClient)와 함께 쓴다. */
+export { DRIVER_QUERY_RULES };
 
 /**
  * 조회 권한. 카운터 · 관리자 세션은 모두 읽는다. 기사 세션은 위 표. 허락이면 읽을 인자(수거 · 배달 목록은 차량을 자기 차량으로 바꾼 것).

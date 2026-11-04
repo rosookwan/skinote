@@ -14,7 +14,8 @@ import {
 } from '@skinote/contract';
 import { lineDayPrice, extraDays } from './extension.ts';
 import type { DomainLines, FxCharge, FxLine, FxOrder, FxPromise, FxPromiseSplit, FxReturnSlot, ShopRegistry, ShopState } from './model.ts';
-import { bucketLeft, currentReturn, lineBuckets, returnPromises, samePromise, type FxBucket } from './promises.ts';
+import { bucketLeft, bucketOut, currentReturn, lineBuckets, returnPromises, samePromise, type FxBucket } from './promises.ts';
+import { linkOf, linkWarningParts } from './links.ts';
 import { conflict, done, nothing, rejected, unsupported, type Result } from './result.ts';
 import { CANCEL_WORDS } from './cancel-words.ts';
 import { activeAreas, activeSlots, activeVehicles, findOrder, isCancelledOrder, liveQty, placeLabel, placeShortLabel, slotAt, usablePlace, vehicleLabel } from './rules.ts';
@@ -336,7 +337,10 @@ export function promiseSheet(ctx: ViewContext, params: PromiseSheetParams): Prom
   const money = extension.amount > 0 ? ' · ' + won(extension.amount) : '';
   const label = ready ? name + ' · ' + itemsText + money : name;
   const primary = { label, alts: ready ? [label, name + ' · ' + countWords(moving) + money, name] : [name], enabled: ready };
-  const view: PromiseSheetView = { ...common, summary: { changed, kept }, ...(notice ? { notice } : {}), primary };
+  // 옮기는 줄이 끊긴 · 전송 대기 · 조용한 차량의 열린 수거 업무에 있으면 그 사실(`유지` 줄의 자리, work/impl-offline/plan.md O11).
+  const vans = [...new Set(moves.flatMap((m) => m.takes.filter(({ b }) => b.promise.mode === 'vehicle' && bucketOut(b) > 0).map(({ b }) => b.promise.vehicleId)))];
+  const linkWarning = vans.map((v) => linkWarningParts(state, linkOf(ctx.vehicleLinks, v))).find((x) => x !== undefined);
+  const view: PromiseSheetView = { ...common, summary: { changed, kept }, ...(notice ? { notice } : {}), primary, ...(linkWarning ? { linkWarning } : {}) };
   if (!ready) return view;
   return {
     ...view,

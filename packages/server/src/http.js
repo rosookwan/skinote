@@ -177,7 +177,9 @@ export function parseJsonBody(buffer, { allowEmpty = false } = {}) {
  *   ipLimit?: (req: IncomingMessage) => boolean,
  *   session?: boolean,
  *   allowEmpty?: boolean,
+ *   touch?: boolean,
  * }} PostSpec
+ *   touch: false면 세션의 마지막 사용 시각을 바꾸지 않는다(기사 기기의 심장 박동 · 사본: 앱이 저절로 부르는 길, work/impl-offline/plan.md §4-6).
  */
 
 /** @param {GateSession & { ok: false }} check */
@@ -198,7 +200,7 @@ export function postRoute(spec, deps) {
     if (spec.ipLimit && !spec.ipLimit(req)) throw new HttpError(429, 'RATE_LIMITED');
     let ctx;
     if (spec.session) {
-      const check = deps.sessionOf(req);
+      const check = deps.sessionOf(req, { touch: spec.touch !== false });
       if (!check.ok) throw sessionError(check);
       ctx = check.ctx;
       if (!deps.csrfOk(req, ctx)) throw new HttpError(403, 'BAD_CSRF');

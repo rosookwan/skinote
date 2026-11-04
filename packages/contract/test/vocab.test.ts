@@ -17,7 +17,7 @@ const migrationsUrl = new URL('../../schema/migrations/', import.meta.url);
 const migrations = readdirSync(migrationsUrl).filter((name) => /^000[2-9]_shop.*\.sql$/.test(name)).sort()
   .map((name) => readFileSync(new URL(name, migrationsUrl), 'utf8'));
 
-const insertPattern = (table: string) => new RegExp('INSERT INTO ' + table + ' \\(([^)]*)\\) VALUES([\\s\\S]*?);\\n', 'g');
+const insertPattern = (table: string) => new RegExp('INSERT INTO ' + table + ' \\(([^)]*)\\)\\s+VALUES([\\s\\S]*?);\\n', 'g');
 
 /** 한 표의 시드 행: schema.sql의 마지막 INSERT 묶음(shop 시드가 뒤에 오면 그것)과 뒤 마이그레이션의 INSERT 묶음 모두. */
 function seedRows(table: string): string[][] {

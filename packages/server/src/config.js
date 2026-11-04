@@ -24,6 +24,9 @@
 //   SKINOTE_TEST_OPEN_ENROLL_UNTIL  열린 기기 등록의 마지막 영업일(YYYY-MM-DD). on이면 꼭 있어야 하고 오늘(영업일)에서 14일 안이어야
 //                      한다(deploy.sh --set-env …=on이 오늘 + 7일로 적는다). 그날이 지나면 열린 등록이 저절로 꺼진다(경고
 //                      TEST_OPEN_ENROLL_EXPIRED). off면 읽지 않는다.
+//   SKINOTE_DRIVER_LOCAL_FIRST  on(기본) · off. 기사 기기가 사본으로 그리고 끊긴 채 할 수 있는 기록을 늘 보냄 대기로 보내는지(work/impl-offline/plan.md
+//                      O2). off는 공급자의 비상 스위치(다시 시작): 연결된 동안 기사 기기는 카운터처럼 서버로 바로 보내고, 끊겼을 때만 사본 · 보냄 대기를 쓴다.
+//   SKINOTE_LINK_OFFLINE_MS  기사 기기가 이만큼 조용하면 끊김으로 본다(5,000~300,000, 기본 60,000). 시험(e2e)만 짧게 둔다(배포는 적지 않는다).
 // 비밀값 넷(SKINOTE_PIN_PEPPER · SKINOTE_SESSION_KEY · SKINOTE_FINGERPRINT_KEY · SKINOTE_IP_KEY)은 secrets.js가 따로 읽는다.
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -43,6 +46,8 @@ export const DEFAULTS = Object.freeze({
   api: 'on',
   adminSocket: '/run/skinote/admin.sock',
   testOpenEnroll: 'off',
+  driverLocalFirst: 'on',
+  linkOfflineMs: 60_000,
 });
 
 /** 열린 기기 등록의 기한(영업일): deploy.sh --set-env …=on이 오늘 + default일로 적고, 설정은 오늘 + max일보다 먼 날을 받지 않는다. */
@@ -105,6 +110,8 @@ export class ConfigError extends Error {
  *   adminSocket: string | null,
  *   testOpenEnroll: 'on' | 'off',
  *   testOpenEnrollUntil: string | null,
+ *   driverLocalFirst: 'on' | 'off',
+ *   linkOfflineMs: number,
  *   secrets?: import('./secrets.js').Secrets | null,
  * }} ServerConfig
  */
@@ -297,6 +304,11 @@ export function loadConfig(env = process.env, { cwd = process.cwd(), releaseFile
     }
   }
 
+  const localRaw = (read(env, 'SKINOTE_DRIVER_LOCAL_FIRST') ?? DEFAULTS.driverLocalFirst).toLowerCase();
+  if (localRaw !== 'on' && localRaw !== 'off') problems.push(`SKINOTE_DRIVER_LOCAL_FIRST는 on 또는 off입니다(${JSON.stringify(localRaw)})`);
+  const linkRaw = read(env, 'SKINOTE_LINK_OFFLINE_MS');
+  const linkOfflineMs = linkRaw === undefined ? DEFAULTS.linkOfflineMs : parseInteger(linkRaw, 'SKINOTE_LINK_OFFLINE_MS', problems, { min: 5_000, max: 300_000 });
+
   if (problems.length) throw new ConfigError(problems);
 
   const dbDir = join(dataDir, 'db');
@@ -321,6 +333,8 @@ export function loadConfig(env = process.env, { cwd = process.cwd(), releaseFile
     adminSocket,
     testOpenEnroll: /** @type {'on' | 'off'} */ (testOpenEnroll),
     testOpenEnrollUntil,
+    driverLocalFirst: /** @type {'on' | 'off'} */ (localRaw === 'off' ? 'off' : 'on'),
+    linkOfflineMs: /** @type {number} */ (linkOfflineMs),
     secrets: null,
   });
 }

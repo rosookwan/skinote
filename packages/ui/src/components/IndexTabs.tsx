@@ -1,8 +1,11 @@
 // 제목 · 색인 탭 줄(ui 5 IndexTabs). 한 화면에 제목은 하나, 켜진 탭은 종이 색인처럼 앞으로 나온다.
 // 탭 수는 등급의 칸 수(6 · 5 · 4 · 3)이고, 넘치면 우선순위 낮은 탭이 '더 보기' 탭으로 간다(켜진 탭은 늘 보이고, 차례는 설정 그대로). 폭이 모자라도
 // 같은 규칙으로 줄인다.
-import type { LedgerTabRow } from '@skinote/contract';
-import { fitList, shortCount } from '@skinote/layout';
+// 제목 옆 표시(chip, 카운터 수거 목록의 `1호 차량 연결 끊김 · 21:40부터 · 전송 대기 3`, work/impl-offline/plan.md §8-2): 연결 띠와 같은 노랑. 줄을
+// 늘리지 않고 제목 줄 안에 두며, 첫 조각(`1호 차량 연결 끊김`)의 폭은 늘 남긴다(탭이 먼저 더 보기로 간다). 뒤 조각(시각 · 수)은 온전한 제목 뒤에 남는
+// 폭에만 두고 뒤 조각부터 뺀다(바뀜 2026-09-28 §18 R4-16: 두 차량의 표시가 제목의 날짜를 밀어내지 않게).
+import type { FitPart, LedgerTabRow } from '@skinote/contract';
+import { fitList, fullText, PART_JOINER, shortCount } from '@skinote/layout';
 import { useMemo, useRef, useState } from 'react';
 import { useDeviceProfile } from '../context.tsx';
 import { measureFor, useElementSize, useFontsVersion, useIsoLayoutEffect } from '../measure.ts';
@@ -21,22 +24,28 @@ export interface IndexTabsProps {
   onMore?: (tabs: LedgerTabRow[]) => void;
   /** 제목 옆 이름표(`마감 완료`). 탭과 같이 폭을 잰다. */
   tag?: string;
+  /** 제목 옆 노랑 표시(끊긴 차량 · 전송 대기, 읽기 모델의 조각). 첫 조각 폭은 늘 남는다. */
+  chip?: readonly FitPart[];
 }
 
-export function IndexTabs({ title, tabs, counts, active, onSelect, onMore, tag }: IndexTabsProps) {
+export function IndexTabs({ title, tabs, counts, active, onSelect, onMore, tag, chip }: IndexTabsProps) {
   const profile = useDeviceProfile();
   const navRef = useRef<HTMLDivElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
   const tagRef = useRef<HTMLSpanElement>(null);
+  const chipRef = useRef<HTMLSpanElement>(null);
   const bar = useElementSize(barRef);
+  /** 표시 글에 쓸 폭(px, 여백 · 테두리를 뺀 것). 재기 전에는 없음(온전한 글). */
+  const [chipWidth, setChipWidth] = useState<number | undefined>(undefined);
+  const chipKey = chip ? chip.map((p) => p.text + '/' + p.drop).join('|') : '';
   const fonts = useFontsVersion();
   // 켜진 탭은 늘 보인다(넘치는 탭을 고르면 그 탭이 자리를 얻고 다른 탭이 더 보기로 간다): 탭은 늘 설정의 차례이고, 넘친 탭이 있으면 `더 보기`가 늘
   // 남는다(2026-09-27 점검: 켜진 탭이 더 보기 자리에 이름으로 들어가 `더 보기`가 사라지고 차례가 바뀌었다).
   const entries = useMemo(() => tabs.map((tab) => ({ ...tab, pinnedEnd: false, priority: tab.tab_key === active ? Number.MAX_SAFE_INTEGER : tab.priority })), [tabs, active]);
   const [limit, setLimit] = useState(profile.capacity.tabs);
   // 크기가 바뀌면 등급 칸 수부터 다시 세고, 넘치면 하나씩 줄인다(잰 폭으로 맞춤).
-  useIsoLayoutEffect(() => { setLimit(profile.capacity.tabs); }, [bar?.width, profile.capacity.tabs, fonts, tabs, tag, active]);
+  useIsoLayoutEffect(() => { setLimit(profile.capacity.tabs); }, [bar?.width, profile.capacity.tabs, fonts, tabs, tag, active, chipKey]);
   // 탭이 먼저다: 제목은 낱말을 줄여 비켜 주고(첫 낱말은 남김), 그래도 탭이 넘치면 탭을 더 보기로 보낸다.
   useIsoLayoutEffect(() => {
     const bar = barRef.current;
@@ -45,9 +54,28 @@ export function IndexTabs({ title, tabs, counts, active, onSelect, onMore, tag }
     if (!bar || !nav || !heading || typeof getComputedStyle === 'undefined' || limit <= 1) return;
     const bs = getComputedStyle(bar);
     const inner = bar.clientWidth - parseFloat(bs.paddingLeft) - parseFloat(bs.paddingRight) - (parseFloat(bs.columnGap) || 0);
+    const gap = parseFloat(bs.columnGap) || 0;
     const titleMin = measureFor(heading.firstElementChild ?? heading, profile.titleFontPx)(title.split(' ')[0] ?? '');
-    const tagWidth = tagRef.current ? tagRef.current.offsetWidth + (parseFloat(bs.columnGap) || 0) : 0;
-    if (nav.scrollWidth + titleMin + tagWidth > inner + 1) setLimit(limit - 1);
+    const tagWidth = tagRef.current ? tagRef.current.offsetWidth + gap : 0;
+    // 표시: 첫 조각(빠지지 않는 조각)의 폭은 늘 남기고, 남는 폭까지 온전한 글에 가깝게.
+    let chipMin = 0;
+    const chipEl = chipRef.current;
+    if (chip && chip.length && chipEl) {
+      const cs = getComputedStyle(chipEl);
+      const chrome = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) + parseFloat(cs.borderLeftWidth) + parseFloat(cs.borderRightWidth);
+      const measure = measureFor(chipEl, profile.baseFontPx);
+      const keep = chip.filter((p) => p.drop === 0).map((p) => p.text).join(PART_JOINER);
+      const need = Math.ceil(measure(keep)) + 1;
+      const full = Math.ceil(measure(fullText({ mode: 'parts', parts: [...chip] }))) + 1;
+      chipMin = need + chrome + gap;
+      // 뒤 조각(시각 · 수)은 온전한 제목에 먼저 비켜 준다(§18 R4-16: 두 차량의 표시가 제목을 `12월`로 줄이지 않게). 빠지지 않는 조각은 늘 남기고,
+      // 그것이 들어가지 않을 때만 제목이 낱말을 줄인다.
+      const titleFull = measureFor(heading.firstElementChild ?? heading, profile.titleFontPx)(title);
+      const room = inner - nav.scrollWidth - Math.max(titleMin, titleFull) - tagWidth - gap - chrome;
+      const next = Math.max(need, Math.min(full, Math.floor(room)));
+      if (next !== chipWidth) setChipWidth(next);
+    }
+    if (nav.scrollWidth + titleMin + tagWidth + chipMin > inner + 1) setLimit(limit - 1);
   });
   const fitted = fitList(entries, limit, { moreTakesSlot: true });
   const activeHidden = fitted.overflow.some((tab) => tab.tab_key === active);
@@ -62,6 +90,11 @@ export function IndexTabs({ title, tabs, counts, active, onSelect, onMore, tag }
     <div ref={barRef} className="sn-titlebar">
       <h1 ref={titleRef} className="sn-title"><TextFit input={{ mode: 'words', text: title }} /></h1>
       {tag ? <span ref={tagRef} className="sn-title-tag"><Tag text={tag} /></span> : null}
+      {chip && chip.length ? (
+        <span ref={chipRef} className="sn-title-chip" role="status" aria-label={chip.map((p) => p.text).join(PART_JOINER)}>
+          <TextFit input={{ mode: 'parts', parts: [...chip] }} {...(chipWidth !== undefined ? { width: chipWidth } : {})} />
+        </span>
+      ) : null}
       <div ref={navRef} className="sn-tabs" role="tablist" aria-label={title}>
         {fitted.shown.map((tab) => (
           <button

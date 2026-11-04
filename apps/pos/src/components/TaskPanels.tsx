@@ -3,6 +3,8 @@
 // 화면은 계산하지 않는다: 고른 수단 · 넣은 금액 · 권종 · 매수를 인자로 fieldPaySheet · addTicketSheet를 다시 묻고, 줄 글 · 주 버튼 · 명령을
 // 받는다. 요청번호는 판을 연 때 하나(useCommandDraft), 보낼 때는 서버가 지금 고른 것으로 써 준 명령과 바탕(expect)을 싣는다.
 // 리프트권 추가가 되면 곧바로 현장 수납 판을 연다: 그 수납은 권 추가 명령을 dependsOn으로 가진다(spec 3-8, 오프라인이면 둘 다 보냄 대기).
+// 보내지 못했으면(받을 금액 · 요금이 바뀜, 다른 창이 먼저 받음) 한 줄을 남기고 판을 지금 자료로 다시 묻는다: `재시도 필요`가 같은 옛 바탕으로 또
+// 막히지 않게(친 금액 · 고른 수단은 그대로, work/impl-offline/plan.md §10 두 창).
 import {
   envelopeFor, isAccepted, type AddTicketSheetParams, type AddTicketSheetView, type AnyCommandEnvelope, type Basis,
   type ConfirmCommand, type FieldPaySheetParams, type FieldPaySheetView,
@@ -62,7 +64,8 @@ export function FieldPayPanel({ taskId, dependsOn, onClose, onDone }: FieldPayPa
       setDigits((prev) => prev ?? (next.amount.value > 0 ? String(next.amount.value) : ''));
     }, () => { if (alive) setError(say('openFailed')); });
     return () => { alive = false; };
-  }, [client, paramsKey]);
+    // 시도가 바뀌면(보내지 못함) 같은 인자로 다시 묻는다.
+  }, [client, paramsKey, attempt]);
   const key = view ? 'fieldpay:' + taskId + ':' + attempt : null;
   const { draft, markSent } = useCommandDraft(key, key ? PAY_SHAPE : null, view?.basis ?? NO_BASIS, dependsOn ? { dependsOn: [dependsOn] } : {});
   const unpaidKey = view?.leaveUnpaid ? 'leaveunpaid:' + taskId + ':' + attempt : null;
@@ -75,6 +78,7 @@ export function FieldPayPanel({ taskId, dependsOn, onClose, onDone }: FieldPayPa
     client.command(envelope).then((outcome) => {
       setBusy(false);
       if (isAccepted(outcome)) { onDone(); return; }
+      setAnswered('');
       setAttempt((n) => n + 1);
       setError(outcome.error?.message ?? say('commandFailed'));
     }, () => { setBusy(false); setError(say('sendFailed')); });
@@ -150,7 +154,8 @@ export function AddTicketPanel({ taskId, onClose, onAdded }: AddTicketPanelProps
     let alive = true;
     client.query('addTicketSheet', params).then((next) => { if (alive) { setView(next); setAnswered(paramsKey); } }, () => { if (alive) setError(say('openFailed')); });
     return () => { alive = false; };
-  }, [client, paramsKey]);
+    // 시도가 바뀌면(보내지 못함) 같은 인자로 다시 묻는다.
+  }, [client, paramsKey, attempt]);
   const key = view ? 'addticket:' + taskId + ':' + attempt : null;
   const { draft, markSent } = useCommandDraft(key, key ? TICKET_SHAPE : null, view?.basis ?? NO_BASIS);
   const confirm = () => {
@@ -161,6 +166,7 @@ export function AddTicketPanel({ taskId, onClose, onAdded }: AddTicketPanelProps
     client.command(envelope).then((outcome) => {
       setBusy(false);
       if (isAccepted(outcome)) { onAdded(draft.requestId); return; }
+      setAnswered('');
       setAttempt((n) => n + 1);
       setError(outcome.error?.message ?? say('commandFailed'));
     }, () => { setBusy(false); setError(say('sendFailed')); });

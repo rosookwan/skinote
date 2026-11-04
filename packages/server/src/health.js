@@ -102,6 +102,9 @@ export function buildHealth({ config, entries, startedAt, now, lastBackups, shut
   if (config.testOpenEnroll === 'on') warnings.push('TEST_OPEN_ENROLL');
   if (openEnroll?.expired === true) warnings.push('TEST_OPEN_ENROLL_EXPIRED');
   if (openEnroll && !openEnroll.active && (openEnroll.devices ?? 0) > 0) warnings.push('TEST_OPEN_DEVICES_LEFT');
+  // 기사 기기의 연결 끊김 기록(work/impl-offline/plan.md O2): 공급자의 비상 스위치를 끈 서버 · 시험용 짧은 끊김 시간은 늘 알린다.
+  if (config.driverLocalFirst === 'off') warnings.push('DRIVER_LOCAL_FIRST_OFF');
+  if (config.linkOfflineMs !== undefined && config.linkOfflineMs !== 60_000) warnings.push('LINK_OFFLINE_MS');
 
   return {
     status: ok ? 200 : 503,
@@ -118,6 +121,7 @@ export function buildHealth({ config, entries, startedAt, now, lastBackups, shut
       ...(shuttingDown ? { shuttingDown: true } : {}),
       warnings,
       testOpenEnroll: openEnroll ?? { flag: config.testOpenEnroll, active: false },
+      driverOffline: { localFirst: config.driverLocalFirst, linkOfflineMs: config.linkOfflineMs },
       shops,
       databases,
       disk,

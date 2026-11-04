@@ -46,6 +46,9 @@ export interface ReturnPiecesProps {
   rows: readonly (readonly ReturnPieceLine[])[];
   /** 자리를 남길 줄 수(가장 많은 쪽의 줄 수). */
   rowCount: number;
+  /** 한 품목씩 온전한 줄로 놓는 작업판. 좁으면 이름 아래에 수량을 둔다. */
+  singleColumn?: boolean;
+  stacked?: boolean;
   onPiece: (lineId: string, assetId: string) => void;
   onQuantity: (lineId: string, value: number) => void;
   onPicker: (lineId: string) => void;
@@ -81,11 +84,12 @@ function PieceLine({ line, onPiece, onQuantity, onPicker, groupLabel }: Omit<Ret
   );
 }
 
-export function ReturnPieces({ rows, rowCount, ...handlers }: ReturnPiecesProps) {
+export function ReturnPieces({ rows, rowCount, singleColumn = false, stacked = false, ...handlers }: ReturnPiecesProps) {
   // 남길 줄 수만큼 줄 자리(줄 높이는 등급의 누르는 곳 --sn-target): 칸이 적은 쪽에서도 품목 칸 높이가 그대로다.
-  const style: CSSProperties = { gridTemplateRows: 'repeat(' + Math.max(1, rowCount) + ', var(--sn-target))' };
+  const height = stacked ? 'calc(var(--sn-target) * 2 + var(--sn-space-s) * 2 + var(--sn-space-m))' : 'var(--sn-target)';
+  const style: CSSProperties = { gridTemplateRows: 'repeat(' + Math.max(1, rowCount) + ', ' + height + ')' };
   return (
-    <div className="sn-piece-lines" style={style}>
+    <div className={'sn-piece-lines' + (singleColumn ? ' is-single' : '') + (stacked ? ' is-stacked' : '')} style={style}>
       {rows.flatMap((row) => row.map((line) => <PieceLine key={line.lineId} line={line} {...handlers} />))}
     </div>
   );

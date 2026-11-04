@@ -9,10 +9,17 @@
 // driver_phone이면 차량 선택부터 연다. 차량 선택은 앱(session.tsx)처럼 어느 크기에서나 기사 등급으로 그린다(규칙 검사기가 기사 등급으로
 // 잰다: 태블릿 크기의 `이전`도 56px). 고르면 `체험판 미지원`. 로그인 미리 보기의 ?open은 스스로 붙은
 // 기기의 로그인(매장 이름 줄의 기기 모양 · 바닥줄의 `기기 선택`, 누르면 `체험판 미지원`).
+// 기사 연결 끊김 기록(work/impl-offline/plan.md §8-3): #/preview/lock 앱 잠금(기억한 기사 타일 하나 + 비밀번호 판, 보내면 `비밀번호 불일치 · 재입력
+// 필요`, ?out=1이면 `로그인 잠김 · 연결 후 가능`), #/preview/offline?pending=3(&unknown=1 · &off=1) 연결 끊김 화면의 전송 대기 · 한 줄,
+// #/preview/unconfirmed 답을 잃은 매장 입고(창에 `연결 끊김 · 결과 확인 중`, 끊긴 동안 주 버튼 막힘), #/preview/drain?pending=2 보냄 대기가 비지 않은
+// 매장 입고(`입고 불가 · 전송 대기 2`), #/preview/elsewhere 로그인 때 같은 차량 다른 기기의 미전송 알림(기사 목록 위). 창 · 목록은 앱의 부품 그대로
+// (ConfirmFlow · DriverListScreen)이고 명령의 답과 세션만 미리 보기가 정한다.
 // 체험 자료(fixture)를 가져오지 않는다.
-import type { EnrollVehicle, LedgerViewResult, SettingsOp, StaffTile } from '@skinote/contract';
-import { DeviceProfileProvider, useUi } from '@skinote/ui';
+import type { AnyCommandEnvelope, CommandOutcome, ConnectionState, EnrollVehicle, LedgerViewResult, SettingsOp, StaffTile } from '@skinote/contract';
+import { DeviceProfileProvider, formatTime, t, useUi } from '@skinote/ui';
 import { useEffect, useMemo, useState } from 'react';
+import { useConfirmFlow } from '../components/ConfirmFlow.tsx';
+import { DriverListScreen } from '../screens/CollectionListScreen.tsx';
 import { TextSheet } from '../components/TextSheet.tsx';
 import { ChooseScreen, type DriverKind } from '../screens/ChooseScreen.tsx';
 import { EnrollScreen, OfflineScreen } from '../screens/EnrollScreen.tsx';
@@ -20,9 +27,9 @@ import { LoginScreen } from '../screens/LoginScreen.tsx';
 import { ExitScreen } from '../screens/PlainScreens.tsx';
 import { SettingsTabPreview } from '../screens/ShopSettingsScreen.tsx';
 import { PinDialog } from '../components/PinDialog.tsx';
-import { useClient, useConfig, useLive } from './client.tsx';
+import { ClientProvider, useClient, useConfig, useLive, type AppClient } from './client.tsx';
 import { go, useRoute, type PreviewView } from './router.ts';
-import { SessionContext, type SessionControls } from './session-context.ts';
+import { SessionContext, lockPadNote, type SessionControls } from './session-context.ts';
 import { say } from './strings.ts';
 
 /** ?many의 늘어놓는 수(견본 셋 × 8 = 24명: 가장 큰 검사 크기 1366×768에서도 두 쪽 넘게). */
@@ -51,7 +58,111 @@ export function PreviewScreen({ view }: { view: PreviewView }) {
     case 'exit': return <ExitPreview />;
     case 'pin': return <PinPreview />;
     case 'settings-many': return <SettingsManyPreview key={'many?' + query} />;
+    case 'lock': return <LockPreview key={'lock?' + query} />;
+    case 'unconfirmed': return <DialogStatePreview key={'unconfirmed?' + query} mode="unconfirmed" />;
+    case 'drain': return <DialogStatePreview key={'drain?' + query} mode="drain" />;
+    case 'elsewhere': return <ElsewherePreview key={'elsewhere?' + query} />;
   }
+}
+
+const previewQuery = () => new URLSearchParams(window.location.hash.split('?')[1] ?? '');
+
+/**
+ * 앱 잠금(O15 d): 기억한 기사(견본 기사) 타일 하나와 곧바로 열린 비밀번호 판. 보내면 틀림 한 줄. ?out=1이면 다섯 번 틀려 5분 잠김(`로그인 잠김 · {시각} 이후
+ * 가능`, 숫자 키 · 입력을 누를 수 없음), ?login=1이면 기기에서 풀 수 없음(`로그인 잠김 · 연결 후 가능`), ?pending=n이면 판 위의 `전송 대기 n`(§17 R3-24).
+ */
+function LockPreview() {
+  const client = useClient();
+  const config = useConfig();
+  const { timezone } = useUi();
+  const q = previewQuery();
+  const out = q.get('out') === '1';
+  const login = q.get('login') === '1';
+  const pending = Math.max(0, Number(q.get('pending') ?? '0') || 0);
+  const [until] = useState(() => new Date((client.now?.() ?? Date.now()) + 5 * 60_000).toISOString());
+  const tile = useMemo<StaffTile>(() => ({ id: 'preview-lock', name: client.previewStaff?.()[2] ?? '' }), [client]);
+  const locked = login ? say('lockOffline') : out ? say('loginLocked', { time: formatTime(until, timezone) }) : undefined;
+  return (
+    <LoginScreen
+      shopName={config?.shopName ?? ''}
+      staff={[tile]}
+      openFor={tile}
+      note={lockPadNote({ pendingCount: pending })}
+      onPin={() => Promise.resolve(say('pinWrong'))}
+      {...(locked ? { locked } : {})}
+    />
+  );
+}
+
+/**
+ * 매장 입고 창의 두 상태(앱의 ConfirmFlow 그대로): 답을 잃음(unconfirmed: 끊긴 기기, 명령의 답 `연결 끊김 · 결과 확인 중` · 주 버튼 막힘) · 보냄 대기가
+ * 비지 않음(drain: 연결된 기기, `입고 불가 · 전송 대기 {n}` · 주 버튼 그대로). 읽기는 체험 자료, 명령의 답과 연결만 미리 보기가 정한다.
+ */
+function DialogStatePreview({ mode }: { mode: 'unconfirmed' | 'drain' }) {
+  const client = useClient();
+  const pending = Math.max(1, Number(previewQuery().get('pending') ?? '2') || 2);
+  const proxy = useMemo<AppClient>(() => {
+    const connection: ConnectionState = mode === 'unconfirmed'
+      ? { online: false, pendingCount: 1, sendQueue: true, unconfirmedCount: 1, lastSyncAt: new Date(client.now?.() ?? Date.now()).toISOString() }
+      : { online: true, pendingCount: pending, sendQueue: true };
+    const answer = (envelope: AnyCommandEnvelope): CommandOutcome => ({
+      outcome: mode === 'unconfirmed' ? 'unknown' : 'rejected', requestId: envelope.requestId, rev: envelope.basis.rev, asOfRev: envelope.basis.rev,
+      epoch: envelope.basis.epoch, rebased: false, changes: [],
+      error: mode === 'unconfirmed' ? { code: 'UNKNOWN', message: say('resultChecking') } : { code: 'PENDING', message: say('receiveWaiting', { n: pending }) },
+    });
+    return {
+      config: () => client.config(), ledgerView: (key, params) => client.ledgerView(key, params), query: (name, params) => client.query(name, params),
+      command: (envelope) => Promise.resolve(answer(envelope)), subscribe: (listener) => client.subscribe(listener), connection: () => connection,
+      pending: () => client.pending(),
+    };
+  }, [client, mode, pending]);
+  return (
+    <ClientProvider client={proxy}>
+      <ReceiveDialog />
+    </ClientProvider>
+  );
+}
+
+/** 1호 차량의 매장 입고 창을 곧바로 연다(차에 받은 것이 없으면 한 줄 알림). */
+function ReceiveDialog() {
+  const flow = useConfirmFlow();
+  useEffect(() => { flow.open({ actionKey: 'receive_to_shop', vehicleId: 'v1' }); }, []);
+  return <div className="pos-plain">{flow.element}</div>;
+}
+
+/**
+ * 로그인 때 같은 차량의 다른 기기가 보낼 기록을 가짐(sync 6): 기사 목록 위의 한 번 알림. 서버가 알려 주는 그 기기의 등록 이름 · 마지막 로그인 직원
+ * (견본 기사 둘째)과 ?pending=n(없으면 수를 모름, §17 R3-28). ?kind=tablet이면 태블릿, ?old=1이면 기기를 알려 주지 않는 옛 서버의 줄.
+ */
+function ElsewherePreview() {
+  const client = useClient();
+  const route = useRoute();
+  const device = route.name === 'preview' && route.device ? route.device : 'tablet';
+  const q = previewQuery();
+  const other = q.get('kind') === 'tablet' ? 'driver_tablet' as const : 'driver_phone' as const;
+  const count = Number(q.get('pending') ?? '');
+  const today = useLive<LedgerViewResult>('today:driver', (c) => c.ledgerView('collection_list', {})).data?.currentBusinessDate ?? null;
+  const [elsewhere, setElsewhere] = useState<SessionControls['elsewhere']>(() => ({
+    deviceKind: other, pending: Number.isInteger(count) && count > 0 ? count : null,
+    ...(q.get('old') === '1' ? {} : { label: other === 'driver_tablet' ? '1호 차량 태블릿' : '1호 차량 휴대폰', staffName: client.previewStaff?.()[2] ?? '' }),
+  }));
+  const session = useMemo<SessionControls>(() => ({
+    info: {
+      shop: { name: '' },
+      staff: { id: 'preview', name: client.previewStaff?.()[2] ?? '', roleKey: 'driver' },
+      device: { id: 'preview', kind: device === 'phone' ? 'driver_phone' : 'driver_tablet', label: say(device === 'phone' ? 'startPhone' : 'startTablet'), vehicleId: 'v1' },
+      csrf: '', idleTimeoutS: 0, serverTime: '',
+    },
+    today,
+    logout: () => Promise.resolve(null),
+    ...(elsewhere ? { elsewhere, dismissElsewhere: () => setElsewhere(undefined) } : {}),
+  }), [client, device, today, elsewhere]);
+  if (!today) return null;
+  return (
+    <SessionContext.Provider value={session}>
+      <DriverListScreen date={today} device={device} />
+    </SessionContext.Provider>
+  );
 }
 
 /** 미리 보기 비밀번호(예시 숫자: 브라우저는 비밀번호를 만들지 않는다, 서버가 만든다). */
@@ -78,11 +189,17 @@ function SettingsManyPreview() {
   return <SettingsTabPreview tab={tab} load={load} />;
 }
 
-/** 연결 끊김 화면: 마지막 연결은 체험 시계의 지금. */
+/**
+ * 연결 끊김 화면: 마지막 연결은 체험 시계의 지금. ?pending=3이면 이 기기의 `전송 대기 3`과 기사 기기의 `수거 목록 · 연결 후 조회 가능`(§17 R3-30),
+ * &unknown=1이면 되살린 서버가 모르는 기기(`기기 등록 없음 · 공급자 연락`), &off=1이면 저장할 곳이 없는 기기(`이 기기 저장 불가`).
+ */
 function OfflinePreview() {
   const client = useClient();
   const [at] = useState(() => new Date(client.now?.() ?? Date.now()).toISOString());
-  return <OfflineScreen lastSyncAt={at} onRetry={() => {}} />;
+  const q = previewQuery();
+  const pending = Math.max(0, Number(q.get('pending') ?? '0') || 0);
+  const notice = q.get('unknown') === '1' ? say('deviceUnknown') : q.get('off') === '1' ? say('recordingOff') : undefined;
+  return <OfflineScreen lastSyncAt={at} onRetry={() => {}} pending={pending} driver={pending > 0} {...(notice ? { notice } : {})} />;
 }
 
 /** 로그인한 기기의 나가기: 견본 직원 · 기기 종류 이름(카운터 · 기사 태블릿 · 기사 휴대폰), 로그아웃은 아무 일도 하지 않는다. */
@@ -101,7 +218,7 @@ function ExitPreview() {
       csrf: '', idleTimeoutS: 0, serverTime: '',
     },
     today,
-    logout: () => Promise.resolve(),
+    logout: () => Promise.resolve(null),
   }), [client, device, today]);
   return (
     <SessionContext.Provider value={session}>

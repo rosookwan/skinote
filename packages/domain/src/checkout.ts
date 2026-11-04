@@ -173,8 +173,7 @@ export function checkoutPlan(
   const payer = payerOrderId ? findOrder(state, payerOrderId) ?? null : null;
   if (payerOrderId && !payer) invalid ??= 'unsupported';
 
-  const name = draft.leader.name.trim();
-  const itemsReady = name !== '' && cleanItems(state.registry, draft.items).length > 0;
+  const itemsReady = draft.leader.name.trim() !== '' && cleanItems(state.registry, draft.items).length > 0;
   const scheduleReady = pickup.complete && giveBack.complete;
   const reason = scheduleReady ? undefined : (giveBack.at !== undefined ? timeReason(giveBack.at, now) : undefined) ?? PAST;
   const hash = quote.hash + '|' + sections.map((s) => s.pay.key + (s.discount ? '-' + s.discount.key : s.manual ? '-manual-' + s.manual.kind + s.manual.value : '') + '=' + s.net).join(',');
@@ -465,6 +464,7 @@ export function createOrder(
     id,
     receiptNo,
     teamName: draft.leader.name.trim(),
+    ...(draft.customerPickup ? { customerPickup: true } : {}),
     last4: last4Of(digits),
     phone: phoneText(digits),
     channel: draft.channel,

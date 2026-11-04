@@ -20,6 +20,8 @@ export interface DialogFrameProps {
   primary?: ReactNode;
   requestId?: string;
   className?: string;
+  /** 큰 작업판: 화면 여백을 지키며 카운터의 넓은 판까지 쓴다. */
+  wide?: boolean;
   /**
    * false면 `닫기`가 없고 Esc로 닫히지 않는다(주 버튼만): 한 번만 보이는 새 비밀번호처럼 잘못 누르면 잃는 창(2026-09-27 점검: `닫기`와 `확인`이 같은
    * 일을 했다). 없으면 true.
@@ -27,7 +29,7 @@ export interface DialogFrameProps {
   closable?: boolean;
 }
 
-export function DialogFrame({ title, onClose, children, pager, primary, requestId, className, closable = true }: DialogFrameProps) {
+export function DialogFrame({ title, onClose, children, pager, primary, requestId, className, wide = false, closable = true }: DialogFrameProps) {
   const { profile, viewport } = useUi();
   const titleId = useId();
   const ref = useRef<HTMLDivElement>(null);
@@ -56,7 +58,7 @@ export function DialogFrame({ title, onClose, children, pager, primary, requestI
         aria-modal="true"
         aria-labelledby={titleId}
         data-request-id={requestId}
-        style={{ width: size.widthPx, maxHeight: size.heightPx, ...(floorPx > 0 ? { minHeight: floorPx } : {}) }}
+        style={{ width: wide ? Math.min(viewport.width - 2 * profile.space.m, profile.counter.splitMinPx) : size.widthPx, maxHeight: size.heightPx, ...(floorPx > 0 ? { minHeight: floorPx } : {}) }}
       >
         <header className="sn-dialog-head">
           <h2 id={titleId} className="sn-dialog-title"><TextFit input={{ mode: 'words', text: title }} /></h2>

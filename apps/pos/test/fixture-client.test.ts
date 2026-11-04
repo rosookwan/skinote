@@ -1,15 +1,15 @@
 // FixtureClient(체험판의 서버 대역)가 시안의 하루를 그대로 돌려주는지, 명령 · 요청번호 · 저장 · 체험 시계가 약속대로 도는지.
 import {
-  chainDrafts, defaultUiConfig, draftToEnvelope, openCommandDraft, uiDefaults, type ConfirmCommand, type ConfirmDraftView, type LedgerRow, type LedgerViewResult,
-  type UiConfig,
+  chainDrafts, defaultUiConfig, draftToEnvelope, envelopeFor, openCommandDraft, uiDefaults, type ConfirmCommand, type ConfirmDraftView, type LedgerRow,
+  type LedgerViewResult, type UiConfig,
 } from '@skinote/contract';
 import { openOrRestoreDraft } from '@skinote/ui';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { confirmEnvelope, draftOptions } from '../src/components/ConfirmFlow.tsx';
-import { collectionList, dayLedger, kstAt, orderSlip } from '@skinote/domain';
+import { collectionList, dayLedger, kstAt, orderSlip, type FxState } from '@skinote/domain';
 import { AREAS } from '@skinote/domain/sample';
 import { createSeed, DEMO_START_MS } from '../src/fixture/demo.ts';
-import { FixtureClient, type FixtureStorage } from '../src/fixture/fixture-client.ts';
+import { demoOfflineFlags, FixtureClient, FLUSH_HOLD_MS, SETTLED_MS, type FixtureStorage } from '../src/fixture/fixture-client.ts';
 
 class MemoryStorage implements FixtureStorage {
   readonly map = new Map<string, string>();
@@ -458,7 +458,7 @@ describe('찾기 · 저장 · 체험 시계', () => {
     const list = await client.ledgerView('collection_list', { vehicleId: 'v1' });
     expect(list.groups.map((g) => g.label)).toEqual(['16:30 반납', '21:50 반납', '22:00 반납', '22:10 반납']);
     expect(list.pins).toHaveLength(1);
-    expect(list.pins![0]!.parts.map((p) => p.text)).toEqual(['꽃마을 들국화', '오승민 · 0039', '조기 반납']);
+    expect(list.pins![0]!.parts.map((p) => p.text)).toEqual(['꽃마을 들국화', '오승민 · 0039']);
   });
 });
 
@@ -553,7 +553,7 @@ describe('수거 목록(C3) · 긴급 · 기사 기기 연결', () => {
     expect(view.summary[1]).toBe('1호 차량 수거 목록 맨 위 고정 · 기사 알림');
     await confirmAndSend(client, view);
     const pinned = await list(client);
-    expect(pinned.pins?.map((p) => [p.taskId, p.status])).toEqual([['collect:o39', 'requested'], ['collect:o31', 'requested']]);
+    expect(pinned.pins?.map((p) => [p.taskId, p.status])).toEqual([['collect:o31', 'requested'], ['collect:o39', 'requested']]);
     expect(ids(pinned, 's2200')[0]).toBe('collect:o31');
     expect((await client.query('orderSlip', { orderId: 'o31' })).promises.lines[1]!.parts.map((p) => p.text)).toContain('긴급 요청');
     expect((await client.query('confirmDraft', { orderId: 'o31', actionKey: 'pin' })).notice).toBe('긴급 요청 · 기사 확인 대기');
@@ -609,25 +609,217 @@ describe('수거 목록(C3) · 긴급 · 기사 기기 연결', () => {
     expect((await client.command(envelope)).outcome).toBe('queued');
     expect(client.connection().pendingCount).toBe(1);
     expect((await client.pending()).map((p) => [p.type, p.state, p.summary])).toEqual([['stock.collect', 'queued', '김민수 · 0025 수거 15:42']]);
+    // 전송 대기 목록 창의 줄 조각(기사 기기와 같은 domain pendingLine, §17 R3-19).
+    expect((await client.pending())[0]?.line).toEqual({ who: '김민수 · 0025', what: '수거', at: '15:42' });
     const driver = await list(client);
     expect(stamp(row(driver, 'collect:o25'), 'stamp:collect')).toMatchObject({ stepKey: 'collect', state: 'done', at: at(15, 42), pending: true });
     expect(stamp(row(driver, 'collect:o25'), 'stamp:collect').pressNote?.lines).toEqual(['15:42 처리 · 전송 대기']);
     expect([metric(driver, 'collected_count'), metric(driver, 'pending_count'), metric(driver, 'remaining_count')].map((m) => m && 'value' in m ? m.value : null)).toEqual([0, 1, 10]);
     const receive = await client.query('confirmDraft', { actionKey: 'receive_to_shop', vehicleId: 'v1' });
-    expect((await confirmAndSend(client, receive)).outcome).toMatchObject({ outcome: 'rejected', error: { code: 'OFFLINE', message: '연결 끊김 · 연결 후 가능' } });
+    // 연결이 있어야 하는 일은 운영 기기와 같은 한 줄(문구 표 3-10 · 3-21).
+    expect((await confirmAndSend(client, receive)).outcome).toMatchObject({ outcome: 'rejected', error: { code: 'OFFLINE', message: '입고 불가 · 연결 끊김' } });
     client.setDevice('counter');
-    expect(stamp(row(await list(client, { deviceClass: 'pos' }), 'collect:o25'), 'stamp:collect').state).toBe('todo');
+    const counter = await list(client, { deviceClass: 'pos' });
+    expect(stamp(row(counter, 'collect:o25'), 'stamp:collect').state).toBe('todo');
+    // 카운터는 끊긴 차량을 서버처럼 본다(대기 수 모름): 제목 줄 표시 `1호 차량 연결 끊김 · 15:40부터`(work/impl-offline/plan.md O19).
+    expect(counter.link).toEqual({ vehicleId: 'v1', parts: [{ text: '1호 차량 연결 끊김', drop: 0 }, { text: '15:40부터', drop: 1 }] });
     expect(client.connection()).toEqual({ online: true, pendingCount: 0 });
     expect(await client.pending()).toEqual([]);
     client.setDevice('driver');
     pass(10 * 60_000);
     client.setOffline(false);
+    // 다시 붙어 보낸 뒤 2분(또는 다음 확인 창까지) 띠 `전송 대기 0`.
+    expect(client.connection()).toEqual({ online: true, pendingCount: 0, settled: true });
+    client.dismissResults();
     expect(client.connection()).toEqual({ online: true, pendingCount: 0 });
+    client.setDevice('counter');
+    expect((await list(client, { deviceClass: 'pos' })).link).toBeUndefined();
+    client.setDevice('driver');
     const synced = await list(client);
     // 도장 시각은 보낸 때가 아니라 기기에서 확인한 때(15:42).
     expect(stamp(row(synced, 'collect:o25'), 'stamp:collect')).toEqual({ stepKey: 'collect', state: 'done', at: at(15, 42) });
     expect(metric(synced, 'collected_count')).toMatchObject({ value: 1 });
     expect((await client.command(envelope)).outcome).toBe('applied');
+  });
+});
+
+describe('네 번째 검토(§18)의 체험판', () => {
+  const list = (client: FixtureClient, params: Parameters<FixtureClient['ledgerView']>[1] = {}) => client.ledgerView('collection_list', { vehicleId: 'v1', ...params });
+  const metric = (result: LedgerViewResult, key: string) => result.metrics.find((m) => m.metricKey === key);
+  it('R4-14 · R4-11: 끊긴 채 순서 변경 → 카운터도 같은 순서로 → 다시 붙으면 띠 `전송 대기 0`에 메모가 없고 줄 메모도 없음; 끊긴 동안 바닥줄은 1', async () => {
+    const { client, pass } = setup();
+    client.setDevice('driver');
+    const rows = (await list(client)).rows.filter((r) => r.taskId);
+    const target = rows[1]!.taskId!;
+    client.setOffline(true);
+    const move = { type: 'route.move' as const, commandVersion: 1, requestId: '01JF3Q8W2Z6N9XK4T7B5R9E001', basis: { epoch: 'x', rev: 0 }, payload: { taskId: target, anchorTaskId: null, position: 'top' as const } };
+    expect((await client.command(move)).outcome).toBe('queued');
+    const offline = await list(client);
+    expect(client.connection().pendingCount).toBe(1);
+    expect(metric(offline, 'pending_count')).toMatchObject({ value: 1 });
+    client.setDevice('counter');
+    const basis = (await list(client, { deviceClass: 'pos' })).basis;
+    const counterMove = { ...move, requestId: '01JF3Q8W2Z6N9XK4T7B5R9E002', basis };
+    expect((await client.command(counterMove)).outcome).toBe('applied');
+    client.setDevice('driver');
+    pass(60_000);
+    client.setOffline(false);
+    const c = client.connection();
+    expect(c.pendingCount).toBe(0);
+    expect(c.settledNotes).toBeUndefined();
+    expect((await list(client)).rows.find((r) => r.taskId === target)?.reviewNote).toBeUndefined();
+  });
+});
+
+describe('체험판의 연결 끊김 기록 모양(work/impl-offline/plan.md O19)', () => {
+  const offlineCollect = async (client: FixtureClient, taskId: string) => {
+    const view = await client.query('confirmDraft', { taskId, actionKey: 'stamp.collect' });
+    return confirmAndSend(client, view);
+  };
+
+  it('?flush=hold: 다시 붙어도 잠시 붙잡아 `전송 중 · 전송 대기 n`(점선 그대로), 그동안 매장 입고는 `입고 불가 · 전송 대기 n`, 놓으면 보내고 `전송 대기 0`', async () => {
+    vi.useFakeTimers();
+    try {
+      let real = 1_800_000_000_000;
+      const client = new FixtureClient({ storage: new MemoryStorage(), realNow: () => real, flushHold: true, lostFirst: true });
+      client.setDevice('driver');
+      client.setOffline(true);
+      expect((await offlineCollect(client, 'collect:o25')).outcome.outcome).toBe('queued');
+      expect((await offlineCollect(client, 'collect:o23')).outcome.outcome).toBe('queued');
+      client.setOffline(false);
+      expect(client.connection()).toMatchObject({ online: true, pendingCount: 2, sending: { remaining: 2 }, unconfirmedCount: 1 });
+      const held = await client.ledgerView('collection_list', { vehicleId: 'v1' });
+      // 첫 항목은 답을 잃은 것(?lost=1): `15:40 처리 · 결과 확인 중`, 둘째는 `… 전송 대기`.
+      expect(stamp(row(held, 'collect:o25'), 'stamp:collect').pressNote?.lines).toEqual(['15:40 처리 · 결과 확인 중']);
+      expect(stamp(row(held, 'collect:o23'), 'stamp:collect').pressNote?.lines).toEqual(['15:40 처리 · 전송 대기']);
+      // 전송 대기 목록도 같은 상태(§17 R3-19): 답을 잃은 첫 항목은 unconfirmed(`· 결과 확인 중`), 나머지는 보내는 중. 수는 띠와 같다.
+      const listed = await client.pending();
+      expect(listed.map((p) => [p.line?.who, p.state])).toEqual([['김민수 · 0025', 'unconfirmed'], ['이수진 · 0023', 'sending']]);
+      expect(listed).toHaveLength(client.connection().pendingCount);
+      const receive = await client.query('confirmDraft', { actionKey: 'receive_to_shop', vehicleId: 'v1' });
+      if (receive.command) {
+        expect((await confirmAndSend(client, receive)).outcome).toMatchObject({ outcome: 'rejected', error: { message: '입고 불가 · 전송 대기 2' } });
+      }
+      // 카운터는 보내지 못하는 차량(stuck)을 본다: `1호 차량 기록 2건 전송 대기 · 15:40부터`.
+      client.setDevice('counter');
+      expect((await client.ledgerView('collection_list', { vehicleId: 'v1', deviceClass: 'pos' })).link?.parts.map((p) => p.text)).toEqual(['1호 차량 기록 2건 전송 대기', '15:40부터']);
+      client.setDevice('driver');
+      real += FLUSH_HOLD_MS;
+      vi.advanceTimersByTime(FLUSH_HOLD_MS);
+      expect(client.connection()).toEqual({ online: true, pendingCount: 0, settled: true });
+      const sent = await client.ledgerView('collection_list', { vehicleId: 'v1' });
+      expect(stamp(row(sent, 'collect:o25'), 'stamp:collect').pending).toBeUndefined();
+      // 2분이 지나면 띠가 걷힌다.
+      real += SETTLED_MS;
+      expect(client.connection().settled).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('다시 붙어 보낸 결과의 줄 메모: 끊긴 채 수거했는데 그사이 카운터가 모두 반납받은 업무는 기사 목록에 `매장 반납 완료`로 남는다(카운터 목록에서는 빠짐)', async () => {
+    const { client } = setup();
+    client.setDevice('driver');
+    client.setOffline(true);
+    expect((await offlineCollect(client, 'collect:o25')).outcome.outcome).toBe('queued');
+    client.setDevice('counter');
+    const state = (client as unknown as { state: FxState }).state;
+    const o25 = state.orders.find((o) => o.id === 'o25')!;
+    const lines = o25.lines.filter((l) => l.returnable && l.issued - l.returned > 0).map((l) => ({ lineId: l.id, quantity: l.issued - l.returned }));
+    const back = await client.command(plainEnvelope({ type: 'stock.direct_return', payload: { orderId: 'o25', lines } }, { epoch: state.epoch, rev: state.rev }));
+    expect(back.outcome).toBe('applied');
+    client.setDevice('driver');
+    client.setOffline(false);
+    const driver = await client.ledgerView('collection_list', { vehicleId: 'v1' });
+    expect(row(driver, 'collect:o25').reviewNote).toBe('매장 반납 완료');
+    client.setDevice('counter');
+    expect((await client.ledgerView('collection_list', { vehicleId: 'v1', deviceClass: 'pos' })).rows.some((r) => r.id === 'collect:o25')).toBe(false);
+  });
+
+  it('?flush=stuck: 다시 붙어도 보내지 못한 채(띠 `전송 대기 n`, 보내는 중 아님), 뜻 없이 다시 열면 보낸다. ?recording=off: 저장할 곳 없는 모양', async () => {
+    const storage = new MemoryStorage();
+    const real = 1_800_000_000_000;
+    const stuck = new FixtureClient({ storage, realNow: () => real, flushStuck: true, recordingOff: true });
+    stuck.setDevice('driver');
+    stuck.setOffline(true);
+    await offlineCollect(stuck, 'collect:o25');
+    stuck.setOffline(false);
+    expect(stuck.connection()).toEqual({ online: true, pendingCount: 1, lastSyncAt: at(15, 40), recordingOff: true });
+    stuck.persist();
+    const plain = new FixtureClient({ storage, realNow: () => real });
+    plain.setDevice('driver');
+    expect(plain.connection()).toEqual({ online: true, pendingCount: 0, settled: true });
+  });
+
+  it('?resend=refused: 기사 기기의 띠가 무엇이 안 되었는지(현금 인계 350,000원), 다른 확인 창을 열어도 남음 · 카운터에는 없음(§18 R4-15)', () => {
+    const refused = new FixtureClient({ realNow: () => 1_800_000_000_000, ...demoOfflineFlags('?resend=refused') });
+    expect(refused.connection().refusedCount).toBeUndefined();
+    refused.setDevice('driver');
+    expect(refused.connection()).toMatchObject({ online: true, refusedCount: 1, refused: [{ what: '현금 인계', money: '350,000원' }] });
+    refused.dismissResults();
+    expect(refused.connection()).toMatchObject({ refusedCount: 1, refused: [{ what: '현금 인계', money: '350,000원' }] });
+  });
+
+  it('붙잡은 채 새로 고침(같은 저장소): ?flush=hold면 다시 붙잡고, 아니면 곧바로 보낸다', async () => {
+    const storage = new MemoryStorage();
+    const real = 1_800_000_000_000;
+    const first = new FixtureClient({ storage, realNow: () => real, flushHold: true });
+    first.setDevice('driver');
+    first.setOffline(true);
+    await offlineCollect(first, 'collect:o25');
+    first.setOffline(false);
+    expect(first.connection().sending).toEqual({ remaining: 1 });
+    first.persist();
+    const plain = new FixtureClient({ storage, realNow: () => real });
+    plain.setDevice('driver');
+    expect(plain.connection()).toEqual({ online: true, pendingCount: 0, settled: true });
+  });
+
+  it('카운터가 보는 모양: 끊김(대기 수 모름) · ?van=asleep(주머니 속, 일정 변경 경고만) · 일정 변경의 `유지` 자리 경고', async () => {
+    const client = new FixtureClient({ realNow: () => 1_800_000_000_000, vanLink: 'asleep' });
+    client.setDevice('driver');
+    client.setOffline(true);
+    client.setDevice('counter');
+    // 조용함(asleep)은 목록 표시가 없다(마감도 막지 않는다).
+    expect((await client.ledgerView('collection_list', { vehicleId: 'v1', deviceClass: 'pos' })).link).toBeUndefined();
+    // 옮길 줄을 고르기 전에는 경고가 없다(`유지` 줄 그대로), 1호 차량 수거에 있는 줄을 옮기면 `유지` 줄 자리에.
+    const blank = await client.query('promiseSheet', { orderId: 'o25' });
+    expect(blank.linkWarning).toBeUndefined();
+    const moving = { orderId: 'o25', quantities: { [blank.lines[0]!.lineId]: 1 }, place: { mode: 'store' as const } };
+    expect((await client.query('promiseSheet', moving)).linkWarning?.map((p) => p.text)).toEqual(['1호 차량 마지막 연결 15:40', '수거 여부 미확인']);
+    const offline = new FixtureClient({ realNow: () => 1_800_000_000_000 });
+    offline.setDevice('driver');
+    offline.setOffline(true);
+    offline.setDevice('counter');
+    expect((await offline.query('promiseSheet', moving)).linkWarning?.map((p) => p.text)).toEqual(['1호 차량 연결 끊김', '15:40부터', '수거 여부 미확인']);
+  });
+
+  it('막힌 마감의 관리자 승인: 4 ~ 6자리 → 승인 id, 사유와 함께 마감(차량 현금은 점검 이월), 다른 요청번호 · 날짜의 승인은 거절, 카운터 역할은 FORBIDDEN', async () => {
+    const client = new FixtureClient({ realNow: () => 1_800_000_000_000 });
+    const first = await client.query('closingSheet', {});
+    const amount = first.next!.expectedAmount!;
+    client.setDevice('driver');
+    client.setOffline(true);
+    await offlineCollect(client, 'collect:o25');
+    client.setDevice('counter');
+    const params = { counts: [{ drawerId: 'counter', countedAmount: amount, expectedAmount: amount }] };
+    const sheet = await client.query('closingSheet', params);
+    expect(sheet.step?.message).toBe('1호 차량 연결 끊김 · 15:40부터 · 마감 전 전송 필요');
+    await expect(client.closingApprove('2026-12-26', '12')).rejects.toMatchObject({ code: 'PIN_MISMATCH' });
+    const { approvalId } = await client.closingApprove('2026-12-26', '1234');
+    expect(approvalId).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    const draft = openOrRestoreDraft(null, sheet.command!, sheet.basis, {});
+    const envelope = envelopeFor(draft, sheet.command!, sheet.expect)!;
+    const plain = await client.command(envelope);
+    expect(plain.outcome).toBe('rejected');
+    const approved = { ...envelope, requestId: envelope.requestId + 'x', payload: { ...(envelope.payload as object), unsynced: { approvalId, reason: '휴대폰 방전' } } } as typeof envelope;
+    expect((await client.command(approved)).outcome).toBe('applied');
+    // 같은 요청번호로 다시 보내면(답을 잃음) 같은 결과, 다른 요청번호는 거절.
+    expect((await client.command({ ...approved, requestId: envelope.requestId + 'y' })).outcome).toBe('rejected');
+    const closed = (client as unknown as { state: FxState }).state.closings.at(-1)!;
+    expect(closed.overrideReason).toBe('휴대폰 방전');
+    const counterRole = new FixtureClient({ realNow: () => 1_800_000_000_000, viewer: 'counter' });
+    await expect(counterRole.closingApprove('2026-12-26', '1234')).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 });
 

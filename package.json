@@ -18,6 +18,7 @@
     "test:pwa": "node scripts/check-pwa.mjs",
     "test:ui": "node scripts/check-screens.mjs",
     "test:e2e": "node scripts/check-server-e2e.mjs",
+    "test:e2e:offline": "node scripts/check-offline-e2e.mjs",
     "serve:local": "node scripts/lib/local-proxy.mjs",
     "lint": "npm run lint:schema && npm run check:imports",
     "lint:schema": "npm run lint -w @skinote/schema -- --code src tools bin ../store/src ../server/src ../server/bin && npm run split -w @skinote/schema -- --check && npm run gen-triggers -w @skinote/schema -- --check",

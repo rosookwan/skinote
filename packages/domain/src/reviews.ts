@@ -19,12 +19,13 @@ import type { FxLine, FxOrder, FxReview, ShopState } from './model.ts';
 import { countWordOf } from './promise-sheet.ts';
 import { currentReturn, type FxTask } from './promises.ts';
 import { nothing, rejected, type Result } from './result.ts';
+import { storeReview } from './review-store.ts';
 import {
   charged, collectDone, findOrder, isCancelledOrder, liveQty, nextDue, openPins, orderIdOfTask, overpaid, paidTotal, pinTask, placeLabel, vehicleLabel,
   visitOutcomeLabel,
 } from './rules.ts';
 import { businessDateOf, hm, iso, shopCutoff, when } from './time.ts';
-import type { ViewContext } from './views.ts';
+import { urgentRows, type ViewContext } from './views.ts';
 
 const won = (n: number) => Math.round(n).toLocaleString('ko-KR') + '원';
 const amountText = (n: number) => Math.round(n).toLocaleString('ko-KR');
@@ -58,15 +59,7 @@ export interface ReviewActor {
   deviceId?: string;
 }
 
-const inside = (state: ShopState, id: string) => (state.reviews ?? []).some((r) => r.id === id);
-
-/** 저장된 확인 필요 한 건을 더한다(문장은 종류의 틀로 그린다). */
-function storeReview(state: ShopState, review: Omit<FxReview, 'message' | 'status'>): FxReview {
-  const message = reviewMessage(review.kindKey, review.params);
-  const row: FxReview = { ...review, message, status: 'open' };
-  if (!inside(state, row.id)) state.reviews = [...(state.reviews ?? []), row];
-  return row;
-}
+export { storeReview } from './review-store.ts';
 
 // ── 저장하는 확인 필요(보냄 대기로 온 기사 기록, E18 · E20 · E23) ────────────────────────
 
@@ -235,6 +228,22 @@ function derivedItems(ctx: ViewContext): ReviewItem[] {
       ],
     });
   }
+  // 기사 기기의 기록(work/impl-offline/plan.md O9 · O21): 받지 못한 기기 번호(`미수신 기록`, 번호가 오면 사라짐), 끊은 기기에서 온 보류 기록 · 공급자
+  // 확인 중인 기록의 수(서버가 셈을 넘긴다). 버튼 없이 사실 한 줄(공급자가 반영한다).
+  for (const g of ctx.deviceGaps ?? []) {
+    const message = reviewMessage('device_gap', { device: g.label, count: g.missing });
+    out.push({ id: 'gap:' + g.deviceId, kindKey: 'device_gap', message, parts: reviewParts(message), severity: 'action', createdAt: g.since, source: 'derived', choices: [] });
+  }
+  for (const h of ctx.heldCounts ?? []) {
+    if (h.revoked > 0) {
+      const message = reviewMessage('revoked_device_record', { device: h.label, count: h.revoked });
+      out.push({ id: 'revoked:' + h.deviceId, kindKey: 'revoked_device_record', message, parts: reviewParts(message), severity: 'action', createdAt: iso(ctx.now), source: 'derived', choices: [] });
+    }
+    if (h.held + h.flagged > 0) {
+      const message = reviewMessage('command_held', { device: h.label, count: h.held + h.flagged });
+      out.push({ id: 'held:' + h.deviceId, kindKey: 'command_held', message, parts: reviewParts(message), severity: 'info', createdAt: iso(ctx.now), source: 'derived', choices: [] });
+    }
+  }
   return out;
 }
 
@@ -254,7 +263,7 @@ function noticeItems(ctx: ViewContext): ReviewItem[] {
   }
   for (const p of openPins(state)) {
     const o = findOrder(state, p.orderId);
-    if (!o || p.status === 'acknowledged') continue;
+    if (!o || (p.status === 'acknowledged' && !p.pendingAck)) continue;
     const place = pinTask(state, p)?.promise.placeId ?? o.giveBack.placeId;
     out.push({
       id: 'pin:' + p.id, kindKey: 'pin', severity: 'info', createdAt: iso(p.at), orderId: o.id, source: 'notice',
@@ -295,7 +304,7 @@ export function reviewList(ctx: ViewContext): ReviewListView {
     basis: { epoch: state.epoch, rev: state.rev }, serverTime: iso(ctx.now), currentBusinessDate: state.businessDate,
     title: REVIEW_WORDS.title,
     tabs: [{ key: 'open', label: REVIEW_WORDS.tabOpen, count: items.length }, { key: 'done', label: REVIEW_WORDS.tabDone }],
-    items, done, notices: noticeItems(ctx), count: items.length,
+    items, done, notices: noticeItems(ctx), pins: urgentRows(ctx), count: items.length,
     empty: { open: REVIEW_WORDS.emptyOpen, done: REVIEW_WORDS.emptyDone },
   };
 }

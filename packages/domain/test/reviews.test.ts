@@ -101,11 +101,11 @@ describe('보냄 대기로 온 수거(stock.collect, deviceSeq)의 확인 필요
     assertMoneyViews(s, 'o22', at(22, 10));
   });
 
-  it('남은 것보다 많이(매장 반납도 아님): 팀에 한 건 `collect_exceeds`, 남은 것만 적음', () => {
+  it('남은 것보다 많이(매장 반납도 아님): 팀에 한 건 `collect_exceeds`, 남은 것만 적음(일부 적용, sync 8-3)', () => {
     const s = first();
     const ski = findOrder(s, 'o21')!.lines[0]!;
     const out = send(s, { type: 'stock.collect', payload: { taskId: 'collect:o21', lines: [{ lineId: ski.id, quantity: 3 }] } }, at(16, 35), { deviceSeq: 1 });
-    expect(out.outcome).toBe('applied');
+    expect(out.outcome).toBe('partially_applied');
     expect(ski.collected).toBe(2);
     expect(stored(s).filter((r) => r.source === 'sync').map((r) => [r.kindKey, r.message])).toEqual([['collect_exceeds', '김민재 팀 수거 3대 · 대여 중 2대 · 2대만 반영']]);
   });
@@ -250,8 +250,18 @@ describe('마감의 막는 단계(van_unsynced)', () => {
     expect(sheet.step).toEqual({
       kindKey: 'van_unsynced', message: '1호 차량 기록 2건 전송 대기 · 마감 전 전송 필요',
       parts: [{ text: '1호 차량 기록 2건 전송 대기', drop: 0 }, { text: '마감 전 전송 필요', drop: 1 }],
-      choices: [{ key: 'recheck', label: '재확인' }, { key: 'close', label: '닫기' }],
+      // 보는 사람이 없으면(메모리 어댑터) 모두 허락: 넘길 권한이 있어 `관리자 승인`이 있다(O12).
+      choices: [{ key: 'recheck', label: '재확인' }, { key: 'approve', label: '관리자 승인' }, { key: 'close', label: '닫기' }],
     });
+    // 넘길 권한(closing.reopen)이 없는 카운터 역할: `관리자 승인` 없이 단계 줄 아래 `권한 없음 · 관리자 확인 필요`.
+    const counter = runQuery(s, 'closingSheet', { counts: [{ drawerId: 'counter', countedAmount: amount, expectedAmount: amount }] },
+      { ...ctx(), viewer: { roleKey: 'counter', permissions: ['closing.close'] } });
+    expect(counter.step?.choices.map((c) => c.key)).toEqual(['recheck', 'close']);
+    expect(counter.step?.note).toBe('권한 없음 · 관리자 확인 필요');
+    const manager = runQuery(s, 'closingSheet', { counts: [{ drawerId: 'counter', countedAmount: amount, expectedAmount: amount }] },
+      { ...ctx(), viewer: { roleKey: 'manager', permissions: ['closing.close', 'closing.reopen'] } });
+    expect(manager.step?.choices.map((c) => c.key)).toEqual(['recheck', 'approve', 'close']);
+    expect(manager.step?.note).toBeUndefined();
     const close = applyCommand(s, envelopeOf(s, sheet.command!, { expect: sheet.expect! }), NOW);
     expect([close.outcome, close.error?.message]).toEqual(['rejected', '1호 차량 · 전송 대기 있음']);
     // 기기의 차량이 있으면 그 차량.

@@ -173,6 +173,17 @@ export type MetricValue =
   | { metricKey: LedgerMetricKey; unit: 'won'; value: number }
   | { metricKey: LedgerMetricKey; unit: 'items'; items: ItemCount[] };
 
+/** 팀의 현재 긴급 요청 대상. 장비 업무만 포함하며 손님 픽업 표시는 별개다. */
+export interface UrgentTaskOption {
+  taskId: string;
+  kindLabel: string;
+  placeLabel: string;
+  vehicleLabel: string;
+  at: IsoTime;
+  pin?: { id: string; status: 'requested' | 'delivered' | 'acknowledged' };
+  connectionNotes?: readonly string[];
+}
+
 /** 빨리 확인 한 건(task_pins + 세 단계 알림). */
 export interface PinRow {
   pinId: string;
@@ -183,6 +194,12 @@ export interface PinRow {
   parts: FitPart[];
   phone?: string;
   status: 'requested' | 'delivered' | 'acknowledged';
+  teamName?: string;
+  kindLabel?: string;
+  placeLabel?: string;
+  vehicleLabel?: string;
+  requestedAt?: IsoTime;
+  pendingAck?: boolean;
 }
 
 /** 야간 수거 준비 안내(반납 타임 60분 전부터, 설정). */
@@ -212,9 +229,34 @@ export interface PrimaryFigure {
   amount?: number;
 }
 
+/** 카운터의 큰 단계는 표시용이다. 장비·돈의 내부 상태와 명령은 바꾸지 않는다. */
+export type CounterPhase = 'intake' | 'rental' | 'settlement';
+export interface CounterTeam {
+  /** 기존 장부와 같은 지연 경계. 기기는 서버 시각으로 비교해 표시한다. */
+  lateAt?: IsoTime;
+  orderId: string;
+  name: string;
+  party: string;
+  receiptNo: string;
+  phase: CounterPhase;
+  complete: boolean;
+  customerPickup: boolean;
+  items: ItemCount[];
+  returnWhen: string;
+  returnPlace: string;
+  status: string;
+  facts: FitPart[];
+}
+export interface CounterOverview {
+  stages: { key: CounterPhase; label: string; count: number }[];
+  teams: CounterTeam[];
+}
+
 /** ledgerView(viewKey, params)의 결과: 설정으로 그리는 모든 목록(대여 장부, 수거 목록, 기사 목록). */
 export interface LedgerViewResult extends ReadModelHead {
   viewKey: string;
+  /** 오늘 장부의 터치 화면. 옛 장부·인쇄 계약도 함께 유지한다. */
+  counter?: CounterOverview;
   deviceClass: DeviceClassKey;
   /** 제목 틀('{date} 대여 장부')에 넣을 값. */
   titleValues: { date?: BusinessDate; vehicle?: string };
@@ -243,6 +285,11 @@ export interface LedgerViewResult extends ReadModelHead {
   visitReasons?: ReasonCode[];
   /** 인쇄 판(deviceClass 'print')의 머리: 매장 이름 · 전화(features-1 E16). */
   printHead?: PrintHead;
+  /**
+   * 카운터의 수거 목록: 목록의 차량(차량을 고르지 않았으면 첫 그런 차량)이 연결 끊김 · 전송 대기면 제목 줄의 표시(work/impl-offline/plan.md §5-6):
+   * `1호 차량 연결 끊김` · `21:40부터` · `전송 대기 3`(좁으면 뒤 조각부터 빠짐). 줄을 늘리지 않는다.
+   */
+  link?: { vehicleId: string; parts: FitPart[] };
 }
 
 /** A4 인쇄 머리(매장 이름 · 매장 전화, 전화가 없으면 빈 글). */
@@ -382,6 +429,9 @@ export interface NextStep {
 
 /** orderSlip(orderId)의 결과(ui 6-2). */
 export interface OrderSlip extends ReadModelHead {
+  counter?: CounterTeam;
+  customerPickupEditable?: boolean;
+  urgentTasks?: UrgentTaskOption[];
   orderId: string;
   receiptNo: string;
   businessDate: BusinessDate;
@@ -483,6 +533,7 @@ export interface ReviewListView extends ReadModelHead {
   done: ReviewItem[];
   /** 알림(늦은 반납 · 긴급 요청 · 방문 결과): 머리줄 알림 종. */
   notices: ReviewItem[];
+  pins?: PinRow[];
   /** 메뉴 `확인 필요`의 수(열린 것 = items 수). */
   count: number;
   /** 줄이 없는 탭의 한 줄(`미처리 없음` · `처리 완료 없음`). */
@@ -497,7 +548,10 @@ export interface ReviewStepView {
   kindKey: string;
   message: string;
   parts: FitPart[];
-  choices: { key: 'recheck' | 'close'; label: string }[];
+  /** approve: 관리자 승인(마감을 넘길 권한 closing.reopen이 있는 세션만, work/impl-offline/plan.md O12). */
+  choices: { key: 'recheck' | 'close' | 'approve'; label: string }[];
+  /** 넘길 권한이 없는 세션의 한 줄(`권한 없음 · 관리자 확인 필요`, 창 안 단계 줄 아래, O12 · §14 Q3). */
+  note?: string;
 }
 
 /** 상태 문구를 부를 때의 키 쌍. */

@@ -1,12 +1,13 @@
 // 부품을 서버 그리기(renderToStaticMarkup)로 그려 본다: 설정 · 읽기 모델만으로 그려지는지, 문구 · 모양 규칙.
 // 잰 크기는 size 값으로 고정한다(브라우저 크기 규칙 검사는 Playwright 촬영 몫).
 import { menuFor, resolveLedgerView, stampStepMap, uiDefaults, visibleView, DEFAULT_FEATURES, type LedgerViewResult } from '@skinote/contract';
+import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ReactElement } from 'react';
 import { describe, expect, it } from 'vitest';
 import {
-  AppHeader, Checklist, ConfirmDialog, ConnectionStrip, DeviceProfileProvider, FooterBar, IndexTabs, Keypad, Ledger, Pager, PinBar,
-  PrimaryButton, ReviewStepButtons, ReviewStepLine, RowActionBar, Slip, Stamp, confirmLabelAlts, paymentParts, fillTitle, fitLines, keypadKeyAction, rowBarSteps, typingIn, type RowAction,
+  AppHeader, Checklist, ConfirmDialog, ConnectionStrip, DeviceProfileProvider, connectionStripParts, connectionStripTone, connectionStripVisible, FooterBar, IndexTabs, Keypad, Ledger, Pager, PinBar,
+  NumberPad, PrimaryButton, ReviewStepButtons, ReviewStepLine, RowActionBar, Slip, Stamp, confirmLabelAlts, paymentParts, fillTitle, fitLines, keypadKeyAction, rowBarSteps, typingIn, type RowAction,
 } from '../src/index.ts';
 import type { DeviceRole, Size } from '../src/device-profile.ts';
 import { collectionList, dayLedger, NOW_MS, kst, orderSlip } from './fixtures.ts';
@@ -120,6 +121,18 @@ describe('기사 수거 목록', () => {
     expect(html).toContain('수거');
     expect(html).toMatch(/sn-stamp is-done is-timed/);
     expectPlainKorean(html);
+  });
+
+  it('연결 띠 자리를 비워 두면(§18 R4-12): 띠 없는 판(324px) + reservePx 32의 줄이 띠 있는 판(292px)과 같다', () => {
+    const rowsOf = (height: number, reservePx?: number) => rowCount(render(
+      <Ledger view={driverView} result={collectionList} steps={steps} nowMs={Date.parse(kst(21, 40))} page={0} size={{ width: 992, height }}
+        {...(reservePx ? { reservePx } : {})} onActionPress={noop} />,
+      { width: 1024, height: 520 }, 'driver',
+    ));
+    // 줄 높이 60의 경계에 걸리는 높이들: 띠 자리를 비우지 않으면 32px 차이로 한 줄이 옮겨 가는 곳이 있다.
+    const heights = [260, 280, 300, 324, 340, 360, 380, 400];
+    for (const h of heights) expect(rowsOf(h, 32), String(h)).toBe(rowsOf(h - 32));
+    expect(heights.some((h) => rowsOf(h) !== rowsOf(h - 32))).toBe(true);
   });
 
   it('묶음이 다음 쪽으로 이어지면 제목을 다시(계속), 전송 대기 도장은 점선', () => {
@@ -305,6 +318,76 @@ describe('머리줄 · 탭 · 바닥줄 · 작은 부품', () => {
     expect(html).toContain('연결 끊김 · 전송 대기 3 · 마지막 연결 21:40');
   });
 
+  it('연결 띠의 상태(work/impl-offline/plan.md §8-1): 끊김 · 보내는 중 · 남은 대기 · 보낸 뒤 · 저장할 곳 없음, 보내기 2초 전은 없음', () => {
+    const tz = 'Asia/Seoul';
+    const words = (state: Parameters<typeof connectionStripParts>[0]) => connectionStripParts(state, tz).map((p) => p.text).join(' · ');
+    expect(words({ online: false, pendingCount: 0, lastSyncAt: kst(21, 40) })).toBe('연결 끊김 · 마지막 연결 21:40');
+    expect(words({ online: false, pendingCount: 3, lastSyncAt: kst(21, 40) })).toBe('연결 끊김 · 전송 대기 3 · 마지막 연결 21:40');
+    expect(connectionStripParts({ online: false, pendingCount: 3, lastSyncAt: kst(21, 40) }, tz).map((p) => p.drop)).toEqual([0, 0, 2]);
+    // 보내는 중은 바닥줄의 `잔여`(남은 팀)와 겹치지 않게 `전송 대기`(§17 R3-20).
+    expect(words({ online: true, pendingCount: 12, sending: { remaining: 12 } })).toBe('전송 중 · 전송 대기 12');
+    expect(words({ online: true, pendingCount: 2 })).toBe('전송 대기 2');
+    expect(connectionStripVisible({ online: true, pendingCount: 1, flushing: true })).toBe(false);
+    expect(words({ online: true, pendingCount: 0, settled: true })).toBe('전송 대기 0');
+    // 저장할 곳 없음은 `연결 끊김`으로 시작하지 않는다(§17 R3-25).
+    expect(words({ online: true, pendingCount: 0, recordingOff: true })).toBe('이 기기 저장 불가');
+    expect(words({ online: false, pendingCount: 1, recordingOff: true, lastSyncAt: kst(21, 40) })).toBe('연결 끊김 · 전송 대기 1 · 이 기기 저장 불가 · 마지막 연결 21:40');
+    expect(connectionStripVisible({ online: true, pendingCount: 0 })).toBe(false);
+    expect(render(<ConnectionStrip online pendingCount={0} settled />)).toContain('sn-strip is-settled');
+    expect(render(<ConnectionStrip online pendingCount={4} sending={{ remaining: 4 }} />)).toContain('전송 중 · 전송 대기 4');
+  });
+
+  it('연결 띠의 모양과 보낸 뒤의 줄 메모 · 거절(§17 R3-21 · R3-26 · R3-5)', () => {
+    const tz = 'Asia/Seoul';
+    const words = (state: Parameters<typeof connectionStripParts>[0]) => connectionStripParts(state, tz).map((p) => p.text).join(' · ');
+    expect([
+      connectionStripTone({ online: false, pendingCount: 1 }), connectionStripTone({ online: true, pendingCount: 1, sending: { remaining: 1 } }),
+      connectionStripTone({ online: true, pendingCount: 1 }), connectionStripTone({ online: true, pendingCount: 0, refusedCount: 1 }),
+      connectionStripTone({ online: true, pendingCount: 0, recordingOff: true }), connectionStripTone({ online: true, pendingCount: 0, settled: true }),
+      connectionStripTone({ online: true, pendingCount: 0 }),
+    ]).toEqual(['offline', 'sending', 'stuck', 'refused', 'recording-off', 'settled', null]);
+    expect(words({ online: true, pendingCount: 0, settled: true, settledNotes: [{ note: '매장 반납 완료', count: 1 }, { note: '처리 제외 · 매장 확인', count: 2 }] }))
+      .toBe('전송 대기 0 · 매장 반납 완료 1팀 · 처리 제외 · 매장 확인 2팀');
+    expect(connectionStripParts({ online: true, pendingCount: 0, settled: true, settledNotes: [{ note: '매장 반납 완료', count: 1 }] }, tz).map((p) => p.drop)).toEqual([0, 1]);
+    expect(words({ online: true, pendingCount: 0, refusedCount: 1 })).toBe('전송 실패 · 재전송 필요');
+    // 무엇이 안 되었는지(§18 R4-15): 사실 · 일 · 할 일, 좁으면 돈부터(short) · 뒤의 일부터(drop) 빠진다.
+    const refused = { online: true, pendingCount: 0, refusedCount: 2, refused: [{ what: '현금 인계', money: '350,000원' }, { what: '매장 입고' }] };
+    expect(words(refused)).toBe('처리 실패 · 현금 인계 350,000원 · 매장 입고 · 매장 확인');
+    expect(connectionStripParts(refused, tz)).toEqual([
+      { text: '처리 실패', drop: 0 }, { text: '현금 인계 350,000원', drop: 1, short: '현금 인계' }, { text: '매장 입고', drop: 2 }, { text: '매장 확인', drop: 0 },
+    ]);
+    expect(render(<ConnectionStrip online={false} pendingCount={2} />)).toContain('sn-strip is-offline');
+    expect(render(<ConnectionStrip online pendingCount={0} recordingOff />)).toContain('sn-strip is-recording-off');
+  });
+
+  it('띠 · 점선 도장의 칠은 상태마다 다르고 빨강이 없다(§17 R3-21 · R3-29, 브라우저의 계산 색은 규칙 검사가 본다)', () => {
+    const css = readFileSync(new URL('../src/styles/components.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const rule = (selector: string) => {
+      const at = css.indexOf(selector + ' {');
+      expect(at, selector).toBeGreaterThanOrEqual(0);
+      return css.slice(at, css.indexOf('}', at));
+    };
+    const background = (selector: string) => /background:\s*([^;]+);/.exec(rule(selector))?.[1]?.trim();
+    const tones = ['.sn-strip.is-offline', '.sn-strip.is-settled', '.sn-strip.is-recording-off'];
+    const backgrounds = tones.map(background);
+    expect(new Set(backgrounds).size).toBe(tones.length);
+    expect(rule('.sn-strip.is-offline')).toContain('box-shadow');
+    for (const tone of tones) expect(rule(tone)).not.toContain('--sn-late');
+    expect(rule('.sn-strip.is-stuck,\n.sn-strip.is-refused')).toContain('--sn-orange-wash');
+    // 점선 도장: 끝난 도장의 주홍 바탕이 아니다.
+    expect(background('.sn-stamp.is-done.is-pending')).toBe('transparent');
+    expect(rule('.sn-stamp.is-done.is-pending')).not.toContain('--sn-seal');
+    expect(rule('.sn-stamp.is-done.is-pending')).not.toContain('--sn-late');
+  });
+
+  it('잠긴 비밀번호 판은 숫자 · 지우기 키를 누를 수 없다(§17 R3-24)', () => {
+    const pad = (keysDisabled: boolean) => render(<NumberPad mode="pin" title="비밀번호" value="" onChange={noop} onSubmit={noop} placement="inline" keysDisabled={keysDisabled} />, { width: 360, height: 640 }, 'driver');
+    const disabledKeys = (html: string) => (html.match(/<button type="button" class="sn-key[^"]*" disabled=""/g) ?? []).length;
+    expect(disabledKeys(pad(true))).toBeGreaterThanOrEqual(11);
+    // 입력(is-go)은 친 숫자가 없어 늘 막혀 있다: 숫자 키만 센다.
+    expect((pad(false).match(/<button type="button" class="sn-key( is-word)?" disabled=""/g) ?? []).length).toBe(0);
+  });
+
   it('숫자판: 태블릿 1024×600은 옆 판, 1024×520은 아래 판(닫혀 있으면 없음)', () => {
     const side = render(<Keypad value="00" onChange={noop} onSubmit={noop} />, { width: 1024, height: 600 }, 'driver');
     expect(side).toContain('sn-keypad is-side');
@@ -371,6 +454,20 @@ describe('머리줄 · 탭 · 바닥줄 · 작은 부품', () => {
     expect(html).toContain('>2/4<');
     expect(html).toContain('>예정<');
     expect(html).toContain('>22:00<');
+    expectPlainKorean(html);
+  });
+
+  it('보냄 대기로만 끝난 도장은 `완료`로 읽지 않고 따로 칠한다(work/impl-offline/plan.md §17 R3-29)', () => {
+    const html = render(
+      <>
+        <Stamp cell={{ stepKey: 'collect', state: 'done', at: kst(15, 40), pending: true }} step={steps.get('collect')} onPress={noop} />
+        <Stamp cell={{ stepKey: 'collect', state: 'done', at: kst(15, 42) }} step={steps.get('collect')} onPress={noop} />
+      </>,
+    );
+    expect(html).toContain('aria-label="수거 15:40 · 전송 대기"');
+    expect(html).toContain('aria-label="수거 완료 15:42"');
+    expect(html).toMatch(/class="sn-stamp-cell is-done is-pending"/);
+    expect(html).not.toMatch(/aria-label="[^"]*완료[^"]*전송 대기"/);
     expectPlainKorean(html);
   });
 

@@ -200,6 +200,11 @@ export interface PromiseSheetView {
   command?: ConfirmCommand;
   /** 날을 옮겨 연장 값이 붙으면 그 견적(quoteHash, catalog 8 · 14): 서버가 다시 계산해 다르면 충돌. */
   expect?: Expect;
+  /**
+   * 옮기는 줄이 연결이 끊긴 · 전송 대기 · 조용한 차량의 열린 수거 업무에 있으면 그 사실(work/impl-offline/plan.md O11):
+   * `1호 차량 연결 끊김 · 21:40부터 · 수거 여부 미확인`. 있는 동안 `유지` 줄의 자리에 보인다(창 높이가 그대로).
+   */
+  linkWarning?: FitPart[];
 }
 
 // ── V2 · V3 새 접수(ui 6-6): 초안은 기기에 있고 명령은 V4의 order.create 하나 ───────────────
@@ -217,6 +222,8 @@ export interface OrderDraftInput {
   channel: 'walk_in' | 'phone';
   /** 대표자(이름 · 연락처 숫자 · 인원). 연락처는 숫자만 두고 화면 글은 읽기 모델(leader.phone)이 쓴다. */
   leader: { name: string; phone: string; party: number };
+  /** 드문 손님 픽업 요청 표시. 장비 배달·수거 일정과 별개다. */
+  customerPickup?: boolean;
   items: DraftItem[];
   /** 수령: 매장 직접 · 즉시({ mode: 'store', immediate: true }), 전화 예약(day · time · 장소), 차량 배달(time 또는 immediate · 장소). */
   pickup: PromiseInput;

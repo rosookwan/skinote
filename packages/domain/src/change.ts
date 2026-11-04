@@ -73,6 +73,13 @@ export interface ExecContext {
   orderIds?: 'sequence' | 'dated';
   /** 명령을 한 사람의 권한 · 한도(서버: 세션의 역할, features-1 E10). 할인 권한 · 직접 입력 한도를 도메인이 다시 본다. */
   viewer?: { permissions: readonly string[]; limits?: { maxDiscountAmount?: number; maxDiscountPercentBp?: number } };
+  /**
+   * 서버가 받은 때(보냄 대기 명령, work/impl-offline/plan.md §5-1): now는 일어난 때(occurred_at)다. 없으면 now. 마감한 날의 돈이 늦게 오면 다음 열린
+   * 날에 올린다.
+   */
+  recordedAt?: number;
+  /** 기기의 확인 전 검사(§5-8): epoch · 기준은 보지 않고 돈의 바탕 · 남은 수는 본다. */
+  prevalidate?: boolean;
 }
 
 /** execute의 결과: 화면에 돌려줄 결과, 바뀐 것, 새 상태(입력 상태는 고치지 않는다). */

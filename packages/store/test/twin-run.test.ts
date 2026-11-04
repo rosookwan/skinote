@@ -88,7 +88,7 @@ function twin(shop: SampleShop = 'first'): Twin {
       assert.deepEqual(got.result ?? null, mem.outcome.result ?? null, name + ': result');
       outcomes.set(env.requestId, got.outcome);
       // 적은 것이 확인 필요뿐인 명령(결과는 superseded, features-1 E18)도 한 rev를 쓴다.
-      if (got.outcome === 'applied' || (got.outcome === 'superseded' && mem.state !== t.memory)) {
+      if (got.outcome === 'applied' || got.outcome === 'partially_applied' || ((got.outcome === 'superseded' || got.outcome === 'needs_review') && mem.state !== t.memory)) {
         t.applied += 1;
         assert.equal(got.rev, t.memory.rev + 1, name + ': one rev per applied command');
         t.memory = { ...mem.state, rev: got.rev };
@@ -622,7 +622,7 @@ test('twin run (first shop): 확인 필요 — the imported sample item, queued 
   // 이수진(o23): 보드 3대라고 적은 수거(대여 중 2대) → collect_exceeds 한 건, 2대만 수거.
   const board = t.memory.orders.find((o) => o.id === 'o23')!.lines[0]!;
   const exceeds = { ...envelope('stock.collect', { taskId: 'collect:o23', lines: [{ lineId: board.id, quantity: 3 }] }, basisOf(t)), deviceSeq: 2 } as AnyCommandEnvelope;
-  assert.equal(t.run(exceeds, at(16, 40), 'queued collect beyond what is out', DRIVER).outcome, 'applied');
+  assert.equal(t.run(exceeds, at(16, 40), 'queued collect beyond what is out', DRIVER).outcome, 'partially_applied');
   assert.deepEqual(sync().filter((r) => r.k === 'collect_exceeds').map((r) => r.m), ['이수진 팀 수거 3대 · 대여 중 2대 · 2대만 반영']);
   // 확인: 한 번만 끝낸다(누가 · 때 · rev), 다른 요청은 `확인 완료`.
   const resolve = envelope('review.resolve', { reviewId: 'review-o24', resolutionKey: 'acknowledged' }, basisOf(t));

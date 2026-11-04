@@ -38,8 +38,9 @@ test('health on a fresh data dir: every file migrated, WAL, pages, no absolute p
     assert.ok(!text.includes(temp.dir), 'no absolute path in the health payload');
     const body = JSON.parse(text);
     assert.deepEqual(Object.keys(body).sort(), [
-      'cutoff', 'databases', 'disk', 'node', 'ok', 'release', 'serverTime', 'service', 'shops', 'startedAt', 'testOpenEnroll', 'timeZone', 'uptimeSeconds', 'warnings',
+      'cutoff', 'databases', 'disk', 'driverOffline', 'node', 'ok', 'release', 'serverTime', 'service', 'shops', 'startedAt', 'testOpenEnroll', 'timeZone', 'uptimeSeconds', 'warnings',
     ]);
+    assert.deepEqual(body.driverOffline, { localFirst: 'on', linkOfflineMs: 60_000 }, 'the driver local-first switch is on by default (no warning)');
     assert.ok(body.warnings.includes('BACKUP_MISSING'), 'no daily backup yet');
     assert.deepEqual(body.testOpenEnroll, { flag: 'off', active: false, devices: 0 }, 'open enrollment is off by default (no TEST_OPEN_ENROLL warning)');
     assert.ok(!body.warnings.includes('TEST_OPEN_ENROLL'));

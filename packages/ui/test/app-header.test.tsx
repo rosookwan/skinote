@@ -42,7 +42,7 @@ describe('메뉴 버튼 안의 수(features-1 §9-3)', () => {
     const none = render(
       <AppHeader shopName="우리 스키샵" menu={menu} alertCount={0} menuCounts={{ review_list: 0 }} onHome={noop} onFind={noop} onMenu={noop} onMore={noop} onAlerts={noop} onExit={noop} />,
     );
-    expect(none).not.toContain('sn-count');
+    expect(none).not.toMatch(/class="[^"]*\bsn-count\b[^"]*"/);
     const many = render(
       <AppHeader shopName="우리 스키샵" menu={menu} alertCount={0} menuCounts={{ review_list: 120 }} onHome={noop} onFind={noop} onMenu={noop} onMore={noop} onAlerts={noop} onExit={noop} />,
     );

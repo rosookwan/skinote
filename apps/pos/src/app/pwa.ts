@@ -5,14 +5,22 @@
 // 새 판 바꾸기(deployment 7절 'PWA 판이 바뀌는 때'): 새 서비스 워커는 받아 둔 뒤 기다린다. 하루 종일 켜 두는 카운터는 창을 닫지
 // 않아 기다리는 판이 영영 바뀌지 않으므로, 앱이 스스로 '지금 바꾸기'를 보낸다. 손을 대기 전(열고 나서 아무것도 누르지 않은 동안)
 // 이거나, 05:00 ~ 06:00에 5분 넘게 손대지 않았고 열린 창(대화 상자)이 없을 때만 보낸다. 바뀌면 한 번 다시 연다.
+// 기사 기기가 보냄 대기를 보내는 중 · 사본을 받는 중이면 바꾸지 않는다(work/impl-offline/plan.md O6: 보냄 대기는 다시 열어도 남지만, 보내던 묶음의 답을
+// 잃지 않게). '보냄 대기가 빌 때'가 아니다: 고친 판이 막힌 항목을 가진 휴대폰에 닿아야 한다.
 
 const START_GRACE_MS = 20_000;
 const IDLE_MS = 5 * 60_000;
 const CHECK_EVERY_MS = 30 * 60_000;
 
-/** 지금 바꿔도 되는가: 아직 손대지 않았거나, 새벽 5시대에 오래 손대지 않았고 열린 대화 상자가 없을 때. */
-export function safeToApply(now: number, loadedAt: number, lastTouch: number | null, hour: number, dialogOpen: boolean): boolean {
-  if (dialogOpen) return false;
+/** 새 판 바꾸기를 미룰 일(기사 기기의 보내기 · 사본 받기). session.tsx가 DriverClient.busy를 건다. */
+let updateBlocker: (() => boolean) | null = null;
+export function setUpdateBlocker(blocker: (() => boolean) | null): void {
+  updateBlocker = blocker;
+}
+
+/** 지금 바꿔도 되는가: 아직 손대지 않았거나, 새벽 5시대에 오래 손대지 않았고 열린 대화 상자가 없을 때. 보내는 중이면 아니다. */
+export function safeToApply(now: number, loadedAt: number, lastTouch: number | null, hour: number, dialogOpen: boolean, flushInFlight = false): boolean {
+  if (dialogOpen || flushInFlight) return false;
   if (lastTouch === null) return now - loadedAt <= START_GRACE_MS || hour === 5;
   return hour === 5 && now - lastTouch >= IDLE_MS;
 }
@@ -42,7 +50,8 @@ export function registerServiceWorker(): void {
     const waiting = reg?.waiting;
     if (!waiting || !hadController) return;
     const dialogOpen = document.querySelector('[role="dialog"], [aria-modal="true"]') !== null;
-    if (safeToApply(Date.now(), loadedAt, lastTouch, new Date().getHours(), dialogOpen)) waiting.postMessage({ type: 'skinote:apply-update' });
+    const flushing = (() => { try { return updateBlocker?.() ?? false; } catch { return false; } })();
+    if (safeToApply(Date.now(), loadedAt, lastTouch, new Date().getHours(), dialogOpen, flushing)) waiting.postMessage({ type: 'skinote:apply-update' });
   };
 
   const watch = (reg: ServiceWorkerRegistration | undefined) => {

@@ -14,6 +14,7 @@ import type {
   SpareUnits, TaskSheetParams, TaskSheetView, TicketBoardParams, TicketBoardView, TicketLossSheetParams, TicketLossSheetView,
 } from './sheets.ts';
 import { newRequestId } from './request-id.ts';
+import type { VehicleLinkFact } from './offline.ts';
 
 /** 이 앱이 아는 계약 판. 기기는 이 값을 알리고, config()는 그보다 늦게 들어온 sys 키를 쓰는 설정 행을 빼고 준다. */
 export const CONTRACT_VERSION = 1;
@@ -285,6 +286,8 @@ export interface CommandPayloads {
    * (`createdOrder`로 읽는다). 서버가 가격을 다시 계산해 expect.quoteHash와 다르면 충돌(catalog 8 QUOTE_CHANGED).
    */
   'order.create': { draft: OrderDraftInput; choices: CheckoutChoice[]; payerOrderId: string | null };
+  /** 장비 일정과 별개인 손님 픽업 표시. 연 때 값으로 다른 카운터의 변경을 보호한다. */
+  'order.customer_pickup': { orderId: string; enabled: boolean; expected: boolean };
   /** 보증금 입금(팀 · 규칙마다 보관 하나, 매수는 보증금 장부). */
   'deposit.take': { orderId: string; ruleKey: string; lines: LineUnits[]; amount: number; methodKey: string };
   /** 보증금 반환(돌아온 매수만큼). refundMethodKey: cash · offset_due(미수 차감) · same_method. */
@@ -302,12 +305,18 @@ export interface CommandPayloads {
    * (`van:<차량>`): 기사가 카운터에서 봉투를 건네면 그 자리에서 인계와 확인을 함께 적는다(마감 화면의 차량 현금 점검).
    */
   'cash.transfer_confirm': { transferId: string; countedAmount: number; reasonKey?: string; reasonNote?: string };
-  /** 마감(돈통마다 센 금액, 점검 이월한 인계, 넘어가기 사유). */
+  /**
+   * 마감(돈통마다 센 금액, 점검 이월한 인계, 넘어가기 사유). 전송 대기 차량을 넘기는 관리자 승인은 기기가 unsynced(승인 id · 사유)만 보내고,
+   * 서버가 그때의 차량 연결(links)과 승인(override)을 정규 명령에 적는다(work/impl-offline/plan.md O12): 도메인은 links · override만 읽는다.
+   */
   'closing.close': {
     date: BusinessDate;
     drawerCounts: { drawerId: string; countedAmount: number; expectedAmount?: number; reasonKey?: string; reasonNote?: string }[];
     deferredTransferIds: string[];
     overrideReason?: string;
+    unsynced?: { approvalId: string; reason: string };
+    links?: VehicleLinkFact[];
+    override?: { approvalId: string; reason: string; approvedBy: string };
   };
   /** 운영 규칙 저장(다음 기록부터). */
   'setting.set': { changes: RuleChange[] };
@@ -349,7 +358,7 @@ export type CommandType = keyof CommandPayloads;
 /** 명령 이름 목록(실행 중에 쓰는 사본). 시험이 schema.sql의 sys_event_types와 맞춰 본다. */
 export const COMMAND_TYPES = [
   'stock.issue', 'stock.direct_return', 'stock.load', 'stock.collect', 'stock.receive', 'stock.deliver',
-  'payment.take', 'payment_promise.set', 'promise.change', 'order.create', 'deposit.take', 'deposit.return',
+  'payment.take', 'payment_promise.set', 'promise.change', 'order.create', 'order.customer_pickup', 'deposit.take', 'deposit.return',
   'field.collect', 'field.add_ticket', 'field.deposit_return', 'cash.transfer', 'cash.transfer_confirm', 'closing.close', 'setting.set',
   'registry.update', 'staff.set', 'discount.apply', 'payment.refund', 'order.cancel', 'order.add', 'exchange.swap', 'stock.write_off', 'asset.found', 'review.resolve', 'route.move',
   'route.reset', 'task.pin', 'task.unpin', 'task.visit', 'notification.ack',
@@ -403,6 +412,8 @@ export interface CommandEnvelope<T extends CommandType> {
   deviceSeq?: number;
   ageMs?: number;
   clockAnchor?: string;
+  /** 기기에서 만든 때(서버 시각 짐작, 서명에 든다, work/impl-offline/plan.md O8). 보냄 대기 명령만. */
+  madeAt?: IsoTime;
   basis: Basis;
   expect?: Expect;
   dependsOn?: string[];
@@ -417,8 +428,11 @@ export type AnyCommandEnvelope = { [T in CommandType]: CommandEnvelope<T> }[Comm
 /**
  * 명령 결과. queued는 서버 결과가 아니라 기기 쪽 결과다: 오프라인 기사 기기가 보냄 대기에 넣었다(sync 8-1).
  * 화면은 창을 닫고, 목록은 그 도장을 점선으로 그린다. 서버의 command_log에는 queued가 없다.
+ * held는 서버가 보류한 보냄 대기 기록(끊긴 기기 · 모양이 틀린 봉투 · 세션 없는 전달의 규칙, work/impl-offline/plan.md O6): 적용하지 않고 공급자가
+ * 반영 · 미반영을 정한다. unknown은 기기 쪽 결과다: 보낸 뒤 답을 잃어 결과 확인 중(O18).
  */
-export type CommandOutcomeKey = 'applied' | 'partially_applied' | 'superseded' | 'needs_review' | 'rejected' | 'blocked' | 'conflict' | 'queued';
+export type CommandOutcomeKey =
+  | 'applied' | 'partially_applied' | 'superseded' | 'needs_review' | 'rejected' | 'blocked' | 'conflict' | 'queued' | 'held' | 'unknown';
 
 /** 이어 붙은 결과의 달라진 것 한 줄('그사이 헬멧 1개가 추가되어 합계가 125,000원입니다'). */
 export interface ChangeNote {
@@ -456,7 +470,21 @@ export function changedOrders(outcome: CommandOutcome): string[] {
   return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : [];
 }
 
-export type PendingState = 'queued' | 'sending' | 'applied' | 'superseded' | 'needs_review' | 'rejected' | 'stalled';
+export type PendingState = 'queued' | 'sending' | 'unconfirmed' | 'applied' | 'superseded' | 'needs_review' | 'rejected' | 'stalled';
+
+/**
+ * 전송 대기 목록 한 줄의 조각(work/impl-offline/plan.md §17 R3-19, 문구 표 3-14 `김민수 · 0025 수거 21:42`): 창이 좁으면 돈 · 시각부터 뺀다.
+ */
+export interface PendingLine {
+  /** 팀 · 끝 4자리(`김민수 · 0025`). 팀이 없는 일(매장 입고 · 현금 인계)은 없음. */
+  who?: string;
+  /** 일 이름(`수거` · `현장 수납` · `매장 입고`). */
+  what: string;
+  /** 돈 기록의 수단 · 금액(`현금 120,000원`). */
+  money?: string;
+  /** 기기에서 만든 시각(`21:42`, 매장 시각). */
+  at: string;
+}
 
 /** 보냄 대기 목록의 한 건(오프라인 기사 기기). */
 export interface PendingCommand {
@@ -464,8 +492,10 @@ export interface PendingCommand {
   type: CommandType;
   state: PendingState;
   createdAt: IsoTime;
-  /** 목록에 보일 한 줄('김민수 · 0025 받음 21:42'). */
+  /** 목록에 보일 한 줄('김민수 · 0025 수거 21:42'). */
   summary: string;
+  /** 같은 줄의 조각(전송 대기 목록 창). 옛 기기 · 체험판이 없으면 summary만 그린다. */
+  line?: PendingLine;
 }
 
 /** 동기화 머리(SSE 알림). configRev가 오르면 기기는 설정(config)을 다시 받는다(ui 2절). */
@@ -473,6 +503,8 @@ export interface SyncHead {
   epoch: string;
   rev: number;
   configRev: number;
+  /** 차량 연결이 바뀐 차례(카운터가 차량 표시를 다시 읽는다, work/impl-offline/plan.md O11). 옛 서버는 없다. */
+  linkRev?: number;
 }
 
 /** 이 기기의 연결 상태(연결 띠 · 매장 입고의 연결 확인). 바뀌면 subscribe로 알린다. */
@@ -487,6 +519,32 @@ export interface ConnectionState {
   sendQueue?: boolean;
   /** 마지막으로 서버와 맞춘 때(연결이 끊긴 때). */
   lastSyncAt?: IsoTime;
+  /** 보내는 중(2초 넘게, 연결 띠 `전송 중 · 전송 대기 12`, work/impl-offline/plan.md §7-4 · §17 R3-20). */
+  sending?: { remaining: number };
+  /**
+   * 보내기가 막 시작됨(2초 전): 띠는 아직 그리지 않는다(연결된 채 누른 도장이 1초 안에 실선이 되는 동안 `전송 대기 1`이 깜빡이지 않게). 보내기가
+   * 멈춰 있는데 대기가 남으면(서버 오류 뒤 기다림 · 혼자도 못 보내는 항목) 띠가 `전송 대기 {n}`이다.
+   */
+  flushing?: true;
+  /** 보낸 뒤 답을 잃은 항목 수(결과 확인 중). */
+  unconfirmedCount?: number;
+  /** 다시 연결해 보낸 뒤의 띠(`전송 대기 0`, 2분 또는 다음 창까지). */
+  settled?: true;
+  /**
+   * 보낸 뒤의 띠에 더할 줄 메모 수(work/impl-offline/plan.md §17 R3-26): 이번에 답을 받은 기록 가운데 줄 메모가 붙은 것을 메모마다
+   * (`매장 반납 완료 1팀` · `처리 제외 · 매장 확인 1팀`). 3쪽 목록의 다른 쪽에 있는 메모를 놓치지 않게.
+   */
+  settledNotes?: { note: string; count: number }[];
+  /** 이 기기에 저장할 곳이 없어 연결 끊김 기록을 하지 못한다(`이 기기 저장 불가`). */
+  recordingOff?: true;
+  /** 답을 잃었다가 다시 보낸 온라인 명령이 받아들여지지 않은 수(띠, §17 R3-5). */
+  refusedCount?: number;
+  /**
+   * 그 명령들의 일 이름 · 돈(`현금 인계` · `350,000원`, 개인정보 없음): 띠가 `현금 인계 350,000원 처리 실패 · 매장 확인`으로 무엇이 안 되었는지 말한다
+   * (§18 R4-15). 같은 일을 다시 해 받아들여지거나 영업일이 바뀌거나 로그아웃할 때까지 남는다(다른 확인 창을 열어도 걷히지 않는다). 없으면(옛 기기 ·
+   * 체험판) `전송 실패 · 재전송 필요`.
+   */
+  refused?: { what: string; money?: string }[];
 }
 
 /**
@@ -613,6 +671,7 @@ export interface DeviceStamp {
   deviceSeq?: number;
   ageMs?: number;
   clockAnchor?: string;
+  madeAt?: IsoTime;
   recordedBy?: RecordedBy;
 }
 
@@ -634,6 +693,7 @@ export function draftToEnvelope(draft: AnyCommandDraft, device: DeviceStamp = {}
   if (device.deviceSeq !== undefined) envelope.deviceSeq = device.deviceSeq;
   if (device.ageMs !== undefined) envelope.ageMs = device.ageMs;
   if (device.clockAnchor !== undefined) envelope.clockAnchor = device.clockAnchor;
+  if (device.madeAt !== undefined) envelope.madeAt = device.madeAt;
   if (device.recordedBy) envelope.recordedBy = device.recordedBy;
   return envelope;
 }

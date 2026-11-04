@@ -17,7 +17,7 @@ import { openControlStore, openShopStore, readInstance } from '@skinote/store';
 import { EXIT } from '../bin/shop.js';
 import { newSecretsEnv } from '../src/secrets.js';
 import { startServer } from '../src/server.js';
-import { cli, codeOf, device, deviceCode, ORIGIN, pinsOf, provisionedShop, SHOP, STAFF, tempDir, testConfig } from './helpers.js';
+import { cli, codeOf, device, deviceCode, deviceReport, ORIGIN, pinsOf, provisionedShop, SHOP, signedItem, STAFF, tempDir, testConfig } from './helpers.js';
 
 const temp = tempDir();
 after(() => temp.cleanup());
@@ -117,11 +117,24 @@ test('keeps staff accounts, PINs, enrolled devices and open sessions; takes a ch
   const phone = device(app.port);
   /** @type {{ epoch: string, rev: number }} */
   let oldHead;
+  /** @type {{ staffId: string, sessionId: string }} */
+  let phoneBy;
   try {
     assert.equal((await pos.enroll(posCode)).status, 200);
     assert.equal((await pos.login('김카운터', /** @type {string} */ (shop.pins['김카운터']))).status, 200);
     assert.equal((await phone.enroll(phoneCode)).status, 200);
-    assert.equal((await phone.login('박기사', /** @type {string} */ (shop.pins['박기사']))).status, 200);
+    const phoneLogin = await phone.login('박기사', /** @type {string} */ (shop.pins['박기사']));
+    assert.equal(phoneLogin.status, 200);
+    const phoneInfo = await phoneLogin.json();
+    phoneBy = { staffId: phoneInfo.staff.id, sessionId: phoneInfo.session.id };
+    // 기사 휴대폰이 옛 매장에 보냄 대기 기록 1 ~ 3번을 보냈다(devices.last_device_seq 3).
+    const h0 = await (await phone.get('/api/v2/head')).json();
+    const now0 = Date.now();
+    const olds = [];
+    for (const seq of [1, 2, 3]) olds.push(await signedItem(phone, phoneBy, { type: 'notification.ack', payload: { notificationId: 'pin:v1' }, seq, basis: { epoch: h0.epoch, rev: h0.rev }, now: now0 }));
+    const oldBatch = await phone.post('/api/v2/commands:batch', { report: deviceReport({ lastSeq: 3, pendingCount: 3 }), commands: olds });
+    assert.equal(oldBatch.status, 200);
+    assert.equal((await oldBatch.json()).device.highWater, 3);
   } finally {
     await app.close();
   }
@@ -183,6 +196,23 @@ test('keeps staff accounts, PINs, enrolled devices and open sessions; takes a ch
     const driver = device(app.port);
     Object.assign(driver.state, { cookie: phone.state.cookie, csrf: phone.state.csrf });
     assert.equal((await driver.get('/api/v2/session')).status, 200, 'the driver phone session survives the reset');
+    // 시험 매장 새로 만들기는 복구가 아니다: 기사 기기의 머리 답은 새 epoch + restoredUpToRev null. 기기는 이것을 보고 옛 epoch의 보낸 기록을 새
+    // 매장에 다시 보내지 않는다(키 · 세션이 남아 서명이 맞아도, work/impl-offline/plan.md §17 R3-1).
+    const beatRes = await driver.post('/api/v2/heartbeat', {
+      report: { pendingCount: 0, unconfirmedCount: 0, lastSeq: 0, clockOffsetMs: 0, appVersion: 'test', offlineCapable: true, localFirst: true, visibility: 'visible', unreadable: 0 },
+    });
+    assert.equal(beatRes.status, 200);
+    const beat = await beatRes.json();
+    assert.deepEqual([beat.epoch, beat.restoredUpToRev], [after1.instance?.epochId, null], 'a reset epoch is not a restore');
+    // 새 매장의 첫 보냄 대기 기록(4번): 옛 번호 1 ~ 3은 빈 번호로 알리지 않는다(이어진 끝을 이어 감, §17-4). 알리면 기기가 사본에 아직 들지 않은
+    // 옛 답을 새 매장에 다시 보낼 길이 생기고, 카운터의 확인 필요에 빈 번호가 남는다.
+    const fresh = await signedItem(phone, phoneBy, { type: 'notification.ack', payload: { notificationId: 'pin:v1' }, seq: 4, basis: { epoch: beat.epoch, rev: beat.rev }, now: Date.now() });
+    const freshRes = await driver.post('/api/v2/commands:batch', { report: deviceReport({ lastSeq: 4, pendingCount: 1 }), commands: [fresh] });
+    assert.equal(freshRes.status, 200);
+    const freshBody = await freshRes.json();
+    assert.equal(freshBody.results.length, 1);
+    assert.notEqual(freshBody.results[0].error?.code, 'SEQ_REUSED');
+    assert.deepEqual([freshBody.epoch, freshBody.restoredUpToRev, freshBody.device], [after1.instance?.epochId, null, { highWater: 4, missing: [] }]);
     // 옛 기준으로 보낸 명령은 적용하지 않는다(EPOCH_CHANGED).
     const stale = await (await same.command({ type: 'notification.ack', commandVersion: 1, requestId: newRequestId(), basis: oldHead, payload: { notificationId: 'pin:v1' } })).json();
     assert.equal(stale.error?.code, 'EPOCH_CHANGED');

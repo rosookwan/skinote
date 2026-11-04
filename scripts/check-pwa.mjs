@@ -11,7 +11,7 @@
 //   환경 변수: SKINOTE_PWA_URL(기본 http://127.0.0.1:5182/skinote/, 없으면 vite preview --base /skinote/를 그 포트에 띄움),
 //   SKINOTE_UI_OUT(찍은 화면, 기본 work/screens/step3), SKINOTE_PWA_DEV=0이면 ⑥을 건너뜀
 import { spawn } from 'node:child_process';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 
@@ -68,7 +68,7 @@ async function devCheck(browser) {
     const context = await browser.newContext({ viewport: { width: 1024, height: 600 } });
     const page = await context.newPage();
     await page.goto(devUrl + '#/ledger');
-    await page.waitForSelector('.sn-row', { timeout: 20_000 });
+    await page.waitForSelector('.pos-counter-row', { timeout: 20_000 });
     await page.waitForTimeout(1500);
     const registrations = await page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length);
     check('개발 서버에서는 서비스 워커를 등록하지 않는다', registrations === 0, '등록 ' + registrations + '개');
@@ -113,6 +113,12 @@ async function main() {
     let missing = 0;
     for (const file of files) if (!(await fetch(URL_BASE + file)).ok) missing += 1;
     check('목록의 파일이 모두 받아진다', missing === 0, '빠짐 ' + missing);
+    // 따로 받는 묶음(처음 열 때 받는 화면 · 기사 기기의 사본 · 앱 시작 입구 local/boot)이 모두 목록에 있다: 산에서 끊긴 채 앱을 다시 열어도
+    // 서버 없이 뜬다(work/impl-offline/plan.md O15).
+    const built = readdirSync(fileURLToPath(new URL('apps/pos/dist/assets/', ROOT))).filter((f) => f.endsWith('.js')).map((f) => 'assets/' + f);
+    const unlisted = built.filter((f) => !files.includes(f));
+    check('따로 받는 스크립트 묶음이 모두 미리 받을 목록에 있다(앱 시작 입구 boot 포함)', built.length > 0 && unlisted.length === 0 && built.some((f) => /\/boot-/.test(f)),
+      '묶음 ' + built.length + '개 · 빠짐 ' + unlisted.join(', '));
 
     // ③ 처음 방문: 설치 · 제어 · 저장
     const context = await browser.newContext({ viewport: { width: 1024, height: 600 }, locale: 'ko-KR', timezoneId: 'Asia/Seoul' });
@@ -120,7 +126,7 @@ async function main() {
     const errors = [];
     page.on('pageerror', (e) => errors.push(e.message));
     await page.goto(URL_BASE + '#/ledger');
-    await page.waitForSelector('.sn-row');
+    await page.waitForSelector('.pos-counter-row');
     const sw1 = await page.evaluate(async () => {
       const registration = await navigator.serviceWorker.ready;
       for (let i = 0; i < 50 && !navigator.serviceWorker.controller; i += 1) await new Promise((r) => setTimeout(r, 100));
@@ -156,12 +162,12 @@ async function main() {
     const fromWorker = [];
     page.on('response', (res) => { if (res.fromServiceWorker()) fromWorker.push(new URL(res.url()).pathname); });
     await page.reload();
-    await page.waitForSelector('.sn-row', { timeout: 10_000 });
+    await page.waitForSelector('.pos-counter-row', { timeout: 10_000 });
     await page.evaluate(() => document.fonts.ready);
     // 정말 끊겼는지: 저장본에 없는 주소를 부르면 실패해야 한다.
     const offline = await page.evaluate(async () => ({
       probe: await fetch('./__skinote_probe__?' + Date.now()).then(() => 'reached', () => 'failed'),
-      rows: document.querySelectorAll('.sn-row').length,
+      rows: document.querySelectorAll('.pos-counter-row').length,
       font: document.fonts.check('16px "Skinote Pretendard"'),
     }));
     await page.screenshot({ path: new URL('pwa-offline-ledger-1024x600.png', OUT).pathname });

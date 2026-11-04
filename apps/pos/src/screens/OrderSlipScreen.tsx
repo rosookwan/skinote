@@ -10,14 +10,13 @@
 // 전화(call)는 전화 창(CallDialog: 온전한 번호는 phoneReveal, 카운터는 번호와 `닫기`), 인쇄(print)는 A4 대여 접수증(PrintHost: 브라우저 인쇄 창),
 // 분실 처리(ticket_loss)는 분실 처리 창(TicketLossDialog, features-1 §8). 인쇄 · 분실 처리 창은 처음 누를 때 받는다(첫 화면 묶음을 작게).
 import {
-  ACTION_COMMAND, availableActions, offlineAllowed, type DeviceClassKey, resolveLedgerView, stampStepMap, visibleView, type ActionKey, type OrderSlip, type ResolvedLedgerView,
-  type ViewActionRow,
+  ACTION_COMMAND, availableActions, offlineAllowed, stampStepMap, type DeviceClassKey, resolveLedgerView, visibleView, type ActionKey, type OrderSlip, type ResolvedLedgerView,
+  type LedgerViewResult, type ViewActionRow,
 } from '@skinote/contract';
-import { fitList } from '@skinote/layout';
 import {
-  Checklist, FooterBar, Icon, Pager, PrimaryButton, Slip, TextFit, t, useDeviceProfile, useServerNow, useUi,
+  Icon, t, useDeviceProfile, useUi,
 } from '@skinote/ui';
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { dispatchAction } from '../app/actions.ts';
 import { useConfig, useConnection, useLive, usePointerDown } from '../app/client.tsx';
 import { actionLabel, stepButton } from '../app/labels.ts';
@@ -26,8 +25,8 @@ import { say } from '../app/strings.ts';
 import { pressStamp, useConfirmFlow, type ConfirmFlow } from '../components/ConfirmFlow.tsx';
 import { ChoiceSheet } from '../components/NoticeDialog.tsx';
 import { usePosHeader } from '../components/PosHeader.tsx';
-import { PromiseDialog } from '../components/PromiseDialog.tsx';
 import { CallDialog } from '../components/CallDialog.tsx';
+import { CounterDetail, CounterList, CounterSteps, saveCounterPhase, useCounterLayout } from '../components/CounterWorkspace.tsx';
 
 const loadPrint = () => import('../components/PrintHost.tsx');
 const loadLoss = () => import('../components/TicketLossDialog.tsx');
@@ -61,6 +60,13 @@ export function groupPayEntry(slip: Pick<OrderSlip, 'groupPay'> | null, actionKe
   return slip?.groupPay !== undefined && ACTION_COMMAND[actionKey] === 'payment.take';
 }
 
+/** 추가 처리에서도 권한과 대표 동작의 중복 제거를 기존 화면과 똑같이 적용한다. */
+export function slipExtraActions(view: ResolvedLedgerView, slip: OrderSlip): ViewActionRow[] {
+  const primaryCommand = slip.nextStep ? ACTION_COMMAND[slip.nextStep.actionKey] : null;
+  return availableActions(view.actions, slip.activeConditions, slip.deniedPermissions ?? [])
+    .filter((a) => primaryCommand === null || ACTION_COMMAND[a.action_key] !== primaryCommand);
+}
+
 /** 칸 값이 한 줄에도 없는 도장 칸은 그리지 않는다(적재 칸은 차량 배달 접수에만, 조건 vehicle_pickup). */
 function slipColumns(view: ResolvedLedgerView, slip: OrderSlip): ResolvedLedgerView {
   return { ...view, columns: view.columns.filter((c) => c.renderer_key !== 'stamp' || slip.lines.some((l) => l.cells[c.column_key])) };
@@ -69,15 +75,18 @@ function slipColumns(view: ResolvedLedgerView, slip: OrderSlip): ResolvedLedgerV
 export function OrderSlipScreen({ orderId }: { orderId: string }) {
   const config = useConfig();
   const profile = useDeviceProfile();
+  const layout = useCounterLayout();
   const { timezone } = useUi();
+  const steps = useMemo(() => config ? stampStepMap(config.stampSteps, config.features) : new Map(), [config]);
+  const [itemId, setItemId] = useState<string | null>(null);
   const baseFlow = useConfirmFlow();
-  const header = usePosHeader('slip');
+  const header = usePosHeader('slip', undefined, undefined, { compact: true });
   const pointer = usePointerDown();
-  const [itemsPage, setItemsPage] = useState(0);
-  const [itemsPages, setItemsPages] = useState(1);
   const [moreOpen, setMoreOpen] = useState(false);
   const [phone, setPhone] = useState(false);
   const [promise, setPromise] = useState(false);
+  const [customerPickup, setCustomerPickup] = useState(false);
+  const [urgent, setUrgent] = useState(false);
   const [discount, setDiscount] = useState(false);
   /** 접수 취소 · 품목 취소 창(features-1 §5-4). */
   const [cancel, setCancel] = useState<'order' | 'lines' | null>(null);
@@ -90,9 +99,12 @@ export function OrderSlipScreen({ orderId }: { orderId: string }) {
   // 인쇄 · 분실 처리 창의 묶음은 접수증을 연 뒤 미리 받아 둔다(누르면 곧바로 뜨게, 첫 화면 묶음에는 넣지 않음).
   useEffect(() => { void loadPrint().catch(() => undefined); void loadLoss().catch(() => undefined); }, []);
   const edit = useLoaded(loadEdit);
-  const hold = baseFlow.active || header.active || pointer || moreOpen || phone || promise || discount || cancel !== null || exchange || loss || printing;
+  const hold = baseFlow.active || header.active || pointer || moreOpen || itemId !== null || phone || promise || customerPickup || urgent || discount || cancel !== null || exchange || loss || printing;
   const live = useLive<OrderSlip>('slip:' + orderId + ':' + profile.key, (c) => c.query('orderSlip', { orderId, deviceClass: profile.key }), hold);
-  const slip = live.data;
+  // 화면 폭이 바뀌어 기기 등급 조회를 다시 받아도 열린 작업판과 선택값을 유지한다.
+  const lastSlip = useRef<OrderSlip | null>(null);
+  if (live.data) lastSlip.current = live.data;
+  const slip = live.data ?? (hold ? lastSlip.current : null);
   // 다른 팀 몫까지 받을 팀의 수납은 확인 창 대신 일괄 수납 화면(V5). 도장 · 처리 현황 · 옆 동작 · 주 버튼이 모두 이 길을 지난다.
   const flow: ConfirmFlow = {
     ...baseFlow,
@@ -107,8 +119,7 @@ export function OrderSlipScreen({ orderId }: { orderId: string }) {
     return resolved && config ? visibleView(resolved, config.features) : null;
   }, [config, profile.key]);
   const view = useMemo(() => (baseView && slip ? slipColumns(baseView, slip) : null), [baseView, slip]);
-  const steps = useMemo(() => (config ? stampStepMap(config.stampSteps, config.features) : new Map()), [config]);
-  const nowMs = useServerNow(slip?.serverTime);
+  const ledger = useLive<LedgerViewResult>('counter-teams:' + profile.key, (c) => c.ledgerView('day_ledger', { deviceClass: profile.key, tabKey: 'all' }), hold);
 
   const toLedger = () => {
     if (navState().fromLedger) back();
@@ -116,15 +127,15 @@ export function OrderSlipScreen({ orderId }: { orderId: string }) {
   };
 
   const next = slip?.nextStep ?? null;
+  // 종전 처리 현황의 도장 진입점을 추가 처리에 보존한다. 차량 경고·막힌 단계·권한은 같은 도장 경로가 처리한다.
+  const pending = (slip?.checklist ?? []).filter(item => item.state !== 'done' && item.stamp && item.actionKey !== next?.actionKey);
+  const item = slip?.lines.find(line => line.id === itemId);
+  const itemStamps = item ? Object.values(item.cells).flatMap(cell => cell.renderer === 'stamp' && cell.stamp.state !== 'na' ? [cell.stamp] : []) : [];
+
   // 옆 동작: 접수의 능력(조건)으로 거르고, 주황 버튼과 같은 명령을 하는 동작(수납 도장 · 수납)은 한 번만 보인다.
   const actions = useMemo(() => {
     if (!view || !slip) return { shown: [] as ViewActionRow[], overflow: [] as ViewActionRow[] };
-    const primaryCommand = next ? ACTION_COMMAND[next.actionKey] : null;
-    // 보는 사람에게 없는 권한이 걸린 줄은 뺀다(읽기 모델 deniedPermissions, features-1 E11).
-    const rows = availableActions(view.actions, slip.activeConditions, slip.deniedPermissions ?? [])
-      .filter((a) => primaryCommand === null || ACTION_COMMAND[a.action_key] !== primaryCommand);
-    const fitted = fitList(rows.map((a) => ({ ...a, pinnedEnd: false })), profile.capacity.sideActions);
-    return { shown: fitted.shown, overflow: fitted.overflow };
+    return { shown: [], overflow: slipExtraActions(view, slip) };
   }, [view, slip, next, profile.capacity.sideActions]);
 
   const dispatch = (key: ActionKey, lineIds?: string[]) => {
@@ -134,6 +145,7 @@ export function OrderSlipScreen({ orderId }: { orderId: string }) {
       target: { orderId: slip.orderId, ...(lineIds ? { lineIds } : {}) },
       own: {
         call: () => setPhone(true),
+        pin: () => setUrgent(true),
         change_promise: () => {
           if (promiseEntry(connection.online, profile.key) === 'dialog') setPromise(true);
           else flow.notify({ title: actionLabel('change_promise'), lines: [say('promiseOffline')] });
@@ -177,67 +189,28 @@ export function OrderSlipScreen({ orderId }: { orderId: string }) {
     );
   }
 
-  const primary = next ? stepButton(next.actionKey, next.figure) : null;
-
   return (
-    <div className="sn-screen">
+    <div className={'sn-screen pos-counter' + (layout.compact ? ' is-compact' : '')}>
       {header.element}
-      <div className="sn-desk pos-slip-desk">
-        {slip && view ? (
-          <>
-            <Slip
-              slip={slip}
-              view={view}
-              steps={steps}
-              nowMs={nowMs}
-              itemsPage={itemsPage}
-              onItemsPaging={setItemsPages}
-              onStampPress={(line, _column, cell) => pressStamp(flow, steps, timezone, { orderId: slip.orderId, lineIds: [line.id], teamName: slip.teamName }, cell, (key) => dispatch(key, [line.id]))}
-            />
-            <aside className="pos-side" aria-label={say('remainingSteps')}>
-              <Checklist
-                items={slip.checklist}
-                nowMs={nowMs}
-                onItemPress={(item) => { if (item.stamp) pressStamp(flow, steps, timezone, { orderId: slip.orderId, teamName: slip.teamName }, item.stamp, (key) => dispatch(key)); }}
-                primary={primary && next ? (
-                  <PrimaryButton label={primary.label} alts={primary.alts} onPress={() => dispatch(next.actionKey)} />
-                ) : null}
-              />
-              <div className="pos-side-actions">
-                {actions.shown.map((row) => (
-                  <button key={row.action_key} type="button" className="sn-button" onClick={() => doAction(row)}>
-                    {row.action_key === 'call' ? <Icon name="phone" /> : null}
-                    <TextFit input={{ mode: 'alts', alts: [actionLabel(row.action_key)] }} />
-                  </button>
-                ))}
-                {actions.overflow.length ? (
-                  <button type="button" className="sn-button" onClick={() => setMoreOpen(true)}>
-                    <Icon name="more" />
-                    <span>{t('more')}</span>
-                  </button>
-                ) : null}
-              </div>
-            </aside>
-          </>
-        ) : null}
-      </div>
-      <FooterBar metrics={[]} pager={<Pager label={say('itemsPager')} page={itemsPage} pageCount={itemsPages} onChange={setItemsPage} />}>
-        <div className="pos-footer-back">
-          <button type="button" className="sn-button" onClick={toLedger}>
-            <Icon name="left" />
-            <span>{t('home')}</span>
-          </button>
-          {slip ? <TextFit input={{ mode: 'parts', parts: [{ text: say('teamName', { name: slip.teamName }), drop: 0 }, ...(slip.last4 ? [{ text: say('last4', { last4: slip.last4 }), drop: 1 }] : [])] }} /> : null}
+      <main className="pos-counter-main">
+        {ledger.data?.counter && slip?.counter ? <CounterSteps overview={ledger.data.counter} active={slip.counter.phase} onSelect={(phase) => { saveCounterPhase(phase); go({ name: 'ledger', date: slip.businessDate }); }} /> : null}
+        <div className={'pos-counter-workspace' + (layout.wide ? ' is-wide' : '')}>
+          {layout.wide && ledger.data?.counter ? <aside className="pos-counter-rail"><h2>{say('counterTitle')}</h2><CounterList serverTime={ledger.data.serverTime} teams={ledger.data.counter.teams.filter((team) => !team.complete || team.orderId === orderId)} rail selected={orderId} onOpen={(team) => go({ name: 'slip', orderId: team.orderId }, { replace: true, state: navState() })} /></aside> : null}
+          {slip ? <CounterDetail key={slip.orderId} slip={slip} wide={layout.wide} compact={layout.compact} onBack={toLedger} onPrimary={() => { if (next) dispatch(next.actionKey); }} onMore={() => setMoreOpen(true)} onItem={setItemId} onSchedule={actions.overflow.some((a) => a.action_key === 'change_promise') ? () => dispatch('change_promise') : undefined} /> : null}
         </div>
-      </FooterBar>
+      </main>
       {moreOpen ? (
         <ChoiceSheet
           title={t('more')}
-          choices={actions.overflow.map((row) => ({ key: row.action_key, label: actionLabel(row.action_key) }))}
-          onPick={(key) => { const row = actions.overflow.find((a) => a.action_key === key); if (row) doAction(row); }}
+          choices={[...pending.map(item => ({key: '__step:' + item.stepKey, label: stepButton(item.actionKey, item.figure).label})), ...(slip?.customerPickupEditable ? [{ key: '__customerPickup', label: say('customerPickup') }] : []), ...(slip?.urgentTasks?.length && !actions.overflow.some((a) => a.action_key === 'pin') ? [{ key: 'pin', label: say('urgentTitle') }] : []), ...actions.overflow.map((row) => ({ key: row.action_key, label: actionLabel(row.action_key) }))]}
+          onPick={(key) => { const step = pending.find(item => '__step:' + item.stepKey === key); if (step?.stamp && slip) { setMoreOpen(false); pressStamp(flow, steps, timezone, { orderId: slip.orderId, teamName: slip.teamName }, step.stamp, dispatch); return; } if (key === '__customerPickup') { setMoreOpen(false); setCustomerPickup(true); return; } if (key === 'pin') { setMoreOpen(false); setUrgent(true); return; } const row = actions.overflow.find((a) => a.action_key === key); if (row) doAction(row); }}
           onClose={() => setMoreOpen(false)}
         />
       ) : null}
+      {item && slip ? <ChoiceSheet title={item.label}
+        choices={itemStamps.map(cell => ({key: cell.stepKey, label: cell.label ?? steps.get(cell.stepKey)?.label ?? cell.stepKey}))}
+        onPick={key => { const cell = itemStamps.find(cell => cell.stepKey === key); if (!cell) return; setItemId(null); pressStamp(flow, steps, timezone, { orderId: slip.orderId, lineIds: [item.id], teamName: slip.teamName }, cell, action => dispatch(action, [item.id])); }}
+        onClose={() => setItemId(null)} /> : null}
       {phone && slip ? (
         <CallDialog orderId={slip.orderId} fallbackTitle={say('noticeTitle', { label: actionLabel('call'), name: slip.teamName })} onClose={() => setPhone(false)} />
       ) : null}
@@ -282,8 +255,10 @@ export function OrderSlipScreen({ orderId }: { orderId: string }) {
           onFail={(line) => { setExchange(false); flow.notify({ title: actionLabel('exchange_swap'), lines: [line] }); }}
         />
       ) : null}
-      {promise && slip ? (
-        <PromiseDialog
+      {urgent && slip && edit ? <edit.UrgentRequestDialog slip={slip} onClose={() => setUrgent(false)} {...(actions.overflow.some((a) => a.action_key === 'change_promise') ? { onSchedule: () => { setUrgent(false); dispatch('change_promise'); } } : {})} /> : null}
+      {customerPickup && slip && edit ? <edit.CustomerPickupDialog slip={slip} onClose={() => setCustomerPickup(false)} /> : null}
+      {promise && slip && edit ? (
+        <edit.PromiseDialog
           orderId={slip.orderId}
           onClose={() => setPromise(false)}
           onFail={(line) => { setPromise(false); flow.notify({ title: actionLabel('change_promise'), lines: [line] }); }}

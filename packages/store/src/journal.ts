@@ -3,12 +3,12 @@
 // 범위마다), 의도 표시(intent_marks: 충돌 확인), 확인 결과(integrity_findings).
 // 지문(fingerprint)은 매장마다의 비밀 열쇠로 만든 HMAC이다: 맨 sha256이면 전화번호를 거꾸로 맞춰 볼 수 있다(sync 2).
 import { createHash, createHmac, hkdfSync, randomBytes } from 'node:crypto';
-import type { AnyCommandEnvelope, CommandOutcome, CommandOutcomeKey } from '@skinote/contract';
+import { PII_KEYS, type AnyCommandEnvelope, type CommandOutcome, type CommandOutcomeKey } from '@skinote/contract';
 import { addDays, canonicalJson, isoOf, ulid } from './ids.ts';
 import { all, insert, num, one, run, str, text, type Db } from './db.ts';
 
-/** 명령 본문에서 개인정보 · 자유 글로 보는 칸(값이 글이면 참조로 바꾼다). */
-export const PII_KEYS: ReadonlySet<string> = new Set(['name', 'teamName', 'phone', 'note', 'reason', 'reasonNote', 'overrideReason', 'placeNote', 'memo']);
+/** 명령 본문에서 개인정보 · 자유 글로 보는 칸(값이 글이면 참조로 바꾼다). 기기의 24시간 지우기와 같은 목록(@skinote/contract pii.ts). */
+export { PII_KEYS };
 
 /** 개인정보를 뺀 본문과 뺀 값(경로 → 값). 뺀 자리는 { ref: 경로 }다. */
 export function splitPii(value: unknown, path = ''): { clean: unknown; pii: Record<string, string> } {
@@ -90,7 +90,25 @@ export interface LogWrite {
   basis?: { epoch: string; rev: number };
   dependsOn?: readonly string[];
   now: number;
+  /**
+   * 보냄 대기 명령의 칸(work/impl-offline/plan.md §6-1): 기기 번호, 기기 서명, 보낸 세션(행위자와 다를 때), 시각의 출처, 일어난 때 · 받은 때(now는 끝낸 때),
+   * 결과의 코드(적용했지만 공급자 확인 중: BAD_SIGNATURE · FORBIDDEN_SCOPE), 결과 보관 끝(보류 행은 지우지 않음).
+   */
+  queued?: {
+    deviceSeq?: number;
+    signature?: string;
+    submittedByKey?: string;
+    timeSource: 'server' | 'monotonic' | 'wall_clock';
+    occurredAt: number;
+    receivedAt: number;
+    errorCode?: string;
+    resultExpiresAt?: string;
+    result?: unknown;
+  };
 }
+
+/** 보류 행의 결과 보관 끝(90일 정리가 봉투를 지우지 않게, O10). */
+export const HELD_EXPIRES_AT = '9999-12-31T00:00:00.000Z';
 
 /** 결과 보관 기간(retention.command_result_days 기본 90일). */
 const RESULT_DAYS = 90;
@@ -101,22 +119,24 @@ const RESULT_DAYS = 90;
  */
 export function writeLog(db: Db, shopId: string, w: LogWrite, existing: LogRow | undefined): boolean {
   const at = isoOf(w.now);
+  const q = w.queued;
   const fields = {
     status_key: w.outcome.outcome,
     retryable: w.retryable,
-    error_code: w.outcome.error?.code,
-    result_json: canonicalJson(w.outcome),
-    result_expires_at: addDays(at.slice(0, 10), RESULT_DAYS) + at.slice(10),
+    error_code: q?.errorCode ?? w.outcome.error?.code,
+    result_json: canonicalJson(q?.result ?? w.outcome),
+    result_expires_at: q?.resultExpiresAt ?? addDays(at.slice(0, 10), RESULT_DAYS) + at.slice(10),
     applied_rev: w.appliedRev,
     basis_epoch_id: w.basis?.epoch,
     basis_rev: w.basis?.rev,
-    occurred_at: at,
+    occurred_at: q ? isoOf(q.occurredAt) : at,
     finished_at: at,
   };
   if (!existing) {
     insert(db, 'command_log', {
       shop_id: shopId, request_id: w.requestId, actor_key: w.actorKey, device_id: w.deviceId, command_type: w.type, command_version: w.commandVersion,
-      fingerprint: w.fingerprint, ...fields, depends_on_json: JSON.stringify(w.dependsOn ?? []), time_source_key: 'server', received_at: at,
+      fingerprint: w.fingerprint, ...fields, depends_on_json: JSON.stringify(w.dependsOn ?? []), time_source_key: q?.timeSource ?? 'server',
+      received_at: q ? isoOf(q.receivedAt) : at, device_seq: q?.deviceSeq, actor_signature: q?.signature, submitted_by_key: q?.submittedByKey,
     });
     return true;
   }

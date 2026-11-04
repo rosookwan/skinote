@@ -427,6 +427,11 @@ export const collectLeft = (l: FxLine) => (l.returnable ? Math.max(0, l.issued -
 export const onVan = (l: FxLine) => Math.max(0, l.collected - (l.received ?? 0));
 /** 차량 수거 업무가 끝났는지: 내준 것이 모두 돌아왔다(차량이 받았거나 손님이 매장에 가져왔다). */
 export const collectDone = (o: FxOrder) => !o.lines.some((l) => collectLeft(l) > 0);
+/**
+ * 수거 목록 · 업무 판의 `완료`: 돌려받을 것을 내준 적이 있고 모두 돌아왔다(work/impl-offline/plan.md §17 R3-31). 아직 지급하지 않은 팀의 수거 업무는
+ * 받을 것이 없어도 끝나지 않았다(`수거 완료`가 아님, 잔여에 센다). 늦음 · 받을 것 셈은 collectDone 그대로다.
+ */
+export const collectFinished = (o: FxOrder) => o.lines.some((l) => l.returnable && l.issued > 0) && collectDone(o);
 /** 셀 수 있는 장비(개) 수. 권(매)은 따로 센다. */
 export const unitCount = (lines: readonly FxLine[], pick: (l: FxLine) => number) => lines.filter((l) => !l.unit).reduce((sum, l) => sum + pick(l), 0);
 
@@ -540,21 +545,29 @@ export function listTasks(state: ShopState, vehicleId: string, date: string): Fx
   });
 }
 
-/** 긴급 요청이 걸린 업무(없으면 그 접수의 원래 일정 업무, 그것도 없으면 첫 업무). */
+/** 긴급 요청의 배달·수거 업무. 업무 id가 없던 옛 자료만 접수의 원래 수거 일정으로 읽는다. */
 export function pinTask(state: ShopState, pin: FxPin): FxTask | undefined {
   const o = findOrder(state, pin.orderId);
   if (!o) return undefined;
-  return findTask(state, pin.taskId ?? collectTaskIdOf(o, null)) ?? orderTasks(o)[0];
+  if (pin.taskId && isDeliverTaskId(pin.taskId)) return pin.taskId === 'deliver:' + o.id && isVehiclePickup(o)
+    ? { id: pin.taskId, order: o, key: null, promise: o.pickup } : undefined;
+  const task = pin.taskId ? findTask(state, pin.taskId) : findTask(state, collectTaskIdOf(o, null)) ?? orderTasks(o)[0];
+  return task?.order.id === o.id ? task : undefined;
 }
 
 /** 긴급 요청의 업무 id(목록 줄 · 기사 알림이 가리키는 곳). */
 export const pinTaskId = (state: ShopState, pin: FxPin) => pinTask(state, pin)?.id ?? pin.taskId ?? 'collect:' + pin.orderId;
 
-/** 아직 끝나지 않은 수거 업무의 빨리 확인(가장 이른 약속부터). 받거나 매장에 돌아오면 사라진다. */
+/** 아직 끝나지 않은 배달·수거 긴급. 미확인 먼저, 요청한 순서. 확인만으로 완료되지 않는다. */
 export function openPins(state: ShopState): FxPin[] {
   return state.pins
-    .filter((p) => { const task = pinTask(state, p); return task !== undefined && !collectDone(taskOrder(task)); })
-    .sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
+    .filter((p) => {
+      const task = pinTask(state, p);
+      return p.releasedAt === undefined && task !== undefined && (p.vehicleId === undefined || p.vehicleId === task.promise.vehicleId)
+        && (isDeliverTaskId(task.id) ? pendingIssue(task.order) : !collectDone(taskOrder(task)));
+    })
+    .sort((a, b) => Number(a.status === 'acknowledged' && !a.pendingAck) - Number(b.status === 'acknowledged' && !b.pendingAck)
+      || (a.requestedAt ?? a.at) - (b.requestedAt ?? b.at) || a.id.localeCompare(b.id));
 }
 
 /** 반납 타임 묶음 키('s2200'). 업무를 비춘 접수(taskOrder)에서는 그 업무의 일정. */

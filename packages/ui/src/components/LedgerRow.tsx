@@ -195,19 +195,30 @@ export function LedgerRow({ row, layout, columns, steps, nowMs, selected = false
     }
     let input = cellFitInput(cell);
     if (!input) return null;
+    // 줄 메모(재방문 · 기기가 받은 답의 `매장 반납 완료` …): 둘째 줄이 있는 모양(휴대폰, 품목이 팀 칸 둘째 줄)이면 둘째 줄 맨 앞에 두어 빠지지 않게,
+    // 아니면 첫 줄 끝(좁으면 먼저 빠진다).
+    const noteSecond = cell.renderer === 'team' && !!row.reviewNote && fitted.folded.some((f) => f.mode !== 'prefix');
+    if (noteSecond && row.reviewNote) {
+      const items = secondLines.find((line) => line.input.mode === 'items');
+      if (items && items.input.mode === 'items') items.input = { mode: 'items', items: [row.reviewNote, ...items.input.items] };
+      else secondLines.unshift({ key: 'review-note', input: { mode: 'parts', parts: [{ text: row.reviewNote, drop: 0 }] } });
+    }
     // 합친 묶음 제목의 쪽: 팀 칸 앞에 반납 타임('16:30 · 김민재 · 0021'), 좁으면 먼저 빠진다(이름 · 끝 4자리는 남음).
     if (cell.renderer === 'team' && groupPrefix) prefix.unshift({ text: groupPrefix, drop: 3 });
     // 시각 칸이 따로 보이면 '자리 바뀜'은 그 칸 윗줄에 있다. 시각이 팀 칸에 합쳐졌을 때만 팀 칸 조각으로 붙인다.
     const movedInTeam = row.moved && cell.renderer === 'team' && !layout.columns.some((c) => c.renderer === 'time');
-    if (input.mode === 'parts' && (prefix.length || movedInTeam || row.reviewNote)) {
+    if (input.mode === 'parts' && (prefix.length || movedInTeam || (row.reviewNote && !noteSecond))) {
       const extra: TextPart[] = [];
-      if (row.reviewNote && cell.renderer === 'team') extra.push({ text: row.reviewNote, drop: 5 });
+      // 줄 메모는 이름 · 끝 4자리 다음으로 남는다(합쳐 들어온 시각 조각이 먼저 빠진다): 기사가 자기 기록의 결과를 놓치지 않게.
+      if (row.reviewNote && cell.renderer === 'team' && !noteSecond) extra.push({ text: row.reviewNote, drop: 0.5 });
       if (movedInTeam) extra.push({ text: t('moved'), drop: 9 });
       input = { mode: 'parts', parts: [...prefix, ...input.parts, ...extra] };
     }
-    const fittedText = <TextFit input={input} width={width} className={toneClass(cell, cellLate)} />;
+    // 장소 이름표 자리가 있는 줄은 이름표 칸과의 사이(--sn-space-xs)를 뺀 폭에 맞춘다(이름표가 빠져도 사이는 남는다: 글이 칸을 꽉 채우는 줄에서 몇 px 넘치지 않게).
+    const teamLine = cell.renderer === 'team' && !!row.subgroupLabel;
+    const fittedText = <TextFit input={input} width={teamLine ? Math.max(0, width - profile.space.xs) : width} className={toneClass(cell, cellLate)} />;
     // 장소 이름표는 팀 이름 뒤 남는 폭에(이름 · 끝 4자리가 먼저).
-    const firstLine = cell.renderer === 'team' && row.subgroupLabel ? (
+    const firstLine = teamLine && row.subgroupLabel ? (
       <span className="sn-team-line">
         {fittedText}
         <PlaceTag label={row.subgroupLabel} short={row.subgroupShortLabel} />

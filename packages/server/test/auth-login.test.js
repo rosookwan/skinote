@@ -18,8 +18,9 @@ const MINUTE = 60_000;
 /**
  * 시험 매장 + 등록 번호 n개 + 가짜 시계 · 기다림 기록으로 띄운 서버.
  * @param {string} name @param {number} codes
+ * @param {{ sleep?: (ms: number) => Promise<void> }} [options]
  */
-async function setup(name, codes) {
+async function setup(name, codes, { sleep } = {}) {
   const dataDir = join(temp.dir, name);
   const shop = await provisionedShop(dataDir);
   const list = [];
@@ -29,7 +30,7 @@ async function setup(name, codes) {
   const sleeps = [];
   const { lines, log } = collectLog();
   const app = await startServer(testConfig(dataDir, shop.env), {
-    log, now: () => new Date(clock.t), sleep: async ms => { sleeps.push(ms); },
+    log, now: () => new Date(clock.t), sleep: async ms => { sleeps.push(ms); if (sleep) await sleep(ms); },
   });
   return { dataDir, pins: shop.pins, codes: list, clock, sleeps, lines, app };
 }
@@ -56,7 +57,9 @@ test('signature and PIN give a __Host- cookie with exact attributes and a Sessio
     const maxAge = Number(/Max-Age=(\d+)/.exec(cookie)?.[1]);
     assert.ok(maxAge >= 12 * 3600 && maxAge <= 36 * 3600, 'a counter session lasts until the next cutoff at least 12 h away');
     const info = await res.json();
-    assert.deepEqual(Object.keys(info).sort(), ['csrf', 'device', 'idleTimeoutS', 'serverTime', 'shop', 'staff']);
+    // 세션의 공개 id · 끝(보냄 대기 봉투의 recordedBy.sessionId, work/impl-offline/plan.md §4-3). 카운터 세션에는 차량 · 운영 값이 없다.
+    assert.deepEqual(Object.keys(info).sort(), ['csrf', 'device', 'idleTimeoutS', 'serverTime', 'session', 'shop', 'staff']);
+    assert.deepEqual(Object.keys(info.session).sort(), ['expiresAt', 'id', 'idleTimeoutS']);
     assert.deepEqual(info.staff.name, '김카운터');
     assert.equal(info.staff.roleKey, 'counter');
     assert.equal(info.device.kind, 'pos');
@@ -252,26 +255,51 @@ test('a new login revokes the session in the presented cookie; unknown staff is 
   }
 });
 
-test('parallel PIN guesses: one check at a time per account and device — the burst gets 429 BUSY and the right PIN inside it does not get in', async () => {
-  const { app, codes, pins } = await setup('race', 1);
+test('parallel PIN guesses: overlapping requests are BUSY, then a correct retry succeeds after the failed check ends', { timeout: 20_000 }, async t => {
+  const waiting = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  const { app, codes, pins } = await setup('race', 1, {
+    sleep: async () => { waiting.resolve(undefined); await release.promise; },
+  });
+  /** @type {Promise<Response> | undefined} */
+  let first;
   try {
     const a = device(app.port);
     assert.equal((await a.enroll(/** @type {string} */ (codes[0]))).status, 200);
     const tiles = await (await a.staffList()).json();
     const staffId = tiles.staff.find((/** @type {{ name: string }} */ s) => s.name === '정하늘').id;
     const right = /** @type {string} */ (pins['정하늘']);
-    const burst = [...Array(20).fill(wrongPin(right)).slice(0, 10), right, ...Array(10).fill(wrongPin(right))];
-    const answers = await Promise.all(burst.map(async pin => {
+    // 실제 PIN 확인 시간이 길어져도 실패 대기 구간에 도달한다. 서버의 확인 잠금은 이 구간이 끝날 때 풀린다.
+    // 요청 전송 시각에 기대지 않고 첫 확인을 유지한 채 나머지 요청이 모두 응답할 때까지 기다린다.
+    t.mock.method(performance, 'now', () => 0);
+    first = a.post('/api/v2/login', { ticket: tiles.ticket, staffId, pin: wrongPin(right) });
+    await Promise.race([
+      waiting.promise,
+      first.then(() => { throw new Error('첫 로그인 확인이 대기 구간 전에 끝났다'); }),
+    ]);
+    const burst = [...Array(9).fill(wrongPin(right)), right, ...Array(10).fill(wrongPin(right))];
+    const overlapping = await Promise.all(burst.map(async pin => {
       const res = await a.post('/api/v2/login', { ticket: tiles.ticket, staffId, pin });
       return { status: res.status, body: await res.json().catch(() => null) };
     }));
+    assert.ok(overlapping.every(x => x.status === 429 && x.body?.code === 'BUSY'), '겹친 요청은 올바른 PIN도 확인하지 않는다');
+    release.resolve(undefined);
+    const failed = await first;
+    const answers = [{ status: failed.status, body: await failed.json() }, ...overlapping];
     const counts = answers.reduce((m, x) => ({ ...m, [x.status]: (m[x.status] ?? 0) + 1 }), /** @type {Record<number, number>} */ ({}));
     assert.equal(counts[200] ?? 0, 0, 'no session from inside a guessing burst: ' + JSON.stringify(counts));
-    assert.ok((counts[429] ?? 0) >= 1, 'concurrent tries wait their turn (BUSY): ' + JSON.stringify(counts));
+    assert.equal(counts[401], 1, '첫 요청 한 건만 PIN을 확인하고 실패한다');
+    assert.equal(counts[429], 20, '겹친 나머지 스무 건은 모두 BUSY다');
     assert.ok(answers.filter(x => x.status === 429).every(x => x.body?.code === 'BUSY'));
     const checked = answers.filter(x => x.status !== 429).length;
-    assert.ok(checked <= 5, 'at most the lock limit of PINs were compared: ' + checked);
+    assert.equal(checked, 1, '겹친 요청은 실패 횟수를 늘리지 않는다');
+    // 첫 실패가 끝난 뒤 도착한 올바른 요청은 동시 요청이 아니다. 같은 표로 정상 재시도가 가능해야 한다.
+    const retry = await a.post('/api/v2/login', { ticket: tiles.ticket, staffId, pin: right });
+    assert.equal(retry.status, 200);
+    assert.match(retry.headers.get('set-cookie') ?? '', /^__Host-sn_session=/);
   } finally {
+    release.resolve(undefined);
+    await first?.catch(() => {});
     await app.close();
   }
 });

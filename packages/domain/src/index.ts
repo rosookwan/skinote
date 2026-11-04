@@ -41,4 +41,9 @@ export * from './settings-view.ts';
 export * from './commands.ts';
 export * from './execute.ts';
 export * from './query.ts';
+// 기사 기기의 연결 끊김 기록(work/impl-offline/plan.md §5): 보냄 대기 규칙 · 중복 수납 의심 · 차량 범위 사본 · 보냄 대기 겹치기.
+export * from './queued.ts';
+export * from './money-duplicates.ts';
+export * from './scope.ts';
+export * from './overlay.ts';
 export { SAMPLE_STAFF, prepareImport, sampleDay, sampleRegistry, sampleRules, sampleSpec, type ImportOptions, type SampleDayOptions, type SampleShop } from './sample/index.ts';

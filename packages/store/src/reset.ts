@@ -2,7 +2,8 @@
 // 이어 갈 것(직원 id · 계정, 기기, 등록 번호, 기기 번호 셈, epoch · rev)을 읽고(readResetCarry), 새 빈 파일(마이그레이션만 한 것)에
 // 명세와 이어 갈 것을 한 트랜잭션으로 쓴다(rebuildShop). 직원 id · 기기 id가 같으니 control의 계정 · 비밀번호 · 세션이 그대로 맞는다.
 // 새 명세에 차량이 없는 기사 기기는 옮기지 않는다(부르는 쪽이 그 기기의 세션을 끝낸다). 기기 로그인 기록(device_sign_ins)은 옛 epoch의
-// 기록이라 옮기지 않는다(옛 파일의 백업에 남는다). 파일 바꾸기 · 백업 · control 행은 서버(packages/server/src/shop-reset.js)가 한다.
+// 기록이라 옮기지 않는다(옛 파일의 백업에 남는다). 기사 기기의 이어진 끝(device_sync_cursors)은 가장 큰 번호로 새로 적는다(옛 번호를 빈 번호로
+// 알리지 않게, work/impl-offline/plan.md §17-4). 파일 바꾸기 · 백업 · control 행은 서버(packages/server/src/shop-reset.js)가 한다.
 import type { ShopSpec } from '@skinote/domain';
 import { StoreError } from './errors.ts';
 import { all, insert, num, one, run, str, text, type Db, type Row } from './db.ts';
@@ -87,6 +88,13 @@ export function rebuildShop(db: Db, shopId: string, spec: ShopSpec, now: number,
         continue;
       }
       insert(db, 'devices', { ...row, shop_id: shopId, branch_id: null, closing_scope_id: text(row.closing_scope_id) === MAIN_SCOPE ? MAIN_SCOPE : null });
+      // 이어진 끝(device_sync_cursors.last_device_seq)도 이어 간다(work/impl-offline/plan.md §17-4): 옛 epoch의 번호는 새 매장이 받지 않을 번호다.
+      // 없으면 새 매장이 1부터 번호 빈 곳으로 알려(gaps) 기기가 옛 기록을 다시 보내려 하고, 카운터의 확인 필요에 빈 번호가 남는다.
+      if (num(row.last_device_seq) > 0) {
+        insert(db, 'device_sync_cursors', {
+          shop_id: shopId, device_id: str(row.id), stream_key: 'changes', epoch_id: made.epoch, last_rev: 0, last_device_seq: num(row.last_device_seq),
+        });
+      }
       kept.push(str(row.id));
       shortNo = Math.max(shortNo, num(row.short_no));
     }

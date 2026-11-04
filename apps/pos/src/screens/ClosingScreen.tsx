@@ -5,13 +5,17 @@
 // 1024×529 55 · 54 — 세 크기 모두 한 쪽이다. 이월 항목은 한 쪽 5줄(spec)이고 넘치면 머리 오른쪽 끝에서 쪽을 넘긴다.
 // 화면은 계산하지 않는다: 센 돈통 · 이월한 봉투(화면 초안, app/closing-draft.ts)를 인자로 closingSheet를 묻고, 줄 · 요약 · 주 버튼 · 마감
 // 명령(closing.close)을 받는다. 점검은 아래 판(CashCheckPanel), 마감은 주 버튼이 바로 보낸다(요청번호는 마감 차례가 된 때 하나).
+// 기사 기기가 끊겨 막힌 마감(work/impl-offline/plan.md O12 · §8-2): 주 버튼이 막는 단계 창(`1호 차량 연결 끊김 · 21:40부터 · 마감 전 전송 필요` ·
+// `재확인` · `관리자 승인` · `닫기`)을 연다. 넘길 권한(closing.reopen)이 있으면 `관리자 승인` → 본인 비밀번호 판(`{이름} · 비밀번호`, 서버가 봄) →
+// 사유(화면 키보드, 20자) → 확인 창의 주 버튼 `마감 · 12월 26일`(마감 명령에 승인 id · 사유만 싣고, 서버가 차량 연결 · 승인을 정규 본문에 적는다).
+// 권한이 없으면 단계 줄 아래 `권한 없음 · 관리자 확인 필요`. 넘긴 차량 현금은 마감표에서 `점검 이월`이다.
 import {
-  envelopeFor, isAccepted, offlineAllowed, type Basis, type CarryItem, type CashCheckRow, type ClosingCount, type ClosingMethodRow, type ClosingSheetParams, type ClosingSheetView,
-  type ConfirmCommand,
+  OVERRIDE_REASON_MAX, envelopeFor, isAccepted, offlineAllowed, type AnyCommandEnvelope, type Basis, type CarryItem, type CashCheckRow, type ClosingCount,
+  type ClosingMethodRow, type ClosingSheetParams, type ClosingSheetView, type ConfirmCommand,
 } from '@skinote/contract';
 import { fillRows } from '@skinote/layout';
 import {
-  FooterBar, Icon, Pager, ReviewStepLine, RichLine, StampMark, TextFit, formatWon, t, useCommandDraft, useElementSize, useUi, type DeviceProfile,
+  FooterBar, Icon, NumberPad, Pager, ReviewStepLine, RichLine, StampMark, TextFit, formatTime, formatWon, t, useCommandDraft, useElementSize, useUi, type DeviceProfile,
 } from '@skinote/ui';
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
@@ -19,10 +23,13 @@ import {
 } from '../app/closing-draft.ts';
 import { useClient, useConnection, useLive } from '../app/client.tsx';
 import { go } from '../app/router.ts';
+import { ServerRefusal } from '../app/server-refusal.ts';
+import { useSession } from '../app/session-context.ts';
 import { say } from '../app/strings.ts';
 import { CashCheckPanel } from '../components/CashCheckPanel.tsx';
 import { NoticeDialog } from '../components/NoticeDialog.tsx';
 import { usePosHeader } from '../components/PosHeader.tsx';
+import { TextSheet } from '../components/TextSheet.tsx';
 
 const NO_BASIS: Basis = { epoch: '', rev: 0 };
 const CLOSE_SHAPE: ConfirmCommand = { type: 'closing.close', payload: { date: '', drawerCounts: [], deferredTransferIds: [] } };
@@ -43,8 +50,8 @@ export interface ClosingLayout {
  * 오른쪽은 머리를 뺀 높이를 한 쪽 5줄로 나눈다(52 이상 88 이하, DeviceProfile fill). 이월 항목이 한 쪽을 넘으면 머리에 쪽 넘김이 들어가
  * 머리가 누르는 곳 높이가 된다.
  */
-export function closingLayout(profile: DeviceProfile, heightPx: number, rows: { left: number; carry: number }): ClosingLayout {
-  const room = heightPx - profile.headerPx - profile.footerPx - profile.titleTabsPx - profile.space.s - profile.space.l;
+export function closingLayout(profile: DeviceProfile, heightPx: number, rows: { left: number; carry: number }, bodyHeightPx?: number): ClosingLayout {
+  const room = (bodyHeightPx ?? heightPx - profile.headerPx - profile.footerPx - profile.titleTabsPx) - profile.space.s - profile.space.l;
   const { rowMinPx: min, rowMaxPx: max } = profile.fill;
   const left = fillRows(room - 2 * profile.tableHeadPx - profile.space.m, rows.left, min, max);
   const carry = (head: number) => {
@@ -72,10 +79,30 @@ export function closingColumns(profile: Pick<DeviceProfile, 'minTargetPx' | 'spa
 
 type LeftRow = { kind: 'method'; row: ClosingMethodRow } | { kind: 'cash'; row: CashCheckRow };
 
+/** 관리자 승인(막힌 마감 넘기기)의 단계: 본인 비밀번호 → 사유 → 확인 창. */
+type Approve = { step: 'pin'; line?: string } | { step: 'reason'; approvalId: string } | { step: 'confirm'; approvalId: string; reason: string };
+
+/** 승인 거절 코드 → 숫자판의 한 줄(비밀번호 재발급 창과 같은 말, 문구 표 3-17 · 3-21). */
+export function approveLine(error: unknown, timezone: string): string {
+  const code = error instanceof ServerRefusal ? error.code : (error as { code?: unknown } | null)?.code;
+  if (code === 'PIN_MISMATCH') return say('pinWrong');
+  if (code === 'LOCKED' && error instanceof ServerRefusal && error.lockedUntil) return say('loginLocked', { time: formatTime(error.lockedUntil, timezone) });
+  if (code === 'RATE_LIMITED' || code === 'BUSY' || code === 'LOCKED') return say('tooManyTries');
+  if (code === 'FORBIDDEN') return say('noPermission');
+  if (code === 'NETWORK') return say('sendFailed');
+  return say('commandFailed');
+}
+
+/** 넘기는 마감 명령: 마감 초안의 봉투에 승인 id · 사유만 싣는다(서버가 차량 연결 · 승인을 정규 본문에 적는다, O12). */
+export function approvedEnvelope(envelope: AnyCommandEnvelope, approvalId: string, reason: string): AnyCommandEnvelope {
+  if (envelope.type !== 'closing.close') return envelope;
+  return { ...envelope, payload: { ...envelope.payload, unsynced: { approvalId, reason } } };
+}
+
 export function ClosingScreen({ date }: { date: string | null }) {
   const client = useClient();
   const header = usePosHeader('other');
-  const { profile, viewport } = useUi();
+  const { profile, viewport, timezone } = useUi();
   const connection = useConnection();
   const [stored] = useState(() => readClosingDraft());
   // 초안이 어느 체험 자료(epoch)의 것인지: 처음에는 저장된 초안의 것, 버리거나 적으면 지금 답의 것(한 번 버린 뒤 새 셈을 다시 버리지 않게).
@@ -90,10 +117,13 @@ export function ClosingScreen({ date }: { date: string | null }) {
   const [carryPage, setCarryPage] = useState(0);
   const [attempt, setAttempt] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [approve, setApprove] = useState<Approve | null>(null);
+  const [pinDigits, setPinDigits] = useState('');
+  const session = useSession();
   const live = useLive<ClosingSheetView>(
     'closing:' + JSON.stringify(params),
     (c) => c.query('closingSheet', params),
-    pad !== null || notice !== null || confirming || busy || header.active,
+    pad !== null || notice !== null || confirming || busy || approve !== null || header.active,
   );
   const view = live.data;
 
@@ -123,11 +153,14 @@ export function ClosingScreen({ date }: { date: string | null }) {
   const closeKey = view && view.next?.kind === 'close' && view.command ? 'closing:' + view.date + ':' + attempt : null;
   const { draft, markSent } = useCommandDraft(closeKey, closeKey ? CLOSE_SHAPE : null, view?.basis ?? NO_BASIS);
 
+  // 긴급 상단바가 늘어도 실제 남은 본문 높이로 쪽을 나눈다.
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const bodyBox = useElementSize(bodyRef);
   const leftRef = useRef<HTMLDivElement>(null);
   const leftBox = useElementSize(leftRef);
   const { compact } = closingColumns(profile, leftBox?.width);
   const rows = view ? { left: view.methods.length + view.cash.length, carry: view.carry.length } : { left: 0, carry: 0 };
-  const layout = closingLayout(profile, viewport.height, rows);
+  const layout = closingLayout(profile, viewport.height, rows, bodyBox?.height);
   const leftRows: LeftRow[] = useMemo(() => (view ? [
     ...view.methods.map((row): LeftRow => ({ kind: 'method', row })),
     ...view.cash.map((row): LeftRow => ({ kind: 'cash', row })),
@@ -145,8 +178,9 @@ export function ClosingScreen({ date }: { date: string | null }) {
   const blocked = offline ? say('closingOffline') : view?.blocked;
   const next = view?.next ?? null;
 
-  const close = () => {
-    const envelope = draft && view ? envelopeFor(draft, view.command, view.expect) : null;
+  const close = (approval?: { approvalId: string; reason: string }) => {
+    const plain = draft && view ? envelopeFor(draft, view.command, view.expect) : null;
+    const envelope = plain && approval ? approvedEnvelope(plain, approval.approvalId, approval.reason) : plain;
     if (!envelope || busy) return;
     setBusy(true);
     markSent();
@@ -171,6 +205,22 @@ export function ClosingScreen({ date }: { date: string | null }) {
     else if (next.targetKey) setPad(next.targetKey);
   };
   const closeConfirm = () => { setConfirming(false); setRechecked(null); };
+  /** `관리자 승인`: 막는 단계 창을 닫고 본인 비밀번호 판. */
+  const startApprove = () => { closeConfirm(); setPinDigits(''); setApprove({ step: 'pin' }); };
+  const approver = session?.info.staff.name ?? client.previewStaff?.()[0];
+  const submitPin = (pin: string) => {
+    if (!view || !client.closingApprove || busy) return;
+    setBusy(true);
+    client.closingApprove(view.date, pin).then(({ approvalId }) => {
+      setBusy(false);
+      setPinDigits('');
+      setApprove({ step: 'reason', approvalId });
+    }, (error: unknown) => {
+      setBusy(false);
+      setPinDigits('');
+      setApprove({ step: 'pin', line: approveLine(error, timezone) });
+    });
+  };
   // `재확인`: 지금 자료로 다시 묻는다. 막힘이 풀렸으면 창을 닫는다(주 버튼 `마감`이 다시 눌린다).
   const recheck = () => {
     client.query('closingSheet', params).then((fresh) => {
@@ -232,7 +282,7 @@ export function ClosingScreen({ date }: { date: string | null }) {
           </div>
           {!view && live.error ? <p className="pos-sheet-note" role="status">{say('closingUnreadable')}</p> : null}
           {/* 본문 틀은 읽기 전에도 둔다: 왼쪽 칸의 폭을 처음부터 잰다(칸 폭 고르기). */}
-          <div className="pos-closing-body">
+          <div className="pos-closing-body" ref={bodyRef}>
             <div ref={leftRef} className="pos-closing-left" style={leftStyle}>
               {methods.length ? (
                 <table className="sn-ledger-table pos-closing-table">
@@ -319,11 +369,47 @@ export function ClosingScreen({ date }: { date: string | null }) {
           title={next.label}
           lines={[]}
           closeLabel={step.choices.find((c) => c.key === 'close')?.label ?? t('close')}
-          actions={step.choices.filter((c) => c.key === 'recheck').map((c) => ({ label: c.label, primary: true, onPress: recheck }))}
+          // 보통 버튼(`관리자 승인`)이 먼저, 주 버튼(`재확인`)이 오른쪽 끝(ReviewStepButtons와 같은 차례).
+          actions={[
+            ...step.choices.filter((c) => c.key === 'approve' && client.closingApprove).map((c) => ({ label: c.label, onPress: startApprove })),
+            ...step.choices.filter((c) => c.key === 'recheck').map((c) => ({ label: c.label, primary: true, onPress: recheck })),
+          ]}
           onClose={closeConfirm}
         >
           <div className="pos-closing-step"><ReviewStepLine step={step} /></div>
+          {step.note ? <p className="pos-closing-step-note" role="status">{step.note}</p> : null}
         </NoticeDialog>
+      ) : null}
+      {approve?.step === 'pin' ? (
+        <NumberPad
+          mode="pin"
+          title={approver ? say('pinPadTitle', { name: approver }) : say('pinOwn')}
+          value={pinDigits}
+          onChange={(d) => { setPinDigits(d); if (approve.line) setApprove({ step: 'pin' }); }}
+          onSubmit={submitPin}
+          onClose={() => { setApprove(null); setPinDigits(''); }}
+          accept={() => !busy}
+          {...(busy ? { note: t('processing') } : approve.line ? { note: approve.line } : {})}
+        />
+      ) : null}
+      {approve?.step === 'reason' ? (
+        <TextSheet
+          title={say('diffReason')}
+          value=""
+          placeholder={say('diffReason')}
+          maxLength={OVERRIDE_REASON_MAX}
+          required
+          onSubmit={(reason) => setApprove({ step: 'confirm', approvalId: approve.approvalId, reason: reason.trim() })}
+          onClose={() => setApprove(null)}
+        />
+      ) : null}
+      {approve?.step === 'confirm' && view?.step && next?.kind === 'close' ? (
+        <NoticeDialog
+          title={view.step.choices.find((c) => c.key === 'approve')?.label ?? next.label}
+          lines={[view.step.message, say('reasonLine', { reason: approve.reason })]}
+          actions={[{ label: next.label, primary: true, onPress: () => { const a = approve; setApprove(null); close({ approvalId: a.approvalId, reason: a.reason }); } }]}
+          onClose={() => setApprove(null)}
+        />
       ) : null}
       {confirming && !step && view?.confirm && next?.kind === 'close' ? (
         <NoticeDialog

@@ -1,7 +1,9 @@
 // 가져오기 경계(ui 7절): 화면 묶음은 옛 업무 규칙(@skinote/core)과 Node 내장 모듈을 가져오지 않는다.
 //   apps/pos/src   → @skinote/contract · @skinote/ui · @skinote/layout만(그 밖의 @skinote/* 금지), node: · Node 내장 금지.
-//                    @skinote/domain은 체험 자료(apps/pos/src/fixture/)만 가져온다(메모리 어댑터, work/impl-server/plan.md §3-1).
+//                    @skinote/domain은 체험 자료(apps/pos/src/fixture/)와 기사 기기의 사본(apps/pos/src/local/)만 가져온다(메모리 어댑터,
+//                    work/impl-server/plan.md §3-1 · work/impl-offline/plan.md §7-1).
 //   apps/pos/src/{screens,components,app} → 체험 자료의 규칙(../fixture/)을 모른다(읽기 모델만 받는다). 체험 자료는 main.tsx만 만든다.
+//   apps/pos/src/{screens,components} → 기사 기기의 사본(../local/)도 모른다. 앱 뼈대(app/session.tsx)만 DriverClient를 만든다.
 //   packages/domain/src → 업무 규칙(순수 함수, 서버와 체험판이 같은 코드): @skinote/contract만. React · ui · layout · 옛 규칙 · Node 내장 금지
 //   packages/store/src  → 서버 저장소(SQL의 집): @skinote/contract · domain · schema와 node:crypto · node:fs만. node:sqlite 금지(연결은
 //                         schema의 openDatabase(), D10), 견본 자료(@skinote/domain/sample) · React · ui · layout · 옛 규칙 금지
@@ -46,8 +48,8 @@ function legacyCore(specifier: string): string | null {
 
 const APP_PACKAGES = /^@skinote\/(contract|ui|layout)(\/|$)/;
 const DOMAIN = /^@skinote\/domain(\/|$)/;
-/** 도메인(업무 규칙)을 가져와도 되는 곳: 체험 자료(메모리 어댑터)만. 화면 · 부품 · 앱 뼈대 · 미리 보기는 읽기 모델만 받는다. */
-const DOMAIN_ADAPTER = /^apps\/pos\/src\/fixture\//;
+/** 도메인(업무 규칙)을 가져와도 되는 곳: 체험 자료(메모리 어댑터)와 기사 기기의 사본(local/). 화면 · 부품 · 앱 뼈대 · 미리 보기는 읽기 모델만 받는다. */
+const DOMAIN_ADAPTER = /^apps\/pos\/src\/(fixture|local)\//;
 
 const REACT = /^(react|react-dom)(\/|$)/;
 /** 저장소(packages/store/src)가 쓰는 Node 내장 모듈(plan §3-1). */
@@ -58,11 +60,16 @@ function fixtureRules(s: string): string | null {
   return /(^|\/)fixture\//.test(s) ? '화면은 체험 자료의 규칙(fixture)을 모른다: 읽기 모델만 받는다' : null;
 }
 
+/** 화면 · 부품은 기사 기기의 사본(local/)도 가져오지 않는다(DomainClient만 본다). */
+function screenRules(s: string): string | null {
+  return fixtureRules(s) ?? (/(^|\/)local\//.test(s) ? '화면은 기사 기기의 사본(local)을 모른다: DomainClient의 읽기 모델만 받는다' : null);
+}
+
 export const BOUNDARY_RULES: readonly BoundaryRule[] = [
   {
     dir: 'apps/pos/src',
     forbid: (s, file) => legacyCore(s) ?? nodeModule(s)
-      ?? (DOMAIN.test(s) && !DOMAIN_ADAPTER.test(file ?? '') ? '업무 규칙(@skinote/domain)은 체험 자료(fixture/)만 가져온다: 화면은 읽기 모델만 받는다' : null)
+      ?? (DOMAIN.test(s) && !DOMAIN_ADAPTER.test(file ?? '') ? '업무 규칙(@skinote/domain)은 체험 자료(fixture/) · 기사 기기의 사본(local/)만 가져온다: 화면은 읽기 모델만 받는다' : null)
       ?? (s.startsWith('@skinote/') && !APP_PACKAGES.test(s) && !DOMAIN.test(s) ? 'apps/pos는 @skinote/contract · ui · layout만 가져온다' : null)
       ?? (/(^|\/)packages\//.test(s) ? '패키지는 이름(@skinote/…)으로 가져온다' : null),
   },
@@ -70,8 +77,8 @@ export const BOUNDARY_RULES: readonly BoundaryRule[] = [
     dir: 'packages/ui/src',
     forbid: (s) => legacyCore(s) ?? nodeModule(s),
   },
-  { dir: 'apps/pos/src/screens', forbid: fixtureRules },
-  { dir: 'apps/pos/src/components', forbid: fixtureRules },
+  { dir: 'apps/pos/src/screens', forbid: screenRules },
+  { dir: 'apps/pos/src/components', forbid: screenRules },
   { dir: 'apps/pos/src/app', forbid: fixtureRules },
   {
     dir: 'packages/layout/src',

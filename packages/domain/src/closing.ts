@@ -7,7 +7,7 @@
 // 돈통 셈은 명령 · 장부 표가 없어 화면 초안(params.counts)으로 오고 마감 명령이 싣는다(impl-v2 plan §8 D3).
 import {
   DomainError, reviewMessage, type CarryItem, type CashCheckRow, type ChoiceOption, type ClosingCheckView, type ClosingCount, type ClosingMethodRow,
-  type ClosingSheetParams, type ClosingSheetView, type CommandEnvelope, type FitPart, type ReviewStepView, type RichText, type StampCell,
+  type ClosingSheetParams, type ClosingSheetView, type CommandEnvelope, type FitPart, type ReviewStepView, type RichText, type StampCell, type VehicleLinkFact,
 } from '@skinote/contract';
 import { heldAmount, heldUnits } from './deposits.ts';
 import type { DomainLines, FxCashTransfer, FxClosing, FxClosingSheet, FxDepositEntry, FxLine, FxOrder, ShopState } from './model.ts';
@@ -67,45 +67,53 @@ const inDay = (state: ShopState, date: string) => (ms: number) => businessDateOf
 /**
  * 돈 기록의 올림 날(posting date, data-model 3-3): 그 기록의 영업일이 이미 마감되었고 마감 뒤에 적힌 것이면 다음 열린 영업일의 것이다
  * (27일 00:40에 26일을 마감한 뒤 00:50의 수납은 27일 마감에 든다). 마감의 결제 수단 표 · 돈통 예상 · 차량 지갑이 이 날로 센다.
+ * recordedAt은 서버가 적은 때다(보냄 대기로 늦게 온 기사 돈: 22:50에 받은 돈이 23:00 마감 뒤에 오면 영업일은 26일, 올림 날은 27일,
+ * work/impl-offline/plan.md §5-2). 없으면 일어난 때와 같다.
  */
-export function postingDate(state: ShopState, ms: number): string {
+export function postingDate(state: ShopState, ms: number, recordedAt: number = ms): string {
   let date = businessDateOf(ms, shopCutoff(state.settings));
   for (let guard = 0; guard < 31; guard += 1) {
     const closed = state.closings.find((c) => c.date === date);
     // 마감한 그 순간 이후(같은 시각 포함: 마감 명령 뒤에 적힌 것)의 기록은 다음 날.
-    if (!closed || ms < closed.closedAt) return date;
+    if (!closed || recordedAt < closed.closedAt) return date;
     date = kstDate(kstAt(date, 1, 12, 0));
   }
   return date;
 }
 
 /** 그 영업일에 올린 돈 기록인지(마감 뒤의 기록은 다음 열린 날). */
-const postedOn = (state: ShopState, date: string) => (ms: number) => postingDate(state, ms) === date;
+const postedOn = (state: ShopState, date: string) => (ms: number, recordedAt?: number) => postingDate(state, ms, recordedAt ?? ms) === date;
+/** 그 영업일까지(그날 포함) 올린 돈 기록인지(차량 지갑의 이월, §5-2). */
+const postedBy = (state: ShopState, date: string) => (ms: number, recordedAt?: number) => postingDate(state, ms, recordedAt ?? ms) <= date;
 
 // ── 돈통 · 차량 지갑 ─────────────────────────────────────────────────
 
 /** 이 영업일에 그 돈통 · 차량 지갑에 든 현금 수납(결제 자리의 팀 몫 합) − 그 돈통에서 돌려준 현금 환불(features-1 E4). */
-function paidCash(state: ShopState, date: string, drawerId: string): number {
-  const day = postedOn(state, date);
-  return state.orders.reduce((sum, o) => sum + o.payments.filter((p) => p.drawerId === drawerId && day(p.at)).reduce((n, p) => n + p.amount, 0)
+function paidCash(state: ShopState, date: string, drawerId: string, upTo = false): number {
+  const day = (upTo ? postedBy : postedOn)(state, date);
+  return state.orders.reduce((sum, o) => sum + o.payments.filter((p) => p.drawerId === drawerId && day(p.at, p.recordedAt)).reduce((n, p) => n + p.amount, 0)
     - (o.refunds ?? []).filter((r) => r.drawerId === drawerId && day(r.at)).reduce((n, r) => n + r.amount, 0), 0);
 }
 
 const DEPOSIT_SIGN: Record<FxDepositEntry['kind'], number> = { take: 1, restore: 1, refund: -1, apply: 0, keep: 0 };
 
 /** 이 영업일의 현금 보증금(입금 · 몰수 취소 +, 반환 −): 그 돈통 · 차량 지갑. 미수 차감 · 몰수는 현금이 움직이지 않는다. */
-function depositCash(state: ShopState, date: string, drawerId: string): number {
-  const day = postedOn(state, date);
-  return state.deposits.reduce((sum, dep) => sum + dep.entries.filter((e) => e.drawerId === drawerId && day(e.at)).reduce((n, e) => n + DEPOSIT_SIGN[e.kind] * e.amount, 0), 0);
+function depositCash(state: ShopState, date: string, drawerId: string, upTo = false): number {
+  const day = (upTo ? postedBy : postedOn)(state, date);
+  return state.deposits.reduce((sum, dep) => sum + dep.entries.filter((e) => e.drawerId === drawerId && day(e.at, e.recordedAt)).reduce((n, e) => n + DEPOSIT_SIGN[e.kind] * e.amount, 0), 0);
 }
 
 /** 이 영업일의 그 차량 현금 인계(인계한 차례). */
 const transfersOf = (state: ShopState, date: string, vehicleId: string) => state.cashTransfers.filter((t) => t.vehicleId === vehicleId && postedOn(state, date)(t.at));
 
-/** 차량 지갑에 남은 현금(아직 인계하지 않음): 현장 수납 + 현장 보증금(입금 − 반환) − 인계. */
+/**
+ * 차량 지갑에 남은 현금(아직 인계하지 않음, 그 영업일까지): 그날까지 올린 현장 수납 + 현장 보증금(입금 − 반환) − 그날까지의 인계. 전날 `점검 이월`한
+ * 지갑과 마감 뒤에 늦게 온 현금이 다음 날 한 번만 세진다(work/impl-offline/plan.md §5-2, 2026-09-28: 전에는 그날 것만 세어 이월한 현금이 사라졌다).
+ */
 export function walletLeft(state: ShopState, date: string, vehicleId: string): number {
   const drawer = vanDrawer(vehicleId);
-  return paidCash(state, date, drawer) + depositCash(state, date, drawer) - transfersOf(state, date, vehicleId).reduce((n, t) => n + t.amount, 0);
+  const handed = state.cashTransfers.filter((t) => t.vehicleId === vehicleId && postedBy(state, date)(t.at)).reduce((n, t) => n + t.amount, 0);
+  return paidCash(state, date, drawer, true) + depositCash(state, date, drawer, true) - handed;
 }
 
 /**
@@ -206,6 +214,66 @@ interface ClosingPlan {
   /** 보낼 것이 남은 기사 기기(`1호 차량 · 전송 대기 있음`)와 그 수. */
   blocked?: string;
   blockedCount?: number;
+  /** 마감을 막는 차량(보낼 기록 · 끊긴 채 열린 일, work/impl-offline/plan.md O12). 관리자 승인으로 넘기면 비어 있다. */
+  unsynced: UnsyncedVan[];
+  /**
+   * 차량 현금 줄의 둘째 줄에 적을 끊긴 · 전송 대기 차량: 막는 차량 그대로이고 관리자 승인으로 넘겨도 남는다. 얼린 마감표가 그때 그 차량이 끊겨 있었다는
+   * 사실(`마지막 연결 21:40 · 전송 대기 있음`)을 적게(넘긴 뒤의 계획으로 `전송 대기 0`을 적지 않게, plan §15 `s4-e2e-docs`).
+   */
+  noted: UnsyncedVan[];
+  /** 차량 연결 사실을 받았는지(서버 · 명령의 links). 없으면 메모리 어댑터의 기사 기기(state.driverDevice)로 센다. */
+  linked: boolean;
+  /** 관리자 승인으로 넘긴 마감의 사유(얼린 표의 이월 항목에 막은 차량 · 승인 · 사유를 남긴다, work/impl-offline/plan.md §17 R3-27). */
+  override?: { reason: string };
+}
+
+/** 마감을 막는 차량 하나: 기기가 알린 대기 수(null = 모름)와 그때부터(`21:40부터`). */
+export interface UnsyncedVan {
+  vehicleId: string;
+  count: number | null;
+  since?: number;
+}
+
+/**
+ * 차량에 그 영업일의 열린 일이 남았는지(끊긴 차량이 마감을 막는 조건, O12): 받을 것이 남은 수거 · 차에 있고 입고 전인 것 · 건넬 것이 남은 배달 ·
+ * 차량 지갑의 현금(끊긴 채 받은 돈이 여기에 든다).
+ */
+export function vanOpenWork(state: ShopState, date: string, vehicleId: string): boolean {
+  const collects = routeTasks(state, vehicleId, date).some((task) => task.order.lines.some((l) => {
+    const b = l.returnable ? taskBucket(task, l) : undefined;
+    return b !== undefined && (bucketOut(b) > 0 || bucketOnVan(b) > 0);
+  }));
+  if (collects) return true;
+  const cutoff = shopCutoff(state.settings);
+  const delivers = state.orders.some((o) => o.pickup.mode === 'vehicle' && o.pickup.vehicleId === vehicleId && businessDateOf(o.pickup.at, cutoff) === date && pendingIssue(o));
+  return delivers || walletLeft(state, date, vehicleId) > 0;
+}
+
+/**
+ * 마감을 막는 차량(O12). links(서버가 적은 차량 연결 사실): 대기 기록을 알렸거나(수 > 0) 혼자도 못 보내는 항목이 있거나(stuck), 끊긴 채(offline) 그
+ * 영업일의 열린 일이 남은 차량. 조용한(asleep) · 로그아웃(idle) 기기는 막지 않는다(늦게 온 돈은 다음 열린 날, §5-2). links가 없으면 메모리 어댑터의
+ * 기사 기기(state.driverDevice)의 보냄 대기.
+ */
+export function unsyncedVans(state: ShopState, date: string, links: readonly VehicleLinkFact[] | undefined): UnsyncedVan[] {
+  if (!links) {
+    const queue = state.driverDevice.queue.length;
+    return queue > 0 ? [{ vehicleId: deviceVehicle(state), count: queue, ...(state.driverDevice.since !== undefined ? { since: state.driverDevice.since } : {}) }] : [];
+  }
+  const out: UnsyncedVan[] = [];
+  for (const link of links) {
+    const since = link.since !== undefined ? Date.parse(link.since) : undefined;
+    const reported = link.reportedPending !== null && link.reportedPending > 0 ? link.reportedPending : null;
+    const blocks = reported !== null || link.stuck === true || (link.state === 'offline' && vanOpenWork(state, date, link.vehicleId));
+    if (blocks && !out.some((x) => x.vehicleId === link.vehicleId)) out.push({ vehicleId: link.vehicleId, count: reported, ...(since !== undefined && Number.isFinite(since) ? { since } : {}) });
+  }
+  return out;
+}
+
+/** 막는 차량 한 대의 한 줄(`1호 차량 · 전송 대기 있음` · `1호 차량 연결 끊김 · 21:40부터`). */
+function blockedLine(state: ShopState, van: UnsyncedVan): string {
+  const vehicle = vehicleLabel(state.registry, van.vehicleId);
+  if (van.count !== null) return vehicle + ' · 전송 대기 있음';
+  return vehicle + ' 연결 끊김' + (van.since !== undefined ? ' · ' + hm(van.since) + '부터' : '');
 }
 
 const reasonOk = (state: ShopState, diff: number, reasonKey: string | undefined, reasonNote: string | undefined) =>
@@ -217,7 +285,7 @@ function methodRows(state: ShopState, date: string): ClosingMethodRow[] {
   for (const o of state.orders) {
     for (const p of o.payments) {
       // 보증금 결제(미수 차감)는 돈이 움직이지 않아 수단 표에 없다(plan §8 D10).
-      if (p.methodKey === 'deposit' || !day(p.at)) continue;
+      if (p.methodKey === 'deposit' || !day(p.at, p.recordedAt)) continue;
       const a = acc.get(p.methodKey) ?? { amount: 0, groups: new Set<string>(), vans: new Map<string, number>() };
       a.amount += p.amount;
       a.groups.add(p.groupId ?? p.id);
@@ -253,7 +321,10 @@ function methodRows(state: ShopState, date: string): ClosingMethodRow[] {
   return rows;
 }
 
-function closingPlan(state: ShopState, date: string, params: Pick<ClosingSheetParams, 'counts' | 'deferredTransferIds'>): ClosingPlan {
+function closingPlan(
+  state: ShopState, date: string, params: Pick<ClosingSheetParams, 'counts' | 'deferredTransferIds'>, links?: readonly VehicleLinkFact[], override?: { reason: string },
+): ClosingPlan {
+  const overridden = override !== undefined;
   const deferred = new Set(params.deferredTransferIds ?? []);
   const vans: VanItem[] = [];
   for (const v of state.registry.vehicles) {
@@ -268,7 +339,9 @@ function closingPlan(state: ShopState, date: string, params: Pick<ClosingSheetPa
   // 센 뒤에 예상이 바뀌었으면(차량 현금 점검 · 새 현금 수납) 그 셈은 다시 셀 차례다.
   const stale = count?.expectedAmount !== undefined && count.expectedAmount !== counter.amount;
   const methods = methodRows(state, date);
-  const queue = state.driverDevice.queue.length;
+  const noted = unsyncedVans(state, date, links);
+  const unsynced = overridden ? [] : noted;
+  const first = unsynced[0];
   return {
     date,
     ...(state.closings.find((c) => c.date === date) ? { closing: state.closings.find((c) => c.date === date)! } : {}),
@@ -280,7 +353,11 @@ function closingPlan(state: ShopState, date: string, params: Pick<ClosingSheetPa
     countReady: count !== undefined && !stale && reasonOk(state, count.countedAmount - counter.amount, count.reasonKey, count.reasonNote),
     methods,
     total: methods.reduce((n, m) => n + m.amount, 0),
-    ...(queue > 0 ? { blocked: vehicleLabel(state.registry, deviceVehicle(state)) + ' · 전송 대기 있음', blockedCount: queue } : {}),
+    ...(first ? { blocked: blockedLine(state, first), ...(first.count !== null ? { blockedCount: first.count } : {}) } : {}),
+    unsynced,
+    noted,
+    linked: links !== undefined,
+    ...(override ? { override } : {}),
   };
 }
 
@@ -288,29 +365,72 @@ function closingPlan(state: ShopState, date: string, params: Pick<ClosingSheetPa
  * 마감의 막는 단계(features-1 §9-1, sys_review_kinds van_unsynced · dialog_step): `1호 차량 기록 2건 전송 대기 · 마감 전 전송 필요`와 `재확인`(주 버튼,
  * 다시 묻기) · `닫기`. 문장의 조각은 첫 조각(사실)이 빠지지 않고 뒤 조각(할 일)부터 빠진다.
  */
-export function vanUnsyncedStep(vehicle: string, count: number): ReviewStepView {
+export function vanUnsyncedStep(vehicle: string, count: number, approve = false): ReviewStepView {
   const message = reviewMessage('van_unsynced', { vehicle, count });
+  return stepOf(message, approve);
+}
+
+/** 수를 모르는 끊긴 차량의 막는 단계(`1호 차량 연결 끊김 · 21:40부터 · 마감 전 전송 필요`, wording 3-21 확인 대기). */
+export function vanOfflineStep(vehicle: string, since: number | undefined, approve = false): ReviewStepView {
+  const message = vehicle + ' 연결 끊김' + (since !== undefined ? ' · ' + hm(since) + '부터' : '') + ' · 마감 전 전송 필요';
+  return stepOf(message, approve);
+}
+
+/** 막는 단계의 버튼: `재확인`(주 버튼) · 넘길 권한(closing.reopen)이 있으면 `관리자 승인` · `닫기`(O12, §14 Q3). */
+function stepOf(message: string, approve: boolean): ReviewStepView {
   return {
     kindKey: 'van_unsynced', message, parts: message.split(' · ').map((text, i) => ({ text, drop: i })),
-    choices: [{ key: 'recheck', label: '재확인' }, { key: 'close', label: '닫기' }],
+    choices: [{ key: 'recheck', label: '재확인' }, ...(approve ? [{ key: 'approve' as const, label: '관리자 승인' }] : []), { key: 'close', label: '닫기' }],
   };
+}
+
+/**
+ * 막힌 마감을 넘길 수 있는 사람(마감 해제 권한 closing.reopen, O12 · §14 Q3). 보는 사람이 없으면(메모리 어댑터: 권한을 모두 가진 관리자) 모두 허락이다
+ * (discounts.ts의 has와 같은 약속).
+ */
+export const mayOverride = (viewer: ViewContext['viewer']): boolean => !viewer || viewer.permissions.includes('closing.reopen');
+
+/** 넘길 권한이 없는 세션의 한 줄(있는 말 `권한 없음 · 관리자 확인 필요`). */
+export const OVERRIDE_DENIED = '권한 없음 · 관리자 확인 필요';
+
+/** 막는 차량 한 대의 단계. 넘길 권한이 없으면 단계 줄 아래 한 줄(`권한 없음 · 관리자 확인 필요`). */
+function unsyncedStep(state: ShopState, van: UnsyncedVan, approve: boolean): ReviewStepView {
+  const vehicle = vehicleLabel(state.registry, van.vehicleId);
+  const step = van.count !== null ? vanUnsyncedStep(vehicle, van.count, approve) : vanOfflineStep(vehicle, van.since, approve);
+  return approve ? step : { ...step, note: OVERRIDE_DENIED };
 }
 
 // ── 화면 줄 ─────────────────────────────────────────────────────────
 
 const pending = (state: ShopState, vehicleId: string) => (vehicleId === deviceVehicle(state) ? state.driverDevice.queue.length : 0);
 
+/**
+ * 현금 점검 표의 차량 줄 둘째 줄: 끊긴 · 전송 대기 차량(서버의 연결 사실)은 `마지막 연결 21:40 · 전송 대기 3`(수를 모르면 `전송 대기 있음`), 그 밖은
+ * 입고 때 · 전송 대기 수(메모리 어댑터의 기사 기기).
+ */
+function vanNote(state: ShopState, plan: ClosingPlan, vehicleId: string, receipt: number | undefined): FitPart[] {
+  const van = plan.linked ? plan.noted.find((x) => x.vehicleId === vehicleId) : undefined;
+  if (van) {
+    return [
+      ...(van.since !== undefined ? [{ text: '마지막 연결 ' + hm(van.since), drop: 1 }] : [{ text: receipt !== undefined ? hm(receipt) + ' 입고' : '입고 대기', drop: 1 }]),
+      { text: van.count !== null ? '전송 대기 ' + van.count : '전송 대기 있음', drop: 2 },
+    ];
+  }
+  return [
+    { text: receipt !== undefined ? hm(receipt) + ' 입고' : '입고 대기', drop: 1 },
+    { text: '전송 대기 ' + (plan.linked ? 0 : pending(state, vehicleId)), drop: 2 },
+  ];
+}
+
 function actualRuns(counted: number, diff: number): RichText {
   return [{ text: '실제 ' + won(counted) + ' · ' }, { text: '차액 ' + diffWon(diff), strong: true, ...(diff === 0 ? { tone: 'green' as const } : {}) }];
 }
 
-function vanRow(state: ShopState, date: string, item: VanItem, now: boolean): CashCheckRow {
+function vanRow(state: ShopState, plan: ClosingPlan, item: VanItem, now: boolean): CashCheckRow {
+  const date = plan.date;
   const t = item.transfer;
   const receipt = t ? t.at : lastReceipt(state, date, item.vehicleId);
-  const note: FitPart[] = [
-    { text: receipt !== undefined ? hm(receipt) + ' 입고' : '입고 대기', drop: 1 },
-    { text: '전송 대기 ' + pending(state, item.vehicleId), drop: 2 },
-  ];
+  const note = vanNote(state, plan, item.vehicleId, receipt);
   const base = { key: item.key, kind: 'van' as const, label: drawerLabel(state, vanDrawer(item.vehicleId)), note, expected: [{ text: '예상 ' + won(item.amount) }] };
   const c = t?.confirmed;
   if (c) {
@@ -474,8 +594,31 @@ function transferCarry(state: ShopState, date: string, plan: ClosingPlan): Carry
   });
 }
 
+/**
+ * 관리자 승인으로 넘긴 마감(§17 R3-27): 막은 차량마다 한 줄 — `1호 차량 · 전송 대기 있음`(수를 알면 `· 전송 대기 {n}`)과 둘째 줄 `마지막 연결 15:40 ·
+ * 관리자 승인 · 사유 · 방전`. 얼린 표에 남아 다음 날 아침에도 그날이 끊긴 차량을 두고 닫혔고 늦은 돈이 다음 날에 드는 까닭이 보인다. 현금 줄이 없는
+ * 차량도 이 줄은 있다.
+ */
+function overrideCarry(state: ShopState, plan: ClosingPlan): CarryItem[] {
+  const reason = plan.override?.reason;
+  if (reason === undefined) return [];
+  return plan.noted.map((van) => ({
+    key: 'override:' + van.vehicleId,
+    title: [{ text: vehicleLabel(state.registry, van.vehicleId) + ' · ' + (van.count !== null ? '전송 대기 ' + van.count : '전송 대기 있음') }],
+    note: [
+      ...(van.since !== undefined ? [{ text: '마지막 연결 ' + hm(van.since), drop: 2 }] : []),
+      { text: '관리자 승인', drop: 1 },
+      { text: '사유 · ' + reason, drop: 0 },
+    ],
+    late: false,
+  }));
+}
+
 function carryItems(state: ShopState, now: number, date: string, plan: ClosingPlan): CarryItem[] {
-  return [...dueCarry(state, now, date), ...returnCarry(state, now, date), ...depositCarry(state, date), ...reviewCarry(state, date), ...transferCarry(state, date, plan)];
+  return [
+    ...overrideCarry(state, plan), ...dueCarry(state, now, date), ...returnCarry(state, now, date), ...depositCarry(state, date), ...reviewCarry(state, date),
+    ...transferCarry(state, date, plan),
+  ];
 }
 
 // ── 마감 전에 묻는 한 줄 ───────────────────────────────────────────────
@@ -595,7 +738,7 @@ function footerOf(plan: ClosingPlan, next: ClosingSheetView['next']): FitPart[] 
 
 /** 마감 때 얼린 화면 줄(지금 할 일 · 끝 칸 동작은 없음). */
 function frozenSheet(state: ShopState, now: number, plan: ClosingPlan): FxClosingSheet {
-  const cash = [...plan.vans.map((x) => vanRow(state, plan.date, x, false)), counterRow(state, plan, false)]
+  const cash = [...plan.vans.map((x) => vanRow(state, plan, x, false)), counterRow(state, plan, false)]
     .map(({ action: _action, ...row }) => ({ ...row, now: false }));
   return { methods: plan.methods, cash, carry: carryItems(state, now, plan.date, plan), footer: footerOf(plan, null) };
 }
@@ -604,7 +747,13 @@ export function closingSheet(ctx: ViewContext, params: ClosingSheetParams): Clos
   const state = ctx.state;
   const date = params.date ?? state.businessDate;
   if (date !== state.businessDate) throw new DomainError('NOT_FOUND', '없는 마감: ' + date);
-  const plan = closingPlan(state, date, params);
+  // 서버는 차량 연결(읽기 문맥의 vehicleLinks)을 넘긴다. 메모리 어댑터는 없다(기사 기기의 보냄 대기로 센다).
+  const links = ctx.vehicleLinks?.map((l): VehicleLinkFact => ({
+    vehicleId: l.vehicleId, state: l.state, reportedPending: l.reportedPending, ...(l.since !== undefined ? { since: l.since } : {}), ...(l.state === 'stuck' ? { stuck: true } : {}),
+  }));
+  // 이미 관리자 승인으로 넘긴 마감이면 그 사유로(얼린 표가 없던 옛 마감도 막은 차량 · 승인 · 사유 줄을 그린다).
+  const closedReason = state.closings.find((c) => c.date === date)?.overrideReason;
+  const plan = closingPlan(state, date, params, links, closedReason !== undefined ? { reason: closedReason } : undefined);
   const head = { basis: { epoch: state.epoch, rev: state.rev }, serverTime: iso(ctx.now), currentBusinessDate: state.businessDate };
   const extra = afterMidnight(state, date);
   const band = {
@@ -622,14 +771,15 @@ export function closingSheet(ctx: ViewContext, params: ClosingSheetParams): Clos
     : !plan.countReady
       ? { kind: 'drawer_count', label: DRAWER_CHECK, alts: [DRAWER_CHECK], enabled: true, targetKey: COUNTER, expectedAmount: plan.counter.amount }
       : { kind: 'close', label: CLOSE + ' · ' + monthDay(date), alts: [CLOSE + ' · ' + monthDay(date), CLOSE], enabled: plan.blocked === undefined };
-  const cash = [...plan.vans.map((x) => vanRow(state, date, x, x === van)), counterRow(state, plan, next.kind === 'drawer_count')];
+  const cash = [...plan.vans.map((x) => vanRow(state, plan, x, x === van)), counterRow(state, plan, next.kind === 'drawer_count')];
   const check = params.check ? checkView(state, plan, params.check) : undefined;
   const confirmLine = next.kind === 'close' ? closeConfirmLine(state, ctx.now, date) : undefined;
   return {
     ...head, date, title, band, methods: plan.methods, cash, carry: carryItems(state, ctx.now, date, plan), footer: footerOf(plan, next), next,
     ...(check ? { check } : {}),
     ...(plan.blocked ? { blocked: plan.blocked } : {}),
-    ...(plan.blocked && next.kind === 'close' ? { step: vanUnsyncedStep(vehicleLabel(state.registry, deviceVehicle(state)), plan.blockedCount ?? 0) } : {}),
+    ...(plan.blocked && next.kind === 'close' && plan.unsynced[0]
+      ? { step: unsyncedStep(state, plan.unsynced[0], mayOverride(ctx.viewer)) } : {}),
     ...(confirmLine ? { confirm: { title: next.label, line: confirmLine } } : {}),
     ...(next.kind === 'close' ? closeCommand(plan) : {}),
   };
@@ -687,7 +837,14 @@ export function closeDay(state: ShopState, envelope: CommandEnvelope<'closing.cl
   const p = envelope.payload;
   if (p.date !== state.businessDate) return unsupported(lines);
   if (closedOn(state, p.date)) return nothing(monthDay(p.date) + ' ' + CLOSE + ' 완료');
-  const plan = closingPlan(state, p.date, { counts: p.drawerCounts, deferredTransferIds: p.deferredTransferIds });
+  // 차량 연결 사실(links)과 관리자 승인(override)은 서버가 정규 명령에 적은 것만 읽는다(O12: 다시 실행해도 같은 결과). 메모리 어댑터는 links가 없다.
+  let plan = closingPlan(state, p.date, { counts: p.drawerCounts, deferredTransferIds: p.deferredTransferIds }, p.links);
+  if (plan.blocked && p.override && plan.unsynced.length) {
+    // 관리자 승인: 막는 차량의 지갑 · 확인하지 않은 인계는 점검 이월(늦게 오는 돈은 다음 열린 날, §5-2).
+    const blockedVans = new Set(plan.unsynced.map((x) => x.vehicleId));
+    const extra = plan.vans.filter((x) => blockedVans.has(x.vehicleId) && !x.transfer?.confirmed).map((x) => x.key);
+    plan = closingPlan(state, p.date, { counts: p.drawerCounts, deferredTransferIds: [...new Set([...p.deferredTransferIds, ...extra])] }, p.links, { reason: p.override.reason });
+  }
   if (plan.blocked) return rejected(plan.blocked);
   if (plan.pendingVans.length) return rejected(VAN_CHECK + ' 필요');
   if (!plan.count || plan.countStale) return rejected(DRAWER_CHECK + ' 필요');
@@ -701,6 +858,7 @@ export function closeDay(state: ShopState, envelope: CommandEnvelope<'closing.cl
     counts: [{ drawerId: COUNTER, expected: plan.counter.amount, counted: plan.count.countedAmount, ...reason }],
     deferredTransferIds: plan.vans.filter((x) => x.deferred).map((x) => x.key),
     sheet: frozenSheet(state, now, plan),
+    ...(p.override ? { overrideReason: p.override.reason } : {}),
   });
   return done;
 }

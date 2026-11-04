@@ -10,8 +10,9 @@
 //   B(카운터 2, 관리자): 등록 · 로그인 → A가 만든 팀이 장부에 있음 → 둘 다 운영 규칙 화면 → B가 규칙을 저장하면 A의 화면이 새로 고침
 //         없이 바뀐다(알림 연결) → A를 새로 고쳐도 서버 값 그대로(서버 장부)
 //   A 연결: 끊기면 머리줄에 연결 띠와 같은 노랑 이름표 `연결 끊김 · 마지막 연결 …`(875×600에서도 잘리지 않음), 다시 이으면 사라짐
-//   C(기사 태블릿 · 1호 차량): 등록 · 로그인 → 수거 목록(바닥줄에 `전송 대기` 없음: 서버에 붙은 기기는 보냄 대기가 없다), 끊기면 연결 띠,
-//         장부 조회는 403
+//   C(기사 태블릿 · 1호 차량): 등록 · 로그인 → 수거 목록(바닥줄 `전송 대기 0`: 기사 기기는 사본 + 보냄 대기로 돈다), 끊기면 연결 띠, 끊긴 채 수거
+//         (점선 · `전송 대기 1`) → 끊긴 채 새로 고침(기억한 세션으로 목록) → 다시 이으면 서명한 묶음을 서버가 받음, 장부 조회는 403
+//         (기사 연결 끊김의 긴 이야기 S6은 scripts/check-offline-e2e.mjs)
 //   E(기사 휴대폰 · 1호 차량, 360×640 — 첫 매장 기사의 주 기기): 등록 · 로그인(휴대폰 등급) → 배달 목록(촘촘한 줄) → 업무 판(품목 줄 한 쪽)
 //         → 현장 수납 수단은 현금 · 계좌이체뿐 → 장부 조회 403 → 끝에 명령줄로 그 휴대폰을 끊으면 기기 등록 화면
 //   매장 설정(settingsE2E, features-1 §4-6): B가 설천에 장소 추가 → A의 새 접수에 보임 → B가 차량 추가 + 박기사 배정(한 저장) → A의
@@ -46,160 +47,68 @@
 // `미지원 기능 · 처리 불가`로 거절하면 그 걸음들은 실패가 아니라 '막힘'으로 적고 끝 코드 3으로 끝난다(모든 걸음 통과 0, 실패 1).
 //
 // 실행: npm run build && npm run test:e2e   (찍은 화면 · 기록은 work/e2e/<시각>/, 저장소에 올리지 않음)
+//   함께 쓰는 걸음(포트 · 자식 프로세스 · 등록 · 로그인 · 페이지 안 조회)은 scripts/lib/e2e-harness.mjs.
 //   환경 변수: SKINOTE_E2E_HEADED=1(창을 보이며), SKINOTE_E2E_KEEP=1(임시 자료 폴더를 지우지 않음)
-import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { businessDate } from '../packages/server/src/clock.js';
 import { addDays } from '../packages/server/src/config.js';
 import { newSecretsEnv } from '../packages/server/src/secrets.js';
+import {
+  DIST, ROOT, SERVER_MAIN, STEP_MS, enroll, freePort, leaksIn, login, makeReporter, makeShot, orderOf, pageQuery, pageSend, runCli, sleep, startChild,
+  stopChild, waitHealthy,
+} from './lib/e2e-harness.mjs';
 import { startLocalProxy } from './lib/local-proxy.mjs';
 
-const ROOT = fileURLToPath(new URL('../', import.meta.url));
-const DIST = join(ROOT, 'apps/pos/dist');
-const SERVER_MAIN = join(ROOT, 'packages/server/src/main.js');
-const SHOP_CLI = join(ROOT, 'packages/server/bin/shop.js');
 const SHOP = 'e2e0shop';
 /** 열린 기기 등록을 켠 둘째 서버의 시험 매장. */
 const OPEN_SHOP = 'e2e1open';
 const STAFF = { manager: '정하늘', counter: '김카운터', driver: '박기사' };
 const TEAM = { name: '김민수', keys: ['ㄱ', 'ㅣ', 'ㅁ', 'ㅁ', 'ㅣ', 'ㄴ', 'ㅅ', 'ㅜ'], phone: '01000001234' };
 const UNSUPPORTED_LINE = '미지원 기능 · 처리 불가';
-const STEP_MS = 15_000;
 const RUN = new Date().toISOString().replace(/[:.]/g, '-');
 const OUT = join(ROOT, 'work/e2e', RUN);
 
-const results = [];
-const check = (name, ok, detail = '') => {
-  results.push({ name, state: ok ? 'ok' : 'fail', detail });
-  console.log((ok ? '✓ ' : '✗ ') + name + (detail ? '  ' + detail : ''));
-  return Boolean(ok);
-};
-const blocked = (name, detail) => {
-  results.push({ name, state: 'blocked', detail });
-  console.log('… ' + name + ' — 막힘: ' + detail);
-};
+const { results, check, blocked } = makeReporter();
+const shot = makeShot(OUT);
 
-/** 비어 있는 포트(잠깐 잡았다 놓는다). */
-function freePort() {
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      server.close(() => resolve(typeof address === 'object' && address ? address.port : 0));
-    });
-  });
-}
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-/** 자식 프로세스(뒤에서, 기록 파일). */
-function startChild(args, env, logFile) {
-  const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', ...args], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
-  const chunks = [];
-  const keep = (b) => { chunks.push(b); };
-  child.stdout.on('data', keep);
-  child.stderr.on('data', keep);
-  child.log = () => Buffer.concat(chunks).toString('utf8');
-  child.on('exit', () => { try { writeFileSync(logFile, child.log()); } catch { /* 폴더가 없음 */ } });
-  return child;
-}
-
-/** 자식 프로세스를 멈춘다(SIGTERM, 10초 뒤 SIGKILL). */
-async function stopChild(child) {
-  if (!child || child.exitCode !== null || child.signalCode !== null) return;
-  const exited = new Promise((r) => child.once('exit', r));
-  child.kill('SIGTERM');
-  const timer = setTimeout(() => child.kill('SIGKILL'), 10_000);
-  await Promise.race([exited, sleep(12_000)]);
-  clearTimeout(timer);
-}
-
-async function waitHealthy(port, child, ms = 30_000) {
-  const until = Date.now() + ms;
-  while (Date.now() < until) {
-    if (child.exitCode !== null) throw new Error('서버가 끝났다(끝 코드 ' + child.exitCode + '):\n' + child.log().slice(-2000));
-    try {
-      if ((await fetch(`http://127.0.0.1:${port}/api/health/live`)).ok) return;
-    } catch { /* 아직 */ }
-    await sleep(150);
+/** 새 팀 상세의 실제 추가 처리 페이지를 눌러 기존 동작에 도달한다. */
+async function counterAction(page, label) {
+  const direct = page.locator('.pos-counter-detail-actions').getByRole('button', { name: label, exact: true });
+  if (await direct.count()) { await direct.click(); return; }
+  await page.locator('.pos-counter-detail-actions').getByRole('button', { name: '추가 처리', exact: true }).click();
+  const dialog = page.locator('[role="dialog"]').last();
+  for (let i = 0; i < 12; i += 1) {
+    const button = dialog.getByRole('button', { name: label, exact: true });
+    if (await button.count()) { await button.click(); return; }
+    const next = dialog.getByRole('button', { name: '다음 쪽', exact: true });
+    if (!(await next.count()) || !(await next.isEnabled())) break;
+    await next.click();
   }
-  throw new Error('서버가 ' + ms + 'ms 안에 뜨지 않았다');
+  throw new Error('접수증 동작 없음: ' + label);
 }
 
-/** 명령줄 한 번(30초). 표준 출력 · 오류 · 끝 코드. */
-function runCli(args, env, logFile) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', SHOP_CLI, ...args], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
-    let out = '';
-    let err = '';
-    child.stdout.on('data', (b) => { out += b; });
-    child.stderr.on('data', (b) => { err += b; });
-    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('명령줄이 30초 안에 끝나지 않음: ' + args[0])); }, 30_000);
-    child.on('exit', (code) => {
-      clearTimeout(timer);
-      // 기록에는 표준 오류만 남긴다(표준 출력에는 비밀번호 · 등록 번호가 있다).
-      try { writeFileSync(logFile, err, { flag: 'a' }); } catch { /* 폴더가 없음 */ }
-      resolve({ code, out, err });
-    });
-  });
-}
-
-// ── 브라우저 걸음 ─────────────────────────────────────────────────────────
-
-async function shot(page, name) {
-  await page.evaluate(() => document.fonts?.ready).catch(() => {});
-  await page.screenshot({ path: join(OUT, name + '.png') }).catch(() => {});
-}
-
-/** 기기 등록: 화면 숫자판의 키로 12자리 → 입력 → 로그인 화면. */
-async function enroll(page, code) {
-  await page.waitForSelector('.pos-enroll', { timeout: STEP_MS });
-  const pad = page.locator('.pos-enroll .sn-numpad');
-  for (const d of code) await pad.getByRole('button', { name: d, exact: true }).click();
-  const shown = (await pad.locator('.sn-numpad-display').textContent())?.trim();
-  await pad.getByRole('button', { name: '입력', exact: true }).click();
-  await page.waitForSelector('.pos-login-tile', { timeout: STEP_MS });
-  return shown;
-}
-
-/** 로그인: 직원 타일 → 비밀번호 숫자판(가린 표시) → 입력. 잠김 · 틀림이면 판의 한 줄을 돌려준다(되면 null). */
-async function login(page, name, pin, { expectApp = true } = {}) {
-  if (!(await page.locator('.sn-sheet-overlay .sn-numpad').count())) {
-    await page.locator('.pos-login-tile', { hasText: name }).first().click();
+/** 출처 줄은 품목과 같은 페이지에 있으므로 실제 페이지를 넘겨 확인한다. */
+async function counterAdjustment(page) {
+  await page.waitForSelector('.pos-counter-detail', { timeout: STEP_MS });
+  for (let i = 0; i < 40; i += 1) {
+    if (await page.locator('[data-adjustment]').count()) return;
+    const next = page.locator('.pos-counter-detail .pos-counter-paging').getByRole('button', { name: '다음 쪽', exact: true });
+    if (!(await next.count()) || !(await next.isEnabled())) break;
+    await next.click();
   }
-  const pad = page.locator('.sn-sheet-overlay .sn-numpad');
-  await pad.waitFor({ timeout: STEP_MS });
-  for (const d of pin) await pad.getByRole('button', { name: d, exact: true }).click();
-  const masked = (await pad.locator('.sn-numpad-display').textContent())?.trim() ?? '';
-  await pad.getByRole('button', { name: '입력', exact: true }).click();
-  if (expectApp) {
-    await page.waitForFunction(() => !document.querySelector('.pos-login'), null, { timeout: STEP_MS });
-    return { note: null, masked };
-  }
-  // 보내는 동안 판의 한 줄은 `처리 중`이다: 답의 한 줄(틀림 · 잠김)이 올 때까지 기다린다.
-  const note = pad.locator('.sn-keypad-note');
-  await page.waitForFunction(() => {
-    const text = document.querySelector('.sn-sheet-overlay .sn-numpad .sn-keypad-note')?.textContent?.trim() ?? '';
-    return text !== '' && text !== '처리 중';
-  }, null, { timeout: STEP_MS });
-  return { note: (await note.textContent())?.trim() ?? '', masked };
+  throw new Error('접수증 출처 줄을 어느 품목 페이지에서도 찾지 못함');
 }
 
-/** 앞단 주소 기준 조회(페이지 안에서, 쿠키 + 세션의 CSRF). */
-async function pageQuery(page, body) {
-  return page.evaluate(async (payload) => {
-    const session = await fetch('api/v2/session', { cache: 'no-store' });
-    if (session.status !== 200) return { status: session.status };
-    const { csrf } = await session.json();
-    const res = await fetch('api/v2/query', { method: 'POST', headers: { 'content-type': 'application/json', 'x-skinote-csrf': csrf }, body: JSON.stringify(payload) });
-    return { status: res.status, body: await res.json().catch(() => null) };
-  }, body);
+/** 완료 도장은 기본 화면에서 접혔다. 실제 렌탈 단계와 같은 서버의 지급 완료를 함께 확인한다. */
+async function counterIssued(page) {
+  const orderId = new URL(page.url()).hash.split('/')[2];
+  const slip = (await pageQuery(page, { name: 'orderSlip', params: { orderId } })).body;
+  const issued = slip?.checklist?.some(row => row.actionKey === 'stamp.issue' && row.state === 'done');
+  const phase = (await page.locator('.pos-counter-stages [aria-pressed="true"]').textContent()) ?? '';
+  return issued && /렌탈 중/.test(phase);
 }
 
 /** 운영 규칙 카드의 버튼(카드가 다음 쪽이면 넘긴다). */
@@ -244,9 +153,11 @@ async function newWalkIn(page) {
   await plus.click();
   await page.waitForSelector('.pos-new-side [data-primary="true"]:enabled', { timeout: STEP_MS });
   await page.locator('.pos-new-side [data-primary="true"]').click();
-  await page.waitForSelector('.pos-new-schedule', { timeout: STEP_MS });
-  await page.waitForSelector('.pos-new-side [data-primary="true"]:enabled', { timeout: STEP_MS });
-  await page.locator('.pos-new-side [data-primary="true"]').click();
+  await page.waitForSelector('.pos-checkout, .pos-new-schedule', { timeout: STEP_MS });
+  if (await page.locator('.pos-new-schedule').count()) {
+    await page.waitForSelector('.pos-new-side [data-primary="true"]:enabled', { timeout: STEP_MS });
+    await page.locator('.pos-new-side [data-primary="true"]').click();
+  }
   const dialog = page.locator('.pos-checkout');
   await dialog.waitFor({ timeout: STEP_MS });
   const cash = dialog.getByRole('group', { name: '장비 결제 수단', exact: true }).getByRole('button', { name: '현금', exact: true });
@@ -403,23 +314,52 @@ async function settingsE2E({ APP, a, b, c, e, pins, secretsSeen }) {
   await b.waitForSelector('.sn-rule-card', { timeout: STEP_MS });
 }
 
-/** 앞단 주소 기준 명령 하나(페이지 안에서, 쿠키 + 세션의 CSRF, 새 요청번호). 결과 { requestId, outcome }. */
-async function pageSend(page, type, payload, extra = {}) {
-  return page.evaluate(async ({ type, payload, extra }) => {
-    const session = await (await fetch('api/v2/session', { cache: 'no-store' })).json();
-    const head = await (await fetch('api/v2/head', { cache: 'no-store' })).json();
-    const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
-    let t = Date.now();
-    let time = '';
-    for (let i = 0; i < 10; i += 1) { time = alphabet[t % 32] + time; t = Math.floor(t / 32); }
-    const random = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => alphabet[b % 32]).join('');
-    const requestId = time + random;
-    const res = await fetch('api/v2/command', {
-      method: 'POST', headers: { 'content-type': 'application/json', 'x-skinote-csrf': session.csrf },
-      body: JSON.stringify({ type, commandVersion: 1, requestId, basis: { epoch: head.epoch, rev: head.rev }, payload, ...extra }),
-    });
-    return { requestId, outcome: await res.json() };
-  }, { type, payload, extra });
+/** 기사 태블릿(C)의 끊긴 채 수거 → 다시 이음 → 서버 적용(서명 받아들임). */
+async function driverOfflineCollectE2E({ c, ctxC, a }) {
+  const taken = ['김민재', '최하은', '박준호', '김민수', '최은정'];
+  const rows = c.locator('.sn-ledger tr.sn-row', { has: c.locator('button.sn-stamp-cell[aria-label$="미처리"]') });
+  let target = null;
+  let team = '';
+  for (let i = 0; i < await rows.count(); i += 1) {
+    const text = ((await rows.nth(i).locator('.sn-cell-open').textContent()) ?? '').trim();
+    if (!taken.some((name) => text.includes(name))) { target = rows.nth(i); team = text; break; }
+  }
+  if (!target) {
+    check('C: 끊긴 채 수거할 줄(다른 확인이 쓰지 않는 팀)', false, '없음');
+    return;
+  }
+  const last4 = /\b(\d{4})\b/.exec(team)?.[1] ?? team;
+  await ctxC.setOffline(true);
+  await c.waitForSelector('.sn-strip.is-offline', { timeout: 30_000 }).catch(() => {});
+  await target.locator('button.sn-stamp-cell[aria-label$="미처리"]').first().click();
+  const ok = c.locator('[role="dialog"] [data-primary="true"]');
+  await ok.waitFor({ timeout: STEP_MS });
+  await ok.click();
+  await c.locator('[role="dialog"]').waitFor({ state: 'detached', timeout: STEP_MS }).catch(() => {});
+  const row = () => c.locator('.sn-ledger tr.sn-row', { hasText: last4 });
+  const dotted = await row().locator('button.sn-stamp-cell[aria-label*="전송 대기"]').waitFor({ timeout: STEP_MS }).then(() => true, () => false);
+  const footerOff = ((await c.locator('.sn-footer').textContent()) ?? '').trim();
+  await shot(c, 'c-offline-collect-1024x600');
+  check('C: 끊긴 채 수거 → 점선 도장 · 바닥줄 `전송 대기 1`', dotted && footerOff.includes('전송 대기 1'), last4 + ' · ' + footerOff.slice(0, 60));
+  // 끊긴 채 새로 고침(work/impl-offline/plan.md O15): 서비스 워커가 앱을 주고, 기억한 세션으로 서버를 기다리지 않고 같은 목록(점선 · 띠)을 연다.
+  const controlled = await c.waitForFunction(() => !!navigator.serviceWorker?.controller, null, { timeout: 5_000 }).then(() => true, () => false);
+  if (controlled) {
+    await c.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+    const reopened = await c.waitForSelector('.sn-ledger tr.sn-row', { timeout: STEP_MS }).then(() => true, () => false);
+    const stillDotted = reopened && (await row().locator('button.sn-stamp-cell[aria-label*="전송 대기"]').count()) > 0;
+    const bandAfter = reopened ? ((await c.locator('.sn-strip').first().textContent().catch(() => '')) ?? '').trim() : '';
+    await shot(c, 'c-offline-reload-1024x600');
+    check('C: 끊긴 채 새로 고침 → 서버 없이 기억한 세션으로 목록(점선 · 띠 `연결 끊김 · 전송 대기 1`)', stillDotted && /^연결 끊김 · 전송 대기 1/.test(bandAfter), bandAfter);
+  } else {
+    check('C: 끊긴 채 새로 고침(서비스 워커가 화면을 맡음)', false, '서비스 워커가 맡지 않음');
+  }
+  await ctxC.setOffline(false);
+  const synced = await c.waitForFunction(() => (document.querySelector('.sn-footer')?.textContent ?? '').includes('전송 대기 0'), null, { timeout: 45_000 }).then(() => true, () => false);
+  const solid = synced && (await row().locator('button.sn-stamp-cell[aria-label*="전송 대기"]').count()) === 0;
+  check('C: 다시 이으면 보냄 대기를 보냄 → `전송 대기 0` · 실선 도장', solid, last4);
+  const reviews = await pageQuery(a, { name: 'reviewList', params: {} });
+  const text = JSON.stringify(reviews.body ?? '');
+  check('C: 서버가 기기 열쇠의 서명(skinote-cmd-v1)을 받아들임(`공급자 확인 중` 없음)', reviews.status === 200 && !text.includes('공급자 확인 중'), String(reviews.status));
 }
 
 /** 할인 적용 창의 길(조회 → 할인 적용 → 이어진 환불, dependsOn)을 페이지 안에서. 명령마다의 결과. */
@@ -439,12 +379,6 @@ async function discountBySheet(page, params) {
   return { sheet: sheet.body, outcomes };
 }
 
-/** 끝 4자리로 접수 id(오늘 장부의 첫 팀). */
-async function orderOf(page, last4) {
-  const found = await pageQuery(page, { name: 'findLast4', params: { last4 } });
-  return found.body?.matches?.[0]?.orderId ?? null;
-}
-
 /**
  * 할인 적용(features-1 §6-6): A(카운터, 화면)가 자기 팀(현금 결제 뒤)의 `할인 적용` → `직접 입력` → 금액 5,000원 → 사유 키보드 `단골` → 주 버튼
  * `할인 적용 · 환불 현금 5,000원` → 접수증 출처 줄(할인 · 환불), A가 미수 팀(윤서준 0028)에 10% → 미수가 줄어듦, B(관리자)가 카드로 낸 팀(김민재
@@ -454,16 +388,8 @@ async function discountE2E({ APP, a, b }) {
   const orderId = await orderOf(a, TEAM.phone.slice(-4));
   if (!orderId) { check('할인: A의 팀을 끝 4자리로 찾음', false); return; }
   await a.goto(APP + '#/orders/' + orderId);
-  await a.waitForSelector('.sn-slip', { timeout: STEP_MS });
-  const direct = a.locator('.pos-side-actions button', { hasText: '할인 적용' });
-  if (await direct.count()) await direct.first().click();
-  else {
-    await a.locator('.pos-side-actions button', { hasText: '더 보기' }).click();
-    const choice = () => a.locator('[role="dialog"] .pos-choice-button', { hasText: '할인 적용' });
-    const next = a.locator('[role="dialog"]').getByRole('button', { name: '다음 쪽' });
-    for (let guard = 0; guard < 4 && !(await choice().count()) && await next.count() && await next.isEnabled(); guard += 1) await next.click();
-    await choice().first().click();
-  }
+  await a.waitForSelector('.pos-counter-detail', { timeout: STEP_MS });
+  await counterAction(a, '할인 적용');
   const dialog = a.locator('.pos-discount');
   await dialog.waitFor({ timeout: STEP_MS });
   await dialog.getByRole('group', { name: '할인', exact: true }).getByRole('button', { name: /^직접 입력/ }).click();
@@ -488,7 +414,7 @@ async function discountE2E({ APP, a, b }) {
   const rows = (slip.body?.adjustments ?? []).map((x) => x.parts.map((p) => p.text).join(' · ') + (x.amount !== undefined ? ' ' + x.amount : ''));
   check('할인: 접수증 출처 줄 `장비 할인 직접 입력 · 단골 · −5,000원` · `환불 · 현금 5,000원`, 미수 없음',
     rows.includes('장비 할인 직접 입력 · 단골 -5000') && rows.includes('환불 · 현금 5,000원') && slip.body?.money?.due === 0, rows.join(' / '));
-  await a.waitForSelector('.sn-slip-adjust', { timeout: STEP_MS }).catch(() => {});
+  await counterAdjustment(a);
   await shot(a, 'a-discount-slip-1024x600');
 
   const yoon = await orderOf(a, '0028');
@@ -541,16 +467,8 @@ async function orderEditE2E({ APP, a, e }) {
   // 품목 추가: 접수증 옆 동작(더 보기 안일 수 있음) → ① 품목 → 헬멧 → 다음 · 결제 → 현금 → 추가 확정.
   await a.setViewportSize({ width: 1024, height: 600 });
   await a.goto(APP + '#/orders/' + orderId);
-  await a.waitForSelector('.sn-slip', { timeout: STEP_MS });
-  const direct = a.locator('.pos-side-actions button', { hasText: '품목 추가' });
-  if (await direct.count()) await direct.first().click();
-  else {
-    await a.locator('.pos-side-actions button', { hasText: '더 보기' }).click();
-    const choice = () => a.locator('[role="dialog"] .pos-choice-button', { hasText: '품목 추가' });
-    const next = a.locator('[role="dialog"]').getByRole('button', { name: '다음 쪽' });
-    for (let guard = 0; guard < 4 && !(await choice().count()) && await next.count() && await next.isEnabled(); guard += 1) await next.click();
-    await choice().first().click();
-  }
+  await a.waitForSelector('.pos-counter-detail', { timeout: STEP_MS });
+  await counterAction(a, '품목 추가');
   await a.waitForSelector('.pos-new-kinds', { timeout: STEP_MS });
   const title = ((await a.locator('.sn-slip-title').textContent()) ?? '').trim();
   await a.locator('.pos-new-kinds .sn-kind', { hasText: '헬멧' }).click();
@@ -570,7 +488,7 @@ async function orderEditE2E({ APP, a, e }) {
   const addLabel = ((await dialog.locator('[data-primary="true"]').textContent()) ?? '').trim();
   await shot(a, 'a-add-checkout-1024x600');
   await dialog.locator('[data-primary="true"]').click();
-  await a.waitForSelector('.sn-slip', { timeout: STEP_MS }).catch(() => {});
+  await a.waitForSelector('.pos-counter-detail', { timeout: STEP_MS }).catch(() => {});
   const slip = await pageQuery(a, { name: 'orderSlip', params: { orderId } });
   const rows = (slip.body?.adjustments ?? []).map((x) => x.parts.map((p) => p.text).join(' · '));
   const added = (slip.body?.lines ?? []).at(-1);
@@ -585,7 +503,7 @@ async function orderEditE2E({ APP, a, e }) {
     /^품목 취소 · 헬멧 .* · 환불 현금 /.test(removed.sheet?.primary?.label ?? '') && removed.outcomes.map((o) => o.outcome).join(',') === 'applied,applied' && refundRow !== undefined,
     String(removed.sheet?.primary?.label) + ' · ' + removed.outcomes.map((o) => o.outcome + (o.error ? ':' + o.error.code : '')).join(',') + ' · ' + JSON.stringify(refundRow ?? null));
   await a.goto(APP + '#/orders/' + orderId);
-  await a.waitForSelector('.sn-slip', { timeout: STEP_MS });
+  await a.waitForSelector('.pos-counter-detail', { timeout: STEP_MS });
   await shot(a, 'a-removed-slip-1024x600');
 
   // 최하은(전화 예약 · 배달 적재 전 · 계좌이체로 모두 받음): 접수 취소 · 연락 없음. 앞의 운영 규칙 시험에서 B가 `당일 취소 환불`을 `환불 없음`으로
@@ -602,7 +520,7 @@ async function orderEditE2E({ APP, a, e }) {
     cancelled.outcomes.map((o) => o.outcome).join(',') === 'applied,applied' && row?.statusWord === '취소' && row?.finished === true && row?.lateAt === undefined,
     String(cancelled.sheet?.primary?.label) + ' · ' + cancelled.outcomes.map((o) => o.outcome + (o.error ? ':' + o.error.code : '')).join(',') + ' · ' + JSON.stringify({ word: row?.statusWord, finished: row?.finished }));
   await a.goto(APP + '#/orders/' + haeun);
-  await a.waitForSelector('.sn-slip', { timeout: STEP_MS });
+  await a.waitForSelector('.pos-counter-detail', { timeout: STEP_MS });
   await shot(a, 'a-cancelled-slip-1024x600');
   // E(기사 휴대폰, 1호 차량)의 배달 목록에서 빠진다.
   const deliveries = await pageQuery(e, { name: 'ledgerView', params: { viewKey: 'delivery_list' } });
@@ -620,17 +538,9 @@ async function exchangeE2E({ APP, a, e }) {
   if (!orderId) { check('즉시 교환: 김민재 팀을 끝 4자리로 찾음', false); return; }
   await a.setViewportSize({ width: 1024, height: 600 });
   await a.goto(APP + '#/orders/' + orderId);
-  await a.waitForSelector('.sn-slip', { timeout: STEP_MS });
+  await a.waitForSelector('.pos-counter-detail', { timeout: STEP_MS });
   const before = (await pageQuery(a, { name: 'orderSlip', params: { orderId } })).body;
-  const direct = a.locator('.pos-side-actions button', { hasText: '즉시 교환' });
-  if (await direct.count()) await direct.first().click();
-  else {
-    await a.locator('.pos-side-actions button', { hasText: '더 보기' }).click();
-    const choice = () => a.locator('[role="dialog"] .pos-choice-button', { hasText: '즉시 교환' });
-    const next = a.locator('[role="dialog"]').getByRole('button', { name: '다음 쪽' });
-    for (let guard = 0; guard < 4 && !(await choice().count()) && await next.count() && await next.isEnabled(); guard += 1) await next.click();
-    await choice().first().click();
-  }
+  await counterAction(a, '즉시 교환');
   const dialog = a.locator('.pos-exchange');
   await dialog.waitFor({ timeout: STEP_MS });
   const item = dialog.getByRole('group', { name: '교환 품목', exact: true }).locator('button.sn-choice', { hasText: '의류' });
@@ -653,7 +563,7 @@ async function exchangeE2E({ APP, a, e }) {
       && JSON.stringify(slip?.money) === JSON.stringify(before?.money),
     label + ' · ' + String(line?.label) + ' · ' + rows.join(' / '));
   await a.goto(APP + '#/orders/' + orderId);
-  await a.waitForSelector('.sn-slip-adjust', { timeout: STEP_MS }).catch(() => {});
+  await counterAdjustment(a);
   await shot(a, 'a-exchange-slip-1024x600');
   const driver = await pageQuery(e, { name: 'exchangeSheet', params: { orderId } });
   check('즉시 교환: 기사 휴대폰(E) 세션은 교환 창을 읽지 못함(403, 카운터만)', driver.status === 403, String(driver.status));
@@ -698,9 +608,9 @@ async function ticketsE2E({ APP, a, e }) {
   const orderId = await orderOf(a, '0022');
   if (!orderId) { check('리프트권: 박준호 팀을 끝 4자리로 찾음', false); return; }
   await a.goto(APP + '#/orders/' + orderId);
-  await a.waitForSelector('.sn-slip', { timeout: STEP_MS });
-  const issueLabel = ((await a.locator('.pos-side [data-primary="true"]').textContent()) ?? '').trim();
-  await a.locator('.pos-side [data-primary="true"]').click();
+  await a.waitForSelector('.pos-counter-detail', { timeout: STEP_MS });
+  const issueLabel = ((await a.locator('.pos-counter-detail-actions [data-primary="true"]').textContent()) ?? '').trim();
+  await a.locator('.pos-counter-detail-actions [data-primary="true"]').click();
   const confirmButton = a.locator('[role="dialog"] [data-primary="true"]');
   await confirmButton.waitFor({ timeout: STEP_MS });
   await confirmButton.click();
@@ -771,13 +681,8 @@ async function printCallE2E({ APP, a, e }) {
   check('전화: 기사 휴대폰(E)의 수거 목록 `전화` → 주 버튼이 `tel:` 링크', typeof href === 'string' && href.startsWith('tel:'), String(href));
   const orderId = await orderOf(a, '0025');
   await a.goto(APP + '#/orders/' + orderId);
-  await a.waitForSelector('.sn-slip', { timeout: STEP_MS });
-  const direct = a.locator('.pos-side-actions button', { hasText: '전화' });
-  if (await direct.count()) await direct.first().click();
-  else {
-    await a.locator('.pos-side-actions button', { hasText: '더 보기' }).click();
-    await a.locator('[role="dialog"] .pos-choice-button', { hasText: '전화' }).first().click();
-  }
+  await a.waitForSelector('.pos-counter-detail', { timeout: STEP_MS });
+  await counterAction(a, '전화');
   await a.locator('.pos-call').waitFor({ timeout: STEP_MS }).catch(() => {});
   const number = ((await a.locator('.pos-call .pos-call-number').textContent().catch(() => '')) ?? '').trim();
   const tel = await a.locator('.pos-call a[href^="tel:"]').count();
@@ -940,7 +845,7 @@ async function main() {
     await shot(a, 'a-login-1024x600');
     const loggedA = await login(a, STAFF.counter, pins[STAFF.counter]);
     check('A: 비밀번호는 숫자 없이 가려 보인다', /^●( ●){3}$/.test(loggedA.masked), loggedA.masked);
-    await a.waitForSelector('.sn-header', { timeout: STEP_MS });
+    await a.waitForSelector('.sn-header, .pos-counter-header', { timeout: STEP_MS });
     check('A: 로그인하면 카운터의 첫 화면(오늘 장부)', /#\/ledger/.test(a.url()), a.url().replace(APP, '/'));
     await shot(a, 'a-ledger-1024x600');
     const idbKept = await a.evaluate(() => new Promise((resolve) => {
@@ -973,10 +878,10 @@ async function main() {
         a.waitForFunction(() => /^#\/orders\/(?!new\b)[^/?]+$/.test(location.hash), null, { timeout: STEP_MS }).then(() => 'slip'),
         walk.dialog.getByText(UNSUPPORTED_LINE).waitFor({ timeout: STEP_MS }).then(() => 'unsupported'),
       ]).catch(() => 'none');
-      if (outcome === 'slip') await a.waitForSelector('.sn-slip', { timeout: STEP_MS }).catch(() => {});
+      if (outcome === 'slip') await a.waitForSelector('.pos-counter-detail', { timeout: STEP_MS }).catch(() => {});
       await shot(a, 'a-after-confirm-1024x600');
       if (outcome === 'slip') {
-        orderSaved = check('A: 접수 확정 → 서버가 적은 새 접수증', (await a.locator('.sn-slip').textContent())?.includes(TEAM.name));
+        orderSaved = check('A: 접수 확정 → 서버가 적은 새 접수증', (await a.locator('.pos-counter-detail').textContent())?.includes(TEAM.name));
       } else if (outcome === 'unsupported') {
         check('A: 접수 확정 명령이 서버까지 가서 업무 결과로 돌아옴(거절 한 줄)', true, UNSUPPORTED_LINE);
         blocked('A: 접수 확정 → 새 접수증', '서버 저장소가 아직 접수를 표에 적지 못해 `' + UNSUPPORTED_LINE + '`로 거절함(계획 C3a ~ C3e)');
@@ -986,17 +891,17 @@ async function main() {
     }
     if (orderSaved) {
       // 지급 도장: 접수증 오른쪽 판의 주 버튼(다음 처리) → 확인 창의 주 버튼.
-      const next = a.locator('.pos-side [data-primary="true"]');
+      const next = a.locator('.pos-counter-detail-actions [data-primary="true"]');
       await next.click();
       await a.locator('[role="dialog"] [data-primary="true"]').last().click();
       await a.waitForFunction(() => !document.querySelector('[role="dialog"]'), null, { timeout: STEP_MS }).catch(() => {});
       await sleep(500);
-      const slipText = (await a.locator('.sn-slip').textContent()) ?? '';
-      check('A: 지급 처리 → 접수증에 지급 완료', /지급 완료/.test(slipText) || (await a.locator('[aria-label*="지급 완료"]').count()) > 0);
+      const slipText = (await a.locator('.pos-counter-detail').textContent()) ?? '';
+      check('A: 지급 처리 → 렌탈 단계와 서버 지급 완료', slipText.includes(TEAM.name) && await counterIssued(a));
       await a.reload();
-      await a.waitForSelector('.sn-slip', { timeout: STEP_MS });
-      const again = (await a.locator('.sn-slip').textContent()) ?? '';
-      check('A: 새로 고쳐도 서버 장부의 팀 · 지급 도장이 그대로', again.includes(TEAM.name) && ((await a.locator('[aria-label*="지급 완료"]').count()) > 0 || /지급 완료/.test(again)));
+      await a.waitForSelector('.pos-counter-detail', { timeout: STEP_MS });
+      const again = (await a.locator('.pos-counter-detail').textContent()) ?? '';
+      check('A: 새로 고쳐도 서버 장부의 팀 · 지급 도장이 그대로', again.includes(TEAM.name) && await counterIssued(a));
     } else {
       blocked('A: 지급 도장 → 새로 고침에도 그대로', '접수를 서버에 적지 못해 이어 할 수 없음');
       await a.keyboard.press('Escape').catch(() => {});
@@ -1010,11 +915,11 @@ async function main() {
     await b.goto(APP);
     await enroll(b, codes.b);
     await login(b, STAFF.manager, pins[STAFF.manager]);
-    await b.waitForSelector('.sn-header', { timeout: STEP_MS });
+    await b.waitForSelector('.sn-header, .pos-counter-header', { timeout: STEP_MS });
     check('B: 다른 기기 · 관리자 로그인 → 장부', /#\/ledger/.test(b.url()));
     if (orderSaved) {
       // 장부에는 견본 하루 18팀도 있어 A의 팀이 다른 쪽일 수 있다: B 세션으로 장부를 물어 A의 팀(끝 4자리)이 있는지 본다.
-      await b.waitForSelector('.sn-ledger tr.sn-row', { timeout: STEP_MS });
+      await b.waitForSelector('.pos-counter-row', { timeout: STEP_MS });
       const ledgerB = await pageQuery(b, { name: 'ledgerView', params: { viewKey: 'day_ledger' } });
       const last4 = TEAM.phone.slice(-4);
       const listed = (ledgerB.body?.rows ?? []).some((row) => Object.values(row.cells ?? {}).some((cell) => cell?.renderer === 'team' && cell.last4 === last4 && cell.name === TEAM.name));
@@ -1100,12 +1005,13 @@ async function main() {
     check('C: 기사 기기의 타일은 기사가 먼저', driverTiles[0]?.includes(STAFF.driver), driverTiles.join(', '));
     await login(c, STAFF.driver, pins[STAFF.driver]);
     await c.waitForFunction(() => /#\/driver\/\d{4}-\d{2}-\d{2}/.test(location.hash), null, { timeout: STEP_MS });
-    await c.waitForSelector('.sn-header', { timeout: STEP_MS });
+    await c.waitForSelector('.sn-header, .pos-counter-header', { timeout: STEP_MS });
     check('C: 기사 로그인 → 그 영업일의 수거 목록', true, c.url().replace(APP, '/'));
     await c.waitForSelector('.sn-footer', { timeout: STEP_MS });
     await shot(c, 'c-driver-1024x600');
     const footerC = ((await c.locator('.sn-footer').textContent()) ?? '').trim();
-    check('C: 서버에 붙은 기사 기기의 바닥줄에 `전송 대기`가 없음(보냄 대기가 없다)', footerC !== '' && !footerC.includes('전송 대기'), footerC.slice(0, 80));
+    // 기사 기기는 사본 + 보냄 대기(DriverClient, work/impl-offline/plan.md §7-4 · §8-1)로 돈다: 서버 모드에도 보냄 대기가 있어 바닥줄에 `전송 대기 0`.
+    check('C: 서버에 붙은 기사 기기의 바닥줄에 `전송 대기 0`(보냄 대기가 비어 있음)', footerC !== '' && footerC.includes('전송 대기 0'), footerC.slice(0, 80));
     await ctxC.setOffline(true);
     const strip = await c.waitForSelector('.sn-strip.is-offline', { timeout: 30_000 }).then(() => true, () => false);
     const stripText = strip ? ((await c.locator('.sn-strip').textContent()) ?? '').trim() : '';
@@ -1113,6 +1019,10 @@ async function main() {
     check('C: 끊기면 기사 화면에 연결 띠 `연결 끊김 · 마지막 연결`', strip && /^연결 끊김/.test(stripText), stripText);
     await ctxC.setOffline(false);
     check('C: 다시 이으면 연결 띠가 사라진다', await c.waitForSelector('.sn-strip', { state: 'detached', timeout: 30_000 }).then(() => true, () => false));
+    // 끊긴 채 수거(work/impl-offline/plan.md §7-4): 보냄 대기(점선 · `전송 대기 1`) → 다시 이으면 기기 열쇠로 서명한 묶음을 서버가 받는다(`전송 대기 0`,
+    // 실선). 서버의 서명 검사가 받아들였으면 `공급자 확인 중`(command_held)이 없다. 다른 확인이 쓰는 팀(김민재 · 최하은 · 박준호 · 김민수 · 최은정)은 건드리지
+    // 않는다.
+    await driverOfflineCollectE2E({ c, ctxC, a });
     const ledgerC = await pageQuery(c, { name: 'ledgerView', params: { viewKey: 'day_ledger' } });
     check('C: 기사 세션의 장부 조회는 403', ledgerC.status === 403, String(ledgerC.status));
     await c.goto(APP + '#/ledger');
@@ -1195,12 +1105,15 @@ async function main() {
     for (let i = 0; i < 5; i += 1) last = await login(d, STAFF.manager, wrong, { expectApp: false });
     await shot(d, 'd-locked-1024x600');
     check('D: 다섯 번 틀리면 `로그인 잠김 · 시각 이후 가능`', /^로그인 잠김 · \d{2}:\d{2} 이후 가능$/.test(last?.note ?? ''), last?.note ?? '');
-    // 잠긴 동안: 맞는 비밀번호를 쳐도 잠김 한 줄(풀리는 시각)이 남고 `입력`이 눌리지 않는다(서버의 잠김은 서버 시험이 본다).
+    // 잠긴 동안: 숫자 키 자체가 비활성이다. 하드웨어 입력도 값을 바꾸지 않고 잠김 한 줄과 입력 차단을 유지한다.
     const lockPad = d.locator('.sn-sheet-overlay .sn-numpad');
-    for (const x of real) await lockPad.getByRole('button', { name: x, exact: true }).click();
+    const disabledDigits = await lockPad.getByRole('button', { name: /^[0-9]$/, exact: true }).evaluateAll(keys => keys.every(key => key.disabled) && keys.length === 10);
+    const beforeLocked = await lockPad.textContent();
+    await d.keyboard.type(real);
+    const sameLocked = beforeLocked === await lockPad.textContent();
     const lockNote = (await lockPad.locator('.sn-keypad-note').textContent())?.trim() ?? '';
     const enterOff = await lockPad.getByRole('button', { name: '입력', exact: true }).isDisabled();
-    check('D: 잠긴 동안에는 숫자를 쳐도 잠김 한 줄이 남고 입력이 눌리지 않음', /^로그인 잠김 · \d{2}:\d{2} 이후 가능$/.test(lockNote) && enterOff, lockNote);
+    check('D: 잠긴 동안 숫자 키 비활성 · 하드웨어 입력 무효 · 잠김 한 줄과 입력 차단 유지', disabledDigits && sameLocked && /^로그인 잠김 · \d{2}:\d{2} 이후 가능$/.test(lockNote) && enterOff, lockNote);
     await b.reload();
     await b.waitForSelector('.sn-rule-card', { timeout: STEP_MS });
     check('B: 다른 기기의 잠김과 관계없이 그대로 로그인', !(await b.locator('.pos-login').count()));
@@ -1247,7 +1160,7 @@ async function main() {
     check('A: 로그아웃 → 로그인 화면, 머리 조회는 401', headA === 401, String(headA));
     // 다시 로그인하면 카운터의 첫 화면(로그아웃을 누른 나가기 화면으로 돌아가지 않는다).
     await login(a, STAFF.counter, pins[STAFF.counter]);
-    await a.waitForSelector('.sn-header', { timeout: STEP_MS });
+    await a.waitForSelector('.sn-header, .pos-counter-header', { timeout: STEP_MS });
     await sleep(300);
     check('A: 로그아웃 뒤 다시 로그인하면 장부(나가기 화면이 아님)', /#\/ledger/.test(a.url()), a.url().replace(APP, '/'));
 
@@ -1297,7 +1210,7 @@ async function main() {
     const oTiles = await o.locator('.pos-login-tile').allTextContents();
     check('O: 카운터 선택 → 로그인 화면(직원 타일 셋)', [STAFF.manager, STAFF.counter, STAFF.driver].every((n) => oTiles.some((t) => t.includes(n))), oTiles.join(', '));
     await login(o, STAFF.counter, openPins[STAFF.counter]);
-    await o.waitForSelector('.sn-header', { timeout: STEP_MS });
+    await o.waitForSelector('.sn-header, .pos-counter-header', { timeout: STEP_MS });
     await shot(o, 'o-ledger-1024x600');
     check('O: 비밀번호 로그인 → 카운터의 첫 화면(오늘 장부)', /#\/ledger/.test(o.url()), o.url().replace(openProxy.url, '/'));
     const oSession = await o.evaluate(() => fetch('api/v2/session', { cache: 'no-store' }).then((r) => r.json()));
@@ -1339,7 +1252,7 @@ async function main() {
     check('Q: 기사 기기의 로그인 타일은 기사만 · 로그인 줄에 기사 휴대폰 · 1호 차량', qTiles.join(',') === STAFF.driver && / · 기사 휴대폰 · 1호 차량$/.test(qLine), qTiles.join(',') + ' · ' + qLine);
     await login(q, STAFF.driver, openPins[STAFF.driver]);
     await q.waitForFunction(() => /#\/driver\/\d{4}-\d{2}-\d{2}/.test(location.hash), null, { timeout: STEP_MS });
-    await q.waitForSelector('.sn-header', { timeout: STEP_MS });
+    await q.waitForSelector('.sn-header, .pos-counter-header', { timeout: STEP_MS });
     await shot(q, 'q-driver-360x640');
     const qClass = await q.evaluate(() => document.querySelector('.sn-root')?.getAttribute('data-device'));
     const qSession = await q.evaluate(() => fetch('api/v2/session', { cache: 'no-store' }).then((r) => r.json()));
@@ -1402,8 +1315,7 @@ async function main() {
       + '\n' + openLogs + '\n' + (existsSync(cliLog) ? readFileSync(cliLog, 'utf8') : '') + '\n' + proxyLines.join('\n');
     // 비밀은 숫자 경계로 찾는다(앞뒤가 숫자가 아닌 자리): 짧은 비밀번호가 `1234ms` 같은 기록 숫자 안에 우연히 든 것은 새지 않은 것이다(2026-09-27
     // 점검: 경계 없는 찾기가 우연히 걸려 다시 돌리는 일이 있었다).
-    const escape = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const leaks = secretsSeen.filter((s) => s && new RegExp('(?<!\\d)' + escape(s) + '(?!\\d)(?!ms)').test(logs));
+    const leaks = leaksIn(logs, secretsSeen);
     if (openRuns > 1) {
       check('열린 등록 서버 기록: 시작의 주의 줄 · 등록마다 ALERT open_enroll 세 줄 · 끈 뒤 시작의 끊음 줄', /주의: 열린 기기 등록 켬/.test(openLogs)
         && (openLogs.match(/ALERT open_enroll e2e1open/g) ?? []).length === 3 && (openRuns < 3 || /ALERT open_enroll_cut e2e1open · 열린 등록 꺼짐\(open_enroll_off\) · 시험 기기 1대 끊음/.test(openLogs)),

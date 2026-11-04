@@ -277,7 +277,9 @@ export function measureRules(options) {
   if (primaries.length + painted.length > 1) for (const el of primaries) add('primaries', el, { why: '주 버튼 ' + (primaries.length + painted.length) + '개' });
   for (const el of primaries) {
     if (el.disabled) continue;
-    if (!sameColor(accentColor, parseColor(cs(el).backgroundColor))) add('primaries', el, { why: '등급 강조색(' + accent + ')이 아님', color: cs(el).backgroundColor });
+    const counter = el.closest('.pos-counter, .pos-counter-new, .pos-detail');
+    const expected = counter ? token('--sn-counter-accent') : accentColor;
+    if (!sameColor(expected, parseColor(cs(el).backgroundColor))) add('primaries', el, { why: '승인된 강조색(' + (counter ? 'counter' : accent) + ')이 아님', color: cs(el).backgroundColor });
   }
 
   // ⑧ 빨강은 늦은 것에만: 글자 · 바탕 · 테두리 · 윤곽선 · 그림자 · 그림 색.

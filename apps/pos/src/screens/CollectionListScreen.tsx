@@ -5,7 +5,7 @@
 // 줄을 누르면 고르고, 바닥줄 자리에 동작 줄: 설정의 동작(▲ 위로 · ▼ 아래로 · 맨 위로 · 수거 실패 · 전화 · 시간순 정렬)과 '닫기'.
 // 어느 동작이 보일지는 설정(ledger_view_actions)과 줄의 능력(conditions), 누를 수 있는지는 줄의 disabledActions(서버)가 정한다.
 // 끝 4자리 숫자판은 높이 600px 이상 기사 태블릿에서 오른쪽 판, 그보다 낮거나 휴대폰이면 머리줄 '끝 4자리'로 아래 판.
-// 바닥줄: '완료 4 · 전송 대기 0 · 잔여 7 · 차량 재고 …'(카운터와 서버에 붙은 기사 기기는 보냄 대기가 없어 전송 대기 없음), 쪽 넘김,
+// 바닥줄: '완료 4 · 전송 대기 0 · 잔여 7 · 차량 재고 …'(카운터는 보냄 대기가 없어 전송 대기 없음), 쪽 넘김,
 // 주 버튼 하나(기사 보라 '매장 입고 · 14개', 카운터 주황 '인쇄').
 // 화면은 규칙을 계산하지 않는다: 순서 · 도장 · 숫자 · 긴급 · 누를 수 있는지는 읽기 모델 그대로이고, 누르면 명령을 보낸다.
 // 기사의 배달 목록(delivery_list, ui 6-5, #/driver/:date/deliveries)도 같은 틀이다: 배달 시각 묶음, 배달 도장(적재 → 배달), 줄의 팀 칸을
@@ -13,11 +13,11 @@
 // 지금 목록이 아닌 쪽만 보인다(plan §8 D4).
 import {
   ACTION_LABELS, availableActions, draftToEnvelope, isAccepted, menuFor, openCommandDraft, pickPrimaryAction, resolveLedgerView, stampStepMap, visibleView,
-  type ActionKey, type ConfirmCommand, type LedgerCell, type LedgerRow, type LedgerTabRow, type LedgerViewResult, type PinRow, type StampCell,
-  type StampStepRow,
+  type ActionKey, type ConfirmCommand, type ConnectionState, type LedgerCell, type LedgerRow, type LedgerTabRow, type LedgerViewResult, type MenuEntryRow,
+  type PendingCommand, type PinRow, type StampCell, type StampStepRow,
 } from '@skinote/contract';
 import {
-  AppHeader, ConnectionStrip, FooterBar, IndexTabs, Keypad, Ledger, Pager, PinBar, REORDER_LOOK, RowActionBar, fillTitle, formatItem, formatTime, t,
+  AppHeader, ConnectionStrip, FooterBar, IndexTabs, Keypad, Ledger, Pager, REORDER_LOOK, RowActionBar, connectionStripVisible, fillTitle, formatItem, formatTime, t,
   useDeviceProfile, useKeypadPlacement, useServerNow, useUi, type FooterMetric, type LedgerPaging, type PrimaryButtonProps, type RowAction,
 } from '@skinote/ui';
 import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
@@ -25,6 +25,7 @@ import { dispatchAction } from '../app/actions.ts';
 import { useClient, useConfig, useConnection, useLive, usePointerDown } from '../app/client.tsx';
 import { figureText } from '../app/labels.ts';
 import { go, navState, patchNavState, type DeviceShape } from '../app/router.ts';
+import { elsewhereLine, useSession } from '../app/session-context.ts';
 import { say } from '../app/strings.ts';
 import { pressStamp, useConfirmFlow } from '../components/ConfirmFlow.tsx';
 import { ChoiceSheet, type Choice } from '../components/NoticeDialog.tsx';
@@ -32,10 +33,14 @@ import { usePosHeader } from '../components/PosHeader.tsx';
 import { VanStockDialog } from '../components/VanStockDialog.tsx';
 import { VisitResultDialog } from '../components/VisitResultDialog.tsx';
 import { CallDialog } from '../components/CallDialog.tsx';
+import { UrgentListDialog } from '../components/UrgentListDialog.tsx';
+import { UrgentBar, urgentUnconfirmed } from '../components/UrgentBar.tsx';
 
 // 카운터의 A4 인쇄(features-1 §8-3): 처음 누를 때 받는다(첫 화면 묶음을 작게).
 const loadPrint = () => import('../components/PrintHost.tsx');
 const PrintHost = lazy(() => loadPrint().then((m) => ({ default: m.PrintHost })));
+// 전송 대기 목록 창(§17 R3-19)도 처음 열 때 받는다(서비스 워커가 미리 받아 두므로 끊긴 채로도 열린다).
+const PendingListDialog = lazy(() => import('../components/PendingListDialog.tsx').then((m) => ({ default: m.PendingListDialog })));
 
 type Workspace = 'driver' | 'pos';
 
@@ -48,6 +53,24 @@ function storedTab(workspace: Workspace, viewKey: DriverListKey): string | null 
 }
 function storeTab(workspace: Workspace, viewKey: DriverListKey, tab: string): void {
   try { window.localStorage.setItem(tabStorageKey(workspace, viewKey), tab); } catch { /* 저장이 막혀도 탭은 돈다 */ }
+}
+
+/** 머리줄의 `전송 대기` 자리(설정 메뉴가 아니라 이 기기의 상태, 나가기처럼 코드가 더한다: work/impl-offline/plan.md §17 R3-19). */
+export const PENDING_MENU_KEY = '__pending';
+
+/**
+ * 이 기기에 서버의 답을 받지 않은 기록이 있으면 머리줄 메뉴 끝에 `전송 대기`(수는 메뉴 버튼 안의 수, 좁으면 더 보기 안 `전송 대기 3`). 우선순위가 가장
+ * 낮아 좁은 머리줄(휴대폰 · 메뉴 두 칸인 태블릿)에서는 먼저 더 보기로 간다. 보냄 대기가 없는 기기(서버에 붙은 기기)는 없음. 순수 함수(시험).
+ */
+export function pendingMenu(connection: Pick<ConnectionState, 'pendingCount' | 'sendQueue'>): { entry: MenuEntryRow; count: number } | null {
+  if (connection.sendQueue === false || connection.pendingCount <= 0) return null;
+  return {
+    entry: {
+      workspace_key: 'driver', key: PENDING_MENU_KEY, label: t('pendingStamp'), short_label: null, screen_key: 'driver_list', seq: 1000, priority: 0,
+      overflow_key: 'more_sheet', feature_key: null, feature_on: 1, permission_key: null, device_class_key: null, pinned_end: 0,
+    },
+    count: connection.pendingCount,
+  };
 }
 
 /**
@@ -119,9 +142,13 @@ function useCollectionScreen(
   const callTitle = (name: string) => say('noticeTitle', { label: ACTION_LABELS.call, name });
   const [sheet, setSheet] = useState<Sheet | null>(null);
   const [vanOpen, setVanOpen] = useState(false);
+  /** 전송 대기 목록 창(§17 R3-19): 연 동안 기기의 목록(pending())을 읽는다. */
+  const [pendingOpen, setPendingOpen] = useState(false);
+  const [urgentOpen, setUrgentOpen] = useState(false);
+  const [pendingItems, setPendingItems] = useState<readonly PendingCommand[] | null>(null);
   const flow = useConfirmFlow();
   const pointer = usePointerDown();
-  const hold = externalHold || flow.active || pointer || findOpen || visit !== null || call !== null || sheet !== null || vanOpen || printing;
+  const hold = externalHold || flow.active || pointer || findOpen || visit !== null || call !== null || sheet !== null || vanOpen || printing || pendingOpen;
 
   const live = useLive<LedgerViewResult>(
     [viewKey, workspace, date ?? '', tab, profile.key, listVehicle ?? ''].join(':'),
@@ -130,6 +157,22 @@ function useCollectionScreen(
   );
   const result = live.data;
   const connection = useConnection();
+  // 전송 대기 목록 창이 열린 동안 보내기가 이어지면(수가 바뀌면) 다시 읽는다. 다 보내 비면 창에 `전송 대기 0`(닫기로 나간다).
+  useEffect(() => {
+    if (!pendingOpen) return undefined;
+    let alive = true;
+    void client.pending().then((items) => { if (alive) setPendingItems(items); }, () => {});
+    return () => { alive = false; };
+  }, [pendingOpen, client, connection.pendingCount, connection.unconfirmedCount]);
+  // 로그인 때 같은 차량의 다른 기기가 보낼 기록을 가졌으면 한 번 알린다(`1호 차량 휴대폰 미전송 기록 가능 · 휴대폰 전송 필요`, sync 6).
+  const session = useSession();
+  const elsewhere = driver ? session?.elsewhere : undefined;
+  const vanLabel = result?.vehicle?.label;
+  useEffect(() => {
+    if (!elsewhere || !vanLabel) return;
+    flow.notify({ title: t('alerts'), lines: [elsewhereLine(elsewhere, vanLabel)] });
+    session?.dismissElsewhere?.();
+  }, [elsewhere, vanLabel]);
   // 카운터의 인쇄 묶음은 목록을 연 뒤 미리 받아 둔다(누르면 곧바로 인쇄 창).
   useEffect(() => { if (!driver) void loadPrint().catch(() => undefined); }, [driver]);
 
@@ -336,36 +379,11 @@ function useCollectionScreen(
   const pageCount = paging?.pageCount ?? 1;
   const shownPage = Math.min(Math.max(0, page ?? paging?.initialPage ?? 0), pageCount - 1);
 
-  const pinText = (pin: PinRow) => [t('pinTitle') + ' · ' + formatTime(pin.at, timezone), ...pin.parts.map((p) => p.text)].join(' · ');
-  const ack = (pin: PinRow) => { void send({ type: 'notification.ack', payload: { notificationId: pin.pinId } }, t('pinTitle')); };
-  const pin = pins[0];
-  const pinSlot = pin ? (
-    <PinBar
-      pin={pin}
-      moreCount={pins.length - 1}
-      onOpen={(p) => selectTask(p.taskId)}
-      onCall={(p) => {
-        if (!p.phone || !p.orderId) return;
-        const orderId = p.orderId;
-        // 목록에 그 줄이 있으면 팀 이름으로('전화 · 오승민 팀'), 없으면(다른 탭) 긴급 줄의 이름 · 끝 4자리로.
-        const hit = rows.find((r) => r.taskId === p.taskId);
-        const name = hit ? teamOf(hit)?.name : undefined;
-        setCall({ title: name ? callTitle(name) : ACTION_LABELS.call + ' · ' + (p.parts.find((x) => x.drop === 0)?.text ?? ''), orderId });
-      }}
-      {...(driver ? { onAck: ack } : {})}
-      compact={profile.key === 'driver_phone'}
-      onMore={() => setSheet({
-        title: t('pinTitle'),
-        choices: pins.map((p) => ({
-          key: p.taskId,
-          label: p.parts.filter((x) => x.drop === 0).map((x) => x.text).join(' · '),
-          note: [formatTime(p.at, timezone), ...p.parts.filter((x) => x.drop !== 0).map((x) => x.text)].join(' · '),
-        })),
-        onPick: (taskId) => { setSheet(null); selectTask(taskId); },
-      })}
-    />
-  ) : undefined;
+  const pinSlot = pins.length ? <UrgentBar pins={pins} onOpen={() => setUrgentOpen(true)} /> : undefined;
 
+  // 기사 목록: 연결 띠 자리를 늘 비워 두고 쪽을 센다(ui 4-3, §18 R4-12). 띠가 보이면 띠가 그 자리를 쓴다: 띠가 나고 들어도 쪽의 줄이 옮겨 가지 않는다.
+  const reserveStrip = driver && !connectionStripVisible(connection);
+  // 카운터: 이 차량의 기사 기기가 끊겼거나 기록을 보내지 못하면 제목 줄의 노랑 표시(`1호 차량 연결 끊김 · 21:40부터`, 서버의 차량 연결 · 읽기 모델 link).
   const sheetBody = view && result ? (
     <>
       <IndexTabs
@@ -373,6 +391,7 @@ function useCollectionScreen(
         tabs={view.tabs}
         counts={result.tabCounts}
         active={result.activeTabKey}
+        {...(result.link ? { chip: result.link.parts } : {})}
         onSelect={changeTab}
         onMore={(tabs: LedgerTabRow[]) => setSheet({ title: t('more'), choices: tabs.map((x) => ({ key: x.tab_key, label: x.label })), onPick: (key) => { setSheet(null); changeTab(key); } })}
       />
@@ -385,6 +404,7 @@ function useCollectionScreen(
         onPaging={setPaging}
         selectedRowId={deliveries ? restored?.selected ?? null : selected}
         {...(pinSlot ? { pinSlot } : {})}
+        {...(reserveStrip ? { reservePx: profile.connectionStripPx } : {})}
         onRowPress={toggleRow}
         onStampPress={onStamp}
         onActionPress={(row) => callRow(row)}
@@ -417,10 +437,13 @@ function useCollectionScreen(
     () => (config && driver ? menuFor(config.menuEntries, 'driver', profile.key, config.features, null).filter((m) => m.key !== viewKey) : []),
     [config, driver, profile.key, viewKey],
   );
-  const waitingPins = pins.filter((p) => p.status === 'requested');
+  const waitingPins = urgentUnconfirmed(pins);
+  const pendingEntry = driver ? pendingMenu(connection) : null;
+  const headerMenu = pendingEntry ? [...menu, pendingEntry.entry] : menu;
   const openDriverMenu = (key: string) => {
     const listRoute = date ? driverListRoute(key, date, device) : null;
-    if (key === 'van_stock') setVanOpen(true);
+    if (key === PENDING_MENU_KEY) setPendingOpen(true);
+    else if (key === 'van_stock') setVanOpen(true);
     else if (listRoute) go(listRoute);
     else flow.notify({ title: menu.find((m) => m.key === key)?.label ?? '', lines: [say('screenSoon')] });
   };
@@ -429,23 +452,27 @@ function useCollectionScreen(
     <AppHeader
       shopName={config?.shopName ?? ''}
       vehicleLabel={vehicleName}
-      menu={menu}
-      alertCount={waitingPins.length}
+      menu={headerMenu}
+      {...(pendingEntry ? { menuCounts: { [PENDING_MENU_KEY]: pendingEntry.count } } : {})}
+      alertCount={waitingPins}
       {...(sideKeypad ? {} : { onFind: () => { setDigits(''); setNote(undefined); setFindOpen(true); } })}
       onMenu={(entry) => openDriverMenu(entry.key)}
       onMore={(more) => setSheet({
         title: more.vehicleLabel ? t('more') + ' · ' + more.vehicleLabel : t('more'),
-        choices: [...more.entries.map((e) => ({ key: e.key, label: e.label })), ...(more.includesExit ? [{ key: '__exit', label: t('exit'), icon: 'exit' as const }] : [])],
+        choices: [
+          // 더 보기 안의 `전송 대기`는 수와 함께(`전송 대기 3`: 띠와 같은 말).
+          ...more.entries.map((e) => ({ key: e.key, label: e.key === PENDING_MENU_KEY && pendingEntry ? t('pendingCount', { n: pendingEntry.count }) : e.label })),
+          ...(more.includesExit ? [{ key: '__exit', label: t('exit'), icon: 'exit' as const }] : []),
+        ],
         onPick: (key) => { setSheet(null); if (key === '__exit') exit(); else openDriverMenu(key); },
       })}
-      onAlerts={() => flow.notify({ title: t('alerts'), lines: waitingPins.length ? waitingPins.map(pinText) : [say('noAlerts')] })}
+      onAlerts={() => setUrgentOpen(true)}
       onExit={exit}
     />
   ) : null;
 
-  const strip = driver ? (
-    <ConnectionStrip online={connection.online} pendingCount={connection.pendingCount} {...(connection.lastSyncAt ? { lastSyncAt: connection.lastSyncAt } : {})} />
-  ) : null;
+  // 연결 띠(기사 기기): 끊김 · 보내는 중 · 남은 대기 · 보낸 뒤 결과 · 저장할 곳 없음(work/impl-offline/plan.md §8-1).
+  const strip = driver ? <ConnectionStrip {...connection} /> : null;
 
   const visitTeam = visit ? teamOf(visit) : null;
   const overlays = (
@@ -477,7 +504,13 @@ function useCollectionScreen(
           />
         </Suspense>
       ) : null}
+      {urgentOpen && result ? <UrgentListDialog pins={pins} basis={result.basis} driver={driver} onClose={() => setUrgentOpen(false)} onOpen={(pin) => { setUrgentOpen(false); if (driver) go({name:'task',taskId:pin.taskId,device}); else if (pin.orderId) go({name:'slip',orderId:pin.orderId}); }} /> : null}
       {vanOpen && load ? <VanStockDialog load={load} onClose={() => setVanOpen(false)} /> : null}
+      {pendingOpen && pendingItems ? (
+        <Suspense fallback={null}>
+          <PendingListDialog items={pendingItems} onClose={() => { setPendingOpen(false); setPendingItems(null); }} />
+        </Suspense>
+      ) : null}
       {flow.element}
     </>
   );
@@ -521,7 +554,7 @@ export function DeliveryListScreen({ date, device = 'tablet' }: { date: string; 
 
 /** 카운터의 수거 목록(#/collections/:date, N3): 같은 설정의 pos 판. 순서 바꾸기 · 빨리 확인 · 접수증 · 전화. */
 export function PosCollectionScreen({ date, vehicleId }: { date: string | null; vehicleId?: string }) {
-  const header = usePosHeader('collection', 'collection_list');
+  const header = usePosHeader('collection', 'collection_list', undefined, { urgent: false });
   const parts = useCollectionScreen('pos', 'collection_list', date, header.active, 'tablet', vehicleId);
   return (
     <div className="sn-screen">

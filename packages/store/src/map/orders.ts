@@ -199,6 +199,7 @@ export function insertOrder(ctx: WriteContext, ids: Ids, o: FxOrder): void {
   const businessDate = businessDateOfCtx(ctx, o.createdAt);
   insert(ctx.db, 'orders', {
     shop_id: ctx.shopId, id: o.id, receipt_no: o.receiptNo, customer_name: o.teamName, customer_phone: o.phone === '' ? undefined : o.phone,
+    customer_pickup: o.customerPickup ? 1 : 0,
     booking_channel_key: o.channel, headcount_expected: o.party > 0 ? o.party : undefined, business_date: businessDate, config_rev: configRevOf(ctx),
     created_at: created, created_by: ctx.actor.key, device_id: ctx.actor.deviceId, request_id: ctx.requestId, created_rev: ctx.rev, updated_at: at, updated_rev: ctx.rev,
   });
@@ -319,12 +320,13 @@ export function loadOrderShells(db: Db, shopId: string, reg: ShopRegistry): { or
   const orders: FxOrder[] = [];
   const byId = new Map<string, FxOrder>();
   const lineById = new Map<string, FxLine>();
-  for (const r of all(db, 'SELECT id, receipt_no, customer_name, customer_phone, booking_channel_key, headcount_expected, created_at FROM orders WHERE shop_id = ? ORDER BY rowid', shopId)) {
+  for (const r of all(db, 'SELECT id, receipt_no, customer_name, customer_phone, customer_pickup, booking_channel_key, headcount_expected, created_at FROM orders WHERE shop_id = ? ORDER BY rowid', shopId)) {
     const phone = text(r.customer_phone) ?? '';
     const o: FxOrder = {
       id: str(r.id), receiptNo: text(r.receipt_no) ?? '', teamName: str(r.customer_name), last4: last4Of(phone), phone, channel: str(r.booking_channel_key) as FxOrder['channel'],
       party: num(r.headcount_expected), createdAt: msOf(str(r.created_at)), pickup: { at: 0, mode: 'store' }, giveBack: { at: 0, mode: 'store' }, lines: [], payments: [],
       payWhen: 'pickup',
+      ...(num(r.customer_pickup) === 1 ? { customerPickup: true } : {}),
     };
     orders.push(o);
     byId.set(o.id, o);

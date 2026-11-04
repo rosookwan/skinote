@@ -37,10 +37,17 @@ export function readHead(db: Db, shopId: string, now: number): ShopHead {
   return { epoch: str(row.epoch_id), rev: num(row.rev), configRev: num(row.config_rev), businessDate: businessDateAt(db, shopId, now) };
 }
 
-/** 매장 파일의 epoch(번호 · id · rev 바닥). 백업이 control의 tenant_epochs에 본 rev를 적을 때 쓴다. 매장이 없으면 undefined. */
-export function readInstance(db: Db, shopId: string): { epochId: string; epochNo: number; revFloor: number } | undefined {
-  const r = one(db, 'SELECT epoch_id, epoch_no, rev_floor FROM shop_instance WHERE shop_id = ?', shopId);
-  return r ? { epochId: str(r.epoch_id), epochNo: num(r.epoch_no), revFloor: num(r.rev_floor) } : undefined;
+/**
+ * 매장 파일의 epoch(번호 · id · rev 바닥 · 되살린 기준). 백업이 control의 tenant_epochs에 본 rev를 적을 때 쓴다. 매장이 없으면 undefined.
+ * restoredUpToRev는 백업에서 되살린 epoch에만 있다(되살린 뒤 남은 마지막 rev). 시험 매장 새로 만들기 · 처음 만들기의 epoch는 null이다: 기사 기기는
+ * 이 값이 수일 때만 옛 epoch의 보낸 기록을 다시 보낸다(work/impl-offline/plan.md O20 · §17 R3-1).
+ */
+export function readInstance(db: Db, shopId: string): { epochId: string; epochNo: number; revFloor: number; restoredUpToRev: number | null } | undefined {
+  const r = one(db, 'SELECT epoch_id, epoch_no, rev_floor, restored_up_to_rev FROM shop_instance WHERE shop_id = ?', shopId);
+  return r ? {
+    epochId: str(r.epoch_id), epochNo: num(r.epoch_no), revFloor: num(r.rev_floor),
+    restoredUpToRev: r.restored_up_to_rev === null || r.restored_up_to_rev === undefined ? null : num(r.restored_up_to_rev),
+  } : undefined;
 }
 
 /** 지금 rev만(캐시 확인: 트랜잭션마다 한 번). */

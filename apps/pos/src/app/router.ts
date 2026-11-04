@@ -8,7 +8,9 @@
 // #/print/collections/:date?vehicle=v1 · #/print/orders/:orderId 인쇄 문서(A4, 연결하지 않은 주소 — 규칙 검사기가 인쇄 등급으로 잰다). 체험판 전용 경로: #/ 처음 화면, #/exit 나가기(?from=driver면 기사 기기의
 // 나가기), 기사 화면의 ?device=phone 휴대폰 모양으로 보기, 미리 보기 #/preview/keyboard · enroll · choose · login · offline · exit(화면
 // 키보드, 서버 모드의 기기 등록 · 기기 선택(시험 매장의 열린 등록) · 로그인 · 연결 끊김 · 나가기 화면, 비밀번호 재발급 창 · 권종 · 장소가 많은
-// 매장 설정 탭(?tab=pricing · places)). 어디에도 연결하지 않은 주소 —
+// 매장 설정 탭(?tab=pricing · places), 기사 연결 끊김 기록(work/impl-offline/plan.md §8-3): 앱 잠금(#/preview/lock, ?out=1 다섯 번 틀림) · 연결 끊김 화면의
+// 전송 대기(#/preview/offline?pending=3, &unknown=1 모르는 기기, &off=1 저장할 곳 없음) · 답을 잃은 매장 입고(#/preview/unconfirmed) · 보냄 대기가
+// 비지 않은 매장 입고(#/preview/drain?pending=2) · 로그인 때 다른 기기의 미전송 알림(#/preview/elsewhere)). 어디에도 연결하지 않은 주소 —
 // 규칙 검사기가 기기 크기마다 재려고 연다. ?device=phone · tablet이면 기사 기기, 없으면 카운터. 로그인 · 기기 선택 미리 보기의 ?many는
 // 쪽 넘김을 보려고 예시 이름 · 차량을 여러 번 늘어놓는다).
 // 온 곳(장부의 탭 · 쪽 · 고른 줄)은 브라우저 기록 상태에 넣어, 접수증의 '‹ 장부'가 그 쪽 그 줄로 돌아간다(ui 3-6, N9).
@@ -25,7 +27,7 @@ export const SETTINGS_TABS = ['info', 'places', 'slots', 'pricing', 'fleet', 'ru
 export type SettingsTab = (typeof SETTINGS_TABS)[number];
 
 /** 체험판 전용 미리 보기(계획 6-3): 화면 키보드, 서버 모드의 기기 등록 · 로그인 · 연결 끊김 · 나가기(로그아웃) 화면(규칙 검사기가 잰다). */
-export const PREVIEW_VIEWS = ['keyboard', 'enroll', 'choose', 'login', 'offline', 'exit', 'pin', 'settings-many'] as const;
+export const PREVIEW_VIEWS = ['keyboard', 'enroll', 'choose', 'login', 'offline', 'exit', 'pin', 'settings-many', 'lock', 'unconfirmed', 'drain', 'elsewhere'] as const;
 export type PreviewView = (typeof PREVIEW_VIEWS)[number];
 
 export type Route =
@@ -190,7 +192,7 @@ export interface NavState {
   /** 접수증에서 일괄 수납(V5)을 열었으면 true: '‹ 접수증' · 수납 뒤에 뒤로 가기로 그 접수증에 돌아간다(장부 자리도 그대로). */
   fromSlip?: boolean;
   /** 장부 기록에 남기는 자리(탭 · 쪽 · 고른 줄). */
-  ledger?: { tab: string; page: number; selected: string | null };
+  ledger?: { tab: string; page: number; selected: string | null; completed?: boolean };
   /** 기사 목록(배달 · 수거)에서 업무 판(V7)을 열었으면 true: '‹ 배달 목록'이 뒤로 가기로 그 쪽 그 줄에 돌아간다(N9). */
   fromList?: boolean;
   /** 기사 목록 기록에 남기는 자리(쪽 · 연 줄). 탭은 기기에 남는다. */

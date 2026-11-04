@@ -4,7 +4,7 @@ import { DEVICE_PROFILES } from '@skinote/ui';
 import { confirmWindow } from '@skinote/layout';
 import { describe, expect, it } from 'vitest';
 import { BOUNDARY_RULES, findBoundaryViolations } from '../../../scripts/check-import-boundary.mts';
-import { afterFailure, type LiveState } from '../src/app/client.tsx';
+import { afterFailure, sameConnection, type LiveState } from '../src/app/client.tsx';
 import { stepButton } from '../src/app/labels.ts';
 import { APP_STRINGS_KO, say } from '../src/app/strings.ts';
 import { confirmText } from '../src/components/ConfirmFlow.tsx';
@@ -212,6 +212,11 @@ describe('가져오기 경계', () => {
     expect(pos.forbid('@skinote/domain/sample', 'apps/pos/src/app/preview.tsx')).toMatch(/fixture/);
     expect(pos.forbid('@skinote/domain', 'apps/pos/src/screens/LedgerScreen.tsx')).toMatch(/fixture/);
     expect(pos.forbid('@skinote/domain', 'apps/pos/src/main.tsx')).toMatch(/fixture/);
+    // 기사 기기의 사본(local/)도 도메인을 쓴다(work/impl-offline/plan.md §7-1). 화면 · 부품은 local/을 모른다(앱 뼈대만 DriverClient를 만든다).
+    expect(pos.forbid('@skinote/domain', 'apps/pos/src/local/local-client.ts')).toBeNull();
+    expect(rule('apps/pos/src/screens').forbid('../local/driver-client.ts')).toMatch(/local/);
+    expect(rule('apps/pos/src/components').forbid('../local/queue.ts')).toMatch(/local/);
+    expect(rule('apps/pos/src/app').forbid('../local/start.ts')).toBeNull();
     const domain = rule('packages/domain/src');
     expect(domain.forbid('@skinote/contract')).toBeNull();
     expect(domain.forbid('./model.ts')).toBeNull();
@@ -237,5 +242,20 @@ describe('읽기가 실패할 때(DomainClient가 거절)', () => {
     expect(missing).toEqual({ state: { data: null, error: 'NOT_FOUND', key: 'slip:nope', tick: 4 }, retry: false });
     // 모르는 실패(예외)는 연결 문제로 본다.
     expect(afterFailure(held, 'slip:o22', new Error('fetch failed'), 5).state.error).toBe('NETWORK');
+  });
+});
+
+describe('연결 상태를 다시 그릴지(sameConnection)', () => {
+  const base = { online: true, pendingCount: 0, sendQueue: true } as const;
+  it('다시 보낸 온라인 명령의 거절(refusedCount)만 바뀌어도 다르다: 띠 `전송 실패 · 재전송 필요`가 화면에 닿는다(검토 1회 data-loss 4)', () => {
+    expect(sameConnection(base, { ...base })).toBe(true);
+    expect(sameConnection(base, { ...base, refusedCount: 1 })).toBe(false);
+    expect(sameConnection({ ...base, refusedCount: 1 }, base)).toBe(false);
+  });
+  it('보낸 뒤 띠의 줄 메모 수만 바뀌어도 다르다', () => {
+    const settled = { ...base, settled: true as const };
+    expect(sameConnection({ ...settled, settledNotes: [{ note: '매장 반납 완료', count: 1 }] }, { ...settled, settledNotes: [{ note: '매장 반납 완료', count: 1 }] })).toBe(true);
+    expect(sameConnection({ ...settled, settledNotes: [{ note: '매장 반납 완료', count: 1 }] }, { ...settled, settledNotes: [{ note: '매장 반납 완료', count: 2 }] })).toBe(false);
+    expect(sameConnection(settled, { ...settled, settledNotes: [{ note: '수거 수량 확인', count: 1 }] })).toBe(false);
   });
 });

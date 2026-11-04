@@ -9,7 +9,9 @@
 
 /** @typedef {import('node:http').IncomingMessage} IncomingMessage */
 /** @typedef {import('node:http').ServerResponse} ServerResponse */
-/** @typedef {{ epoch: string, rev: number, configRev: number }} Head */
+/** @typedef {{ epoch: string, rev: number, configRev: number, linkRev?: number }} Head */
+/** 알림 연결에 싣는 머리(판 번호뿐, 차량 연결 판 linkRev는 있을 때만). @param {Head} head */
+const headText = head => JSON.stringify({ epoch: head.epoch, rev: head.rev, configRev: head.configRev, ...(head.linkRev !== undefined ? { linkRev: head.linkRev } : {}) });
 /**
  * @typedef {{
  *   id: number,
@@ -102,14 +104,14 @@ export function createHub({ pingMs = PING_MS, check, log = () => {} }) {
       req.socket.setKeepAlive(true);
       req.socket.setNoDelay(true);
       res.on('close', () => forget(stream));
-      write(stream, `retry: 3000\nevent: head\ndata: ${JSON.stringify(who.head)}\n\n`);
+      write(stream, `retry: 3000\nevent: head\ndata: ${headText(who.head)}\n\n`);
       return true;
     },
     /** COMMIT 뒤: 그 매장의 연결 모두에 새 머리. @param {string} shopId @param {Head} head */
     publish(shopId, head) {
       const set = byShop.get(shopId);
       if (!set) return 0;
-      const text = `event: head\ndata: ${JSON.stringify({ epoch: head.epoch, rev: head.rev, configRev: head.configRev })}\n\n`;
+      const text = `event: head\ndata: ${headText(head)}\n\n`;
       let sent = 0;
       for (const stream of [...set]) if (write(stream, text)) sent += 1;
       return sent;

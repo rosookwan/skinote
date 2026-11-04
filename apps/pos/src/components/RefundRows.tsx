@@ -2,7 +2,7 @@
 // (`‹ 1 / 2쪽 ›`, 오른쪽). 모든 환불 줄이 금액과 수단 버튼을 가진다 — 예전의 `외 {n}건 · 같은 수단`은 가장 큰 환불을 금액 · 수단 없이 숨겼다(2026-09-27
 // 점검). 줄의 차례(금액이 큰 것부터)와 글은 읽기 모델이 준다. 화면은 쪽 수만 센다.
 import type { RefundLineView } from '@skinote/contract';
-import { ChoiceRow, Pager, TextFit } from '@skinote/ui';
+import { ChoiceButton, ChoiceRow, Pager, TextFit, useUi } from '@skinote/ui';
 import { useState } from 'react';
 import { say } from '../app/strings.ts';
 
@@ -18,25 +18,30 @@ export function refundPages<T>(lines: readonly T[], rows = REFUND_LINE_ROWS): T[
 
 export interface RefundRowsProps {
   lines: readonly RefundLineView[];
+  /** 두 열 창의 좁은 정산 칸에서도 수단을 다음 줄에 표시한다. */
+  narrow?: boolean;
   /** 환불 줄의 수단을 바꿈(그 수납의 수단 · 현금). */
   onMethod: (paymentId: string, methodKey: string) => void;
 }
 
-export function RefundRows({ lines, onMethod }: RefundRowsProps) {
+export function RefundRows({ lines, onMethod, narrow = false }: RefundRowsProps) {
   const [page, setPage] = useState(0);
-  const pages = refundPages(lines);
+  const {profile, viewport} = useUi();
+  const compact = narrow || viewport.width < profile.counter.compactBelowPx;
+  const rows = compact ? 1 : REFUND_LINE_ROWS;
+  const pages = refundPages(lines, rows);
   const current = Math.min(page, pages.length - 1);
   const shown = pages[current] ?? [];
   const paged = pages.length > 1;
   return (
-    <div className={'pos-discount-refunds' + (paged ? ' is-paged' : '')} aria-label={say('refundRow')}>
-      {Array.from({ length: REFUND_LINE_ROWS }, (_, i) => shown[i] ?? null).map((line, i) => (
+    <div className={'pos-discount-refunds' + (paged ? ' is-paged' : '') + (compact ? ' is-compact' : '')} aria-label={say('refundRow')}>
+      {Array.from({ length: rows }, (_, i) => shown[i] ?? null).map((line, i) => (
         <div key={i} className={'pos-discount-refund' + (line ? '' : ' is-blank')} {...(line ? {} : { 'aria-hidden': true })}>
           {line ? (
             <>
               <TextFit className="pos-discount-refund-text" input={{ mode: 'parts', parts: line.parts }} />
               {line.methods.length > 1 ? (
-                <ChoiceRow options={line.methods} label={say('refundRow')} onPress={(key) => onMethod(line.paymentId, key)} />
+                compact ? <div className="pos-detail-methods">{line.methods.map(method=><ChoiceButton key={method.key} option={method} onPress={key=>onMethod(line.paymentId,key)}/>)}</div> : <ChoiceRow options={line.methods} label={say('refundRow')} onPress={(key) => onMethod(line.paymentId, key)} />
               ) : null}
             </>
           ) : null}

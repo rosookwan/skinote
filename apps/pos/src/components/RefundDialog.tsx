@@ -3,7 +3,7 @@
 // 할인 · 취소 창의 환불 줄 모양(.pos-discount-refund)을 쓴다. 창은 연 때 요청번호와 기준(basis)을 정하고(useCommandDraft), 수단을 바꿀 때마다
 // refundSheet를 다시 물어 줄 글 · 주 버튼 · 명령을 받는다. 화면은 금액을 셈하지 않는다. 창 높이는 흔들리지 않는다(환불 줄 두 줄 자리를 늘 남긴다).
 import { envelopeFor, isAccepted, type Basis, type ConfirmCommand, type RefundSheetParams, type RefundSheetView } from '@skinote/contract';
-import { DialogFrame, PrimaryButton, RichLine, t, useCommandDraft } from '@skinote/ui';
+import { DialogFrame, PrimaryButton, RichLine, t, useCommandDraft, useUi } from '@skinote/ui';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useClient } from '../app/client.tsx';
 import { say } from '../app/strings.ts';
@@ -30,6 +30,8 @@ export interface RefundDialogProps {
 
 export function RefundDialog({ orderId, onClose, onFail }: RefundDialogProps) {
   const client = useClient();
+  const {profile, viewport} = useUi();
+  const compact = viewport.width < profile.counter.compactBelowPx;
   const [params, setParams] = useState<RefundSheetParams>({ orderId });
   const [loaded, setLoaded] = useState<{ key: string; view: RefundSheetView } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -81,7 +83,8 @@ export function RefundDialog({ orderId, onClose, onFail }: RefundDialogProps) {
     <DialogFrame
       title={view.title}
       onClose={onClose}
-      className="pos-refund"
+      wide
+      className={'pos-refund pos-detail' + (compact ? ' is-compact' : '')}
       {...(draft ? { requestId: draft.requestId } : {})}
       primary={(
         <PrimaryButton
@@ -93,10 +96,12 @@ export function RefundDialog({ orderId, onClose, onFail }: RefundDialogProps) {
         />
       )}
     >
+      <h3>{say('refundRow')}</h3>
       <RefundRows lines={view.refunds} onMethod={(paymentId, key) => { if (!spent) setError(null); setParams(withRefundMethod(params, paymentId, key)); }} />
       <div className={'pos-discount-summary' + (alert ? ' is-alert' : '')} {...(alert ? { role: 'alert' } : {})}>
         <RichLine runs={alert ? [{ text: alert, strong: true }] : view.summary} />
       </div>
+      <p className="pos-detail-note">{say('detailRefundRecord')}</p>
     </DialogFrame>
   );
 }

@@ -7,16 +7,19 @@
 import {
   ACTION_LABELS, DomainError, stampStepMap, type AddTicketSheetParams, type AddTicketSheetView, type ChoiceOption, type CommandEnvelope, type ConfirmStep,
   type FieldPaySheetParams, type FieldPaySheetView, type LedgerCell, type RichText, type StampCell, type StampStepRow, type TaskSheetAction,
-  type TaskSheetParams, type TaskSheetView, type TextRun,
+  type TaskSheetParams, type TaskSheetView, type TextRun, type AnyCommandEnvelope, type PendingLine,
 } from '@skinote/contract';
 import { heldNumbers } from './assets.ts';
 import { driverMethods, liftReturnable, payMethodOf, productOf } from './catalog.ts';
 import { depositOf, heldAmount, heldRule, heldUnits, orderDepositHeld, planRefunds } from './deposits.ts';
-import type { DomainLines, FxDeposit, FxLine, FxMethodKey, FxOrder, FxPromise, ShopRegistry, ShopState } from './model.ts';
+import type { DomainLines, FxDeposit, FxLine, FxMethodKey, FxOrder, FxPayment, FxPromise, ShopRegistry, ShopState } from './model.ts';
+import { postingDate } from './closing.ts';
+import { duplicateMoneyReviews } from './money-duplicates.ts';
+import { lateMoneyDays, lateMoneyReview, taskIdVehicle } from './queued.ts';
 import { bucketOut, currentReturn, findTask, taskBucket, taskOrder, type FxTask } from './promises.ts';
 import { conflict, done, nothing, rejected, unsupported, type Result } from './result.ts';
 import {
-  backCount, bizDay, collectDone, collectLeft, deliverTaskId, fillLines, findOrder, isDeliverTaskId, isVehiclePickup, liveQty, moneyLateAt, onVanToDeliver,
+  backCount, bizDay, collectFinished, collectLeft, deliverTaskId, fillLines, findOrder, isDeliverTaskId, isVehiclePickup, liveQty, moneyLateAt, onVanToDeliver,
   orderIdOfTask, ownDue, listTasks, pendingIssue, placeLabel, promisedPayer, returnQty, routeTasks, selfDue, selfLines, vehicleLabel, visitReasons,
 } from './rules.ts';
 
@@ -147,8 +150,111 @@ function heldTicketUnits(dep: FxDeposit | undefined, lines: readonly FxLine[]): 
 const steps = (ctx: ViewContext) => stampStepMap(ctx.config.stampSteps, ctx.config.features);
 const stepOfRule = (all: ReadonlyMap<string, StampStepRow>, rule: StampStepRow['rule_key']) => [...all.values()].find((s) => s.rule_key === rule);
 
-/** 전송 대기로만 받은 업무의 끝난 도장은 점선(sync 8-1). */
-const pendingCell = (cell: StampCell, pending: boolean): StampCell => (pending && cell.state === 'done' ? { ...cell, pending: true } : cell);
+/** 기사 기기가 받은 답 하나의 줄 메모 종류(work/impl-offline/plan.md §5-9)와 답을 받은 때. */
+export interface DeviceOutcome {
+  key: 'returned' | 'collect_check' | 'duplicate' | 'held' | 'excluded';
+  at: number;
+}
+
+/**
+ * 줄 메모의 말(문구 표 3-21: 있는 말 · `처리 보류 · 관리자 확인 필요` · `처리 제외 · 매장 확인`). 기사 목록의 줄 · 업무 판의 팀 줄. excluded는 서버가
+ * 적지 않은(superseded) 기록 가운데 알려진 메모가 없는 것(그사이 옮겨짐 · 끝남 · 범위 밖, §17 R3-26): 점선 도장이 말없이 빈 도장으로 돌아가지 않게.
+ */
+export const DEVICE_OUTCOME_NOTES: Readonly<Record<DeviceOutcome['key'], string>> = Object.freeze({
+  returned: '매장 반납 완료',
+  collect_check: '수거 수량 확인',
+  duplicate: '중복 수납 의심',
+  held: '처리 보류 · 관리자 확인 필요',
+  excluded: '처리 제외 · 매장 확인',
+});
+
+/** 할 일이 없어 적지 않은 것이 곧 기사가 바란 모습인 기록(순서 변경 · 시간순 정렬 · 긴급 확인): 적지 않아도 메모가 없다(§18 R4-14). */
+const NO_NOTE_WHEN_SUPERSEDED: ReadonlySet<string> = new Set(['route.move', 'route.reset', 'notification.ack']);
+
+/**
+ * 기기가 받은 답 하나 → 줄 메모의 종류(§5-9): 보류 · 이미 매장 반납 · 받은 수 확인 · 같은 돈 두 번 · 적지 않음. reviews는 그 명령이 더한 확인 필요
+ * 종류(서버 답의 reviews, 메모리 어댑터는 적용 전후의 차이). more는 명령 종류와 오류 코드(있으면). 기사 기기(local/)와 메모리 어댑터가 같은 셈을 쓴다.
+ *   - 할 일이 없어 적지 않은 것(NOTHING_LEFT: 이미 그 순서 · 이미 시간순 · 이미 확인한 긴급 요청 · 이미 끝난 도장)과 순서 변경 · 시간순 정렬 · 긴급
+ *     확인의 superseded는 메모가 없다(§18 R4-14: 기사를 까닭 없이 매장으로 보내지 않는다).
+ *   - 거절 · 충돌 · 막힘으로 끝난 기록은 `처리 제외 · 매장 확인`(§18 R4-1: 적지 않은 기록이 말없이 사라지지 않게).
+ */
+export function outcomeNoteKey(
+  outcome: string | undefined, reviews: readonly string[] | undefined, more: { type?: string; errorCode?: string } = {},
+): DeviceOutcome['key'] | null {
+  if (outcome === 'held') return 'held';
+  const r = reviews ?? [];
+  if (r.includes('possible_duplicate_money')) return 'duplicate';
+  if (outcome === 'superseded' && r.includes('already_returned')) return 'returned';
+  if (r.includes('collect_exceeds')) return 'collect_check';
+  if (outcome === 'superseded') {
+    if (more.errorCode === 'NOTHING_LEFT' || (more.type !== undefined && NO_NOTE_WHEN_SUPERSEDED.has(more.type))) return null;
+    // 적지 않은 기록(superseded)은 알려진 까닭이 없어도 메모를 남긴다(§17 R3-26).
+    return 'excluded';
+  }
+  if (outcome === 'rejected' || outcome === 'conflict' || outcome === 'blocked') return 'excluded';
+  return null;
+}
+
+/** 띠에 셀 줄 메모 하나: 종류와 팀(접수 id, 없으면 요청번호 — 팀마다 한 번 센다). */
+export interface OutcomeNote {
+  key: DeviceOutcome['key'];
+  team: string;
+}
+
+/**
+ * 줄 메모들 → 메모마다 팀 수(보낸 뒤의 띠 `전송 대기 0 · 매장 반납 완료 1팀`, §17 R3-26). 한 팀의 두 기록(수거 + 현장 수납)은 한 팀이다(§18 R4-17).
+ * 기사 기기(local/)와 메모리 어댑터가 같은 셈을 쓴다.
+ */
+export function outcomeNoteCounts(notes: readonly OutcomeNote[]): { note: string; count: number }[] {
+  const teams = new Map<string, Set<string>>();
+  for (const n of notes) {
+    const note = DEVICE_OUTCOME_NOTES[n.key];
+    const set = teams.get(note) ?? new Set<string>();
+    set.add(n.team);
+    teams.set(note, set);
+  }
+  return [...teams].map(([note, set]) => ({ note, count: set.size }));
+}
+
+/** 기록의 팀(접수 id: 본문의 orderId · 업무 id의 접수, 없으면 undefined). */
+export function recordTeam(payload: unknown): string | undefined {
+  const p = payload && typeof payload === 'object' ? payload as { orderId?: unknown; taskId?: unknown } : {};
+  if (typeof p.orderId === 'string') return p.orderId;
+  return typeof p.taskId === 'string' ? orderIdOfTask(p.taskId) : undefined;
+}
+
+/** 보냄 대기 · 답을 잃은 명령의 일 이름(전송 대기 목록, 문구 표 3-14 · 3-21). 없는 종류는 `처리`. */
+const PENDING_WHAT: Partial<Record<AnyCommandEnvelope['type'], string>> = {
+  'stock.collect': '수거', 'stock.deliver': DELIVER_WORD, 'route.move': '순서 변경', 'route.reset': ACTION_LABELS.route_reset,
+  'notification.ack': '긴급 확인', 'field.collect': ACTION_LABELS.field_collect, 'field.add_ticket': ACTION_LABELS.add_ticket, 'field.deposit_return': '보증금 반환',
+  'stock.receive': ACTION_LABELS.receive_to_shop, 'cash.transfer': '현금 인계', 'payment_promise.set': ACTION_LABELS.leave_unpaid,
+};
+
+/**
+ * 전송 대기 목록 한 줄(work/impl-offline/plan.md §17 R3-19): 팀 · 끝 4자리, 일 이름, 돈 기록이면 수단 · 금액, 만든 시각. 메모리 어댑터(fixture)와 기사 기기
+ * (local/)가 같은 말을 쓴다. 팀은 사본(state)에서 찾고, 사본에 없으면(옮겨져 빠짐) 팀 없이.
+ */
+export function pendingLine(state: ShopState | undefined, envelope: AnyCommandEnvelope, at: number): PendingLine {
+  const payload = envelope.payload as { taskId?: string; orderId?: string; amount?: number; methodKey?: string };
+  const orderId = payload.orderId ?? (payload.taskId !== undefined ? orderIdOfTask(payload.taskId) : undefined);
+  const o = state && orderId !== undefined ? findOrder(state, orderId) : undefined;
+  const what = envelope.type === 'task.visit'
+    ? ACTION_LABELS[payload.taskId !== undefined && isDeliverTaskId(payload.taskId) ? 'not_delivered' : 'not_collected']
+    : PENDING_WHAT[envelope.type] ?? '처리';
+  const method = state && payload.methodKey !== undefined ? payMethodOf(state.registry, payload.methodKey)?.label : undefined;
+  const money = typeof payload.amount === 'number' && payload.amount > 0 ? [method, won(payload.amount)].filter(Boolean).join(' ') : undefined;
+  return { ...(o ? { who: o.teamName + ' · ' + o.last4 } : {}), what, ...(money ? { money } : {}), at: hm(at) };
+}
+
+/** 전송 대기 목록 한 줄의 온전한 글(`김민수 · 0025 수거 21:42`, `… 현장 수납 현금 120,000원 21:45`). */
+export const pendingSummary = (line: PendingLine): string => [line.who, line.what, line.money, line.at].filter(Boolean).join(' ');
+
+/** 점선 도장의 누름 메모: `22:10 처리 · 전송 대기`, 답을 잃은 항목은 `22:10 처리 · 결과 확인 중`(O18). */
+export const pendingNote = (at: string | undefined, unconfirmed: boolean) => (at ? hm(Date.parse(at)) + ' ' : '') + '처리 · ' + (unconfirmed ? '결과 확인 중' : '전송 대기');
+
+/** 전송 대기로만 받은 업무의 끝난 도장은 점선(sync 8-1)이고, 누르면 목록과 같은 메모(`22:10 처리 · 전송 대기` · `… 결과 확인 중`). */
+const pendingCell = (cell: StampCell, pending: boolean, unconfirmed = false): StampCell =>
+  (pending && cell.state === 'done' ? { ...cell, pending: true, pressNote: { lines: [pendingNote(cell.at, unconfirmed)] } } : cell);
 
 /** 돈 줄의 마지막 수납 조각(`12/25 계좌이체 수납`, 오늘이면 `16:58 현금 수납`). 보증금 결제는 수단이 아니라 빼고 센다. */
 function lastPayment(state: ShopState, o: FxOrder): string | undefined {
@@ -175,11 +281,17 @@ function moneyLines(ctx: ViewContext, t: FxAnyTask): RichText[] | undefined {
   else if (due > 0) {
     const late = moneyLateAt(state, o);
     first.push({ text: '미수 ' + won(due), strong: true, ...(late !== undefined && late <= ctx.now ? { tone: 'red' as const } : {}) });
-  } else first.push({ text: '미수 없음', strong: true, tone: 'green' });
+  } else {
+    // 보냄 대기로만 받은 돈이면 초록(수납 완료의 색)이 아니라 보통 글자(§18 R4-18): 아직 매장에 없는 돈이다(뒤의 `· 전송 대기`와 같은 뜻).
+    first.push({ text: '미수 없음', strong: true, ...(ctx.pendingMoney?.has(o.id) ? {} : { tone: 'green' as const }) });
+  }
   // 배달 자리에서 `후불 처리`를 누른 팀(매장에서 받음, 결제 약속 later): 돈 줄에 `후불`(누른 것이 적혔다는 사실).
   if (t.kind === 'deliver' && due > 0 && o.payWhen === 'return' && !payer) first.push({ text: ' · 후불' });
   const paid = lastPayment(state, o);
   if (paid) first.push({ text: ' · ' + paid });
+  // 보냄 대기로만 받은 돈: 아직 서버에 없다(§17 R3-18, 3-14 `{시각} 처리 · 전송 대기`와 같은 말).
+  const unsent = ctx.pendingMoney?.get(o.id);
+  if (unsent !== undefined) first.push({ text: ' · ' + (unsent ? '결과 확인 중' : '전송 대기'), strong: true });
   const rule = heldRule(state);
   const dep = rule ? depositOf(state, o.id, rule.key) : undefined;
   const held = orderDepositHeld(state, o);
@@ -250,14 +362,15 @@ export function taskSheet(ctx: ViewContext, params: TaskSheetParams): TaskSheetV
     for (const c of stampColumns) {
       if (!c.step) continue;
       const cell = (c.driver ? driverLineStamp : lineStamp)(state.registry, x, l, c.step, all, today);
-      if (cell) cells[c.key] = { renderer: 'stamp', stamp: pendingCell(cell, pending && c.key !== 'load') };
+      if (cell) cells[c.key] = { renderer: 'stamp', stamp: pendingCell(cell, pending && c.key !== 'load', ctx.unconfirmedTasks?.has(t.id) ?? false) };
     }
     // 즉시 교환한 줄은 지금 사이즈(배달은 건넬 것, 수거는 손님에게 있는 것: 기사가 찾을 사이즈, features-1 §7-1).
     const label = swappedLabel(state.registry, l, deliver ? variantRange(l, l.issued, Math.max(0, liveQty(l) - l.issued)) : heldVariants(l)) ?? l.label;
     return { lineId: l.id, label, qtyText: liveQty(l) + (l.countWord ?? l.unit ?? '개'), cells };
   });
 
-  const finished = deliver ? deliverDone(o) : collectDone(x);
+  // 수거는 내준 것이 있고 모두 돌아왔을 때만 끝(아직 지급하지 않은 팀은 끝이 아니다, §17 R3-31).
+  const finished = deliver ? deliverDone(o) : collectFinished(x);
   const spare = spareTickets(state, vehicleId);
   const spareText = spareLine(state.registry, spare);
   const failKey = deliver ? 'not_delivered' : 'not_collected';
@@ -278,15 +391,22 @@ export function taskSheet(ctx: ViewContext, params: TaskSheetParams): TaskSheetV
   // 바닥줄 가운데: 이 차량 · 영업일 목록의 완료 · 잔여(전송 대기로만 끝난 업무는 완료에 세지 않음, 목록 바닥줄과 같은 셈), 이 업무가 끝났으면
   // `배달 완료 · 16:57` · `수거 완료 · 22:00`.
   let progress: string;
-  if (finished) {
+  if (finished && pending) {
+    // 끊긴 채 끝낸 업무: 서버의 답이 올 때까지 `완료`가 아니다(§17 R3-16) — 누름 메모와 같은 `15:40 처리 · 전송 대기` · `… 결과 확인 중`.
+    const at = Math.max(...x.lines.map((l) => (deliver ? l.issuedAt : l.collectedAt) ?? 0));
+    progress = pendingNote(at > 0 ? iso(at) : undefined, ctx.unconfirmedTasks?.has(t.id) ?? false);
+  } else if (finished) {
     const at = Math.max(...x.lines.map((l) => (deliver ? l.issuedAt : l.collectedAt) ?? 0));
     progress = at > 0 ? doneWord + ' · ' + hm(at) : doneWord;
   } else {
     const list = deliver
       ? deliverTasks(state, vehicleId, state.businessDate).map((d) => ({ id: d.id, done: deliverDone(d.order) }))
-      : listTasks(state, vehicleId, state.businessDate).map((c) => ({ id: c.id, done: collectDone(taskOrder(c)) }));
+      : listTasks(state, vehicleId, state.businessDate).map((c) => ({ id: c.id, done: collectFinished(taskOrder(c)) }));
     const doneCount = list.filter((d) => d.done && !ctx.pendingTasks?.has(d.id)).length;
-    progress = '완료 ' + doneCount + ' · 잔여 ' + list.filter((d) => !d.done).length;
+    // 기사 기기(보냄 대기가 있음): 목록 바닥줄과 같은 모양 `완료 n · 전송 대기 n · 잔여 n`(§18 R4-11). 전송 대기는 기기에 남은 기록 수(띠와 같은 수).
+    progress = ctx.pendingRecordCount !== undefined
+      ? '완료 ' + doneCount + ' · 전송 대기 ' + ctx.pendingRecordCount + ' · 잔여 ' + list.filter((d) => !d.done).length
+      : '완료 ' + doneCount + ' · 잔여 ' + list.filter((d) => !d.done).length;
   }
 
   // 보라 주 버튼 하나: 배달은 실은 것이 있으면 `배달 처리 · 6개`, 아직 싣지 않았으면 `적재 처리 · 6개`(매장에서), 모두 건넸으면 누를 수 없음.
@@ -305,6 +425,8 @@ export function taskSheet(ctx: ViewContext, params: TaskSheetParams): TaskSheetV
     primary = left ? { label: name + ' · ' + left, alts: [name + ' · ' + left, name], enabled: true, actionKey: 'stamp.collect' } : { label: name, alts: [name], enabled: false, actionKey: 'stamp.collect' };
   }
   const money = moneyLines(ctx, t);
+  const outcome = ctx.deviceOutcomes?.get(t.id);
+  const outcomeNote = outcome ? DEVICE_OUTCOME_NOTES[outcome.key] : undefined;
   return {
     basis: { epoch: state.epoch, rev: state.rev },
     serverTime: iso(ctx.now),
@@ -317,7 +439,8 @@ export function taskSheet(ctx: ViewContext, params: TaskSheetParams): TaskSheetV
     teamName: o.teamName,
     last4: o.last4,
     // 가린 번호: 기사는 `전화`의 창(phoneReveal: 자기 차량 업무만, 열람 기록)으로 온전한 번호를 받아 건다(2026-09-27 점검, 잃어버린 휴대폰).
-    contact: [o.phone ? maskPhone(o.phone) : '', o.party > 0 ? o.party + '명' : ''].filter(Boolean).join(' · '),
+    // 기기 자신이 받은 답의 메모(§5-9: `매장 반납 완료` · `수거 수량 확인` …)가 줄 맨 앞이다(좁으면 번호 · 인원이 먼저 빠진다).
+    contact: [outcomeNote ?? '', o.phone ? maskPhone(o.phone) : '', o.party > 0 ? o.party + '명' : ''].filter(Boolean).join(' · '),
     ...(o.phone ? { phone: maskPhone(o.phone) } : {}),
     columns: [{ key: 'item', label: '품목' }, { key: 'qty', label: '수량' }, ...stampColumns.map((c) => ({ key: c.key, label: c.label }))],
     lines,
@@ -489,32 +612,66 @@ function taskOf(state: ShopState, taskId: string, orderId: string): FxAnyTask | 
   return t && t.order.id === orderId ? t : undefined;
 }
 
+/** 기사 명령의 선택(commands.ts ApplyOptions의 몫): 서버가 받은 때 · 명령을 한 기기(현장 수납의 기기, 중복 수납 의심). */
+export interface FieldOptions {
+  recordedAt?: number;
+  deviceId?: string;
+}
+
+/**
+ * 보냄 대기 기록의 업무와 접수(work/impl-offline/plan.md §5-1): 업무를 찾으면 그것, 못 찾으면(그사이 다른 차량으로 옮김 · 끝남) 본문의 접수와 업무 id
+ * 자체의 차량(기사가 본 때의 차량) — 돈과 권은 그 접수에 적는다(ghost task).
+ */
+function fieldTarget(state: ShopState, envelope: CommandEnvelope<'field.collect' | 'field.add_ticket'>): { order: FxOrder; vehicleId: string; task?: FxAnyTask } | undefined {
+  const p = envelope.payload;
+  const t = taskOf(state, p.taskId, p.orderId);
+  if (t) return { order: t.order, vehicleId: vehicleOf(t), task: t };
+  if (!queued(envelope) || orderIdOfTask(p.taskId) !== p.orderId) return undefined;
+  const o = findOrder(state, p.orderId);
+  if (!o) return undefined;
+  return { order: o, vehicleId: taskIdVehicle(state, p.taskId) ?? (isDeliverTaskId(p.taskId) ? o.pickup.vehicleId : o.giveBack.vehicleId) ?? 'v1' };
+}
+
 /**
  * 현장 수납(field.collect): 차량 지갑(현금) · 카드 · 계좌이체. 돈 한 건(결제 자리 driver_field) + 이 팀 몫 한 행(이 팀이 스스로 낼 줄만 채운다).
  * 연결된 기기에서는 받을 돈(이 팀 몫 미수)보다 많이 받지 않는다: 받을 돈이 없거나 넘치면 거절(data-model 5: 줄마다 받은 돈 ≤ 줄 청구).
  * 보냄 대기로 온 명령은 기기에서 이미 받은 돈이라 적용하고, 넘친 몫은 확인 필요 `초과 수납`이 된다(views.ts reviewList).
  */
-export function fieldCollect(state: ShopState, envelope: CommandEnvelope<'field.collect'>, now: number): Result {
+export function fieldCollect(state: ShopState, envelope: CommandEnvelope<'field.collect'>, now: number, options: FieldOptions = {}): Result {
   const p = envelope.payload;
-  const t = taskOf(state, p.taskId, p.orderId);
-  if (!t) return rejected('업무 없음');
+  const target = fieldTarget(state, envelope);
+  if (!target) return rejected('업무 없음');
+  const o = target.order;
   const methodKey = p.methodKey as FxMethodKey;
-  if (!driverMethods(state.registry).includes(methodKey)) return rejected('등록되지 않은 결제 수단');
+  // 보냄 대기로 온 돈은 매장의 결제 수단이면 적는다(기사 수단 목록이 그사이 바뀌어도 받은 돈은 사실, sync 8-12).
+  const known = queued(envelope) ? payMethodOf(state.registry, methodKey) !== undefined : driverMethods(state.registry).includes(methodKey);
+  if (!known) return rejected('등록되지 않은 결제 수단');
   const amount = Math.floor(p.amount);
   if (!(amount > 0)) return rejected('받을 금액 없음');
-  const due = fieldDue(state, t.order);
+  const due = fieldDue(state, o);
   if (!queued(envelope)) {
     if (envelope.expect?.dueAmount !== due) return conflict('DUE_CHANGED', '받을 금액 변경됨 · 재시도 필요');
     if (due === 0) return rejected('받을 금액 없음');
     if (amount > due) return rejected('초과 수납 · 받을 금액 ' + won(due));
   }
-  const drawer = methodKey === 'cash' ? { drawerId: vanDrawer(vehicleOf(t)) } : {};
+  const drawer = methodKey === 'cash' ? { drawerId: vanDrawer(target.vehicleId) } : {};
   // 이 팀 줄에 묶는다. 보냄 대기로 온 돈이 받을 돈보다 많으면(초과 수납) 줄에 묶지 않고 접수 전체 돈으로 둔다: 줄 배분의 합 = 몫(저장소
   // payment_allocations)이고, 넘친 몫은 확인 필요 `초과 수납`의 환불이 돌려준다.
-  const bound = fillLines(t.order, selfLines(t.order), amount);
+  const bound = fillLines(o, selfLines(o), amount);
   const lines = bound.reduce((sum, x) => sum + x.amount, 0) === amount ? bound : [];
+  // 늦게 적힌 돈(보냄 대기, §5-2)은 서버가 받은 때를 함께 둔다: 마감한 날이면 다음 열린 날에 올린다.
+  const recorded = options.recordedAt !== undefined && options.recordedAt !== now ? { recordedAt: options.recordedAt } : {};
   state.paymentGroups.push({ id: envelope.requestId, purpose: 'driver_field', amount, methodKey, at: now, ...drawer });
-  t.order.payments.push({ id: envelope.requestId + ':0', amount, methodKey, at: now, groupId: envelope.requestId, ...drawer, ...(lines.length ? { lines } : {}) });
+  const payment: FxPayment = {
+    id: envelope.requestId + ':0', amount, methodKey, at: now, groupId: envelope.requestId, ...drawer, ...(lines.length ? { lines } : {}), ...recorded,
+    ...(options.deviceId ? { deviceId: options.deviceId } : {}),
+  };
+  o.payments.push(payment);
+  if (queued(envelope)) {
+    const late = lateMoneyDays(state, now, options.recordedAt, postingDate);
+    if (late) lateMoneyReview(state, o, envelope, amount, late, now, options.deviceId ? { deviceId: options.deviceId } : undefined);
+    duplicateMoneyReviews(state, o, payment, envelope, now);
+  }
   return done;
 }
 
@@ -533,14 +690,14 @@ export function ticketTaken(state: ShopState, o: FxOrder, requestId: string): { 
  * 수량으로 세는 권(첫 매장)은 번호 없이(assetIds 빈 목록) 차량 예비 재고 수 안에서다. 창이 본 가격(quoteHash)과 같아야 한다. 값은 이 팀
  * 미수가 되고 곧바로 현장 수납 판이 받는다(dependsOn).
  */
-export function addTicket(state: ShopState, envelope: CommandEnvelope<'field.add_ticket'>, now: number, lines: DomainLines): Result {
+export function addTicket(state: ShopState, envelope: CommandEnvelope<'field.add_ticket'>, now: number, lines: DomainLines, options: FieldOptions = {}): Result {
   const p = envelope.payload;
-  const t = taskOf(state, p.taskId, p.orderId);
-  if (!t) return rejected('업무 없음');
-  const o = t.order;
+  const target = fieldTarget(state, envelope);
+  if (!target) return rejected('업무 없음');
+  const o = target.order;
   const product = productOf(state.registry, p.productKey);
   if (!product || product.section !== 'lift') return unsupported(lines);
-  const vehicleId = vehicleOf(t);
+  const vehicleId = target.vehicleId;
   const spare = spareTickets(state, vehicleId).find((s) => s.productKey === product.key);
   const numbers = spare?.ids ?? [];
   const byNumber = numbers.length > 0;
@@ -554,12 +711,15 @@ export function addTicket(state: ShopState, envelope: CommandEnvelope<'field.add
   if (!ok) return rejected('차량 권 재고 없음');
   const quote = ticketQuote(state, o, product.key, quantity);
   if (!queued(envelope) && envelope.expect?.quoteHash !== quote.hash) return conflict('QUOTE_CHANGED', '받을 금액 변경됨 · 재시도 필요');
-  if (p.amount !== quote.amount || (p.deposit?.amount ?? 0) !== (quote.deposit?.amount ?? 0)) return conflict('QUOTE_CHANGED', '받을 금액 변경됨 · 재시도 필요');
+  // 보냄 대기로 온 권은 기기가 본 값으로 적는다(그사이 요금표가 바뀌어도 손님과 정한 값, work/impl-offline/plan.md §5-1 offline_quote).
+  if (!queued(envelope) && (p.amount !== quote.amount || (p.deposit?.amount ?? 0) !== (quote.deposit?.amount ?? 0))) return conflict('QUOTE_CHANGED', '받을 금액 변경됨 · 재시도 필요');
+  const lineAmount = queued(envelope) ? Math.max(0, Math.floor(p.amount)) : quote.amount;
+  const depositAmount = queued(envelope) ? (p.deposit ? Math.max(0, Math.floor(p.deposit.amount)) : 0) : quote.deposit?.amount ?? 0;
   let n = o.lines.length + 1;
   while (o.lines.some((l) => l.id === o.id + '-l' + n)) n += 1;
   const line: FxLine = {
     id: o.id + '-l' + n, kind: product.key, productKey: product.key, label: product.label, shortLabel: product.shortLabel ?? product.label, qty: quantity,
-    ...(product.unit ? { unit: product.unit } : {}), countWord: product.countWord, amount: quote.amount, section: product.section,
+    ...(product.unit ? { unit: product.unit } : {}), countWord: product.countWord, amount: lineAmount, section: product.section,
     returnable: liftReturnable(state.settings), capabilities: [...product.capabilities], tracking: product.tracking,
     loaded: 0, issued: quantity, issuedAt: now, returned: 0, collected: 0, received: 0, ...(byNumber ? { assetIds: [...p.assetIds] } : {}),
   };
@@ -574,7 +734,7 @@ export function addTicket(state: ShopState, envelope: CommandEnvelope<'field.add
     countRow.quantity -= quantity;
   }
   const rule = state.settings.liftDeposit;
-  if (quote.deposit && rule && line.returnable) {
+  if (quote.deposit && rule && line.returnable && depositAmount > 0) {
     let dep = depositOf(state, o.id, rule.key);
     if (!dep) {
       dep = { id: 'dep:' + o.id + ':' + rule.key, orderId: o.id, ruleKey: rule.key, label: rule.label, unitAmount: quote.deposit.unitAmount, entries: [] };
@@ -582,8 +742,9 @@ export function addTicket(state: ShopState, envelope: CommandEnvelope<'field.add
     }
     const methodKey = rule.methods[0] ?? 'cash';
     dep.entries.push({
-      id: envelope.requestId + ':d', kind: 'take', lineId: line.id, quantity, ...(byNumber ? { assetIds: [...p.assetIds] } : {}), amount: quote.deposit.amount, methodKey, at: now,
+      id: envelope.requestId + ':d', kind: 'take', lineId: line.id, quantity, ...(byNumber ? { assetIds: [...p.assetIds] } : {}), amount: depositAmount, methodKey, at: now,
       ...(methodKey === 'cash' ? { drawerId: vanDrawer(vehicleId) } : {}),
+      ...(options.recordedAt !== undefined && options.recordedAt !== now ? { recordedAt: options.recordedAt } : {}),
     });
   }
   return done;

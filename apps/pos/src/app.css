@@ -118,6 +118,15 @@ html, body { margin: 0; height: 100%; overflow: hidden; }
 .pos-van-name { flex: none; font-weight: 900; white-space: nowrap; }
 .pos-van-items { flex: 1 1 0; font-weight: 700; color: var(--sn-ink-soft); }
 
+/* 전송 대기 목록(§17 R3-19): 줄마다 두 줄 — 팀 · 끝 4자리, 일 이름 · 돈 · 시각(쪽 넘김, 줄 높이는 화면이 DeviceProfile로 잰다). */
+.pos-pending-rows { display: flex; flex-direction: column; gap: var(--sn-space-s); }
+.pos-pending-row {
+  display: flex; flex-direction: column; justify-content: center; padding: var(--sn-space-xs) var(--sn-space-s);
+  box-shadow: inset 0 calc(var(--sn-line) * -1) 0 var(--sn-rule-soft);
+}
+.pos-pending-name { font-weight: 900; white-space: nowrap; }
+.pos-pending-what { font-weight: 700; color: var(--sn-ink-soft); }
+
 /* 넓은 화면에서 기사 휴대폰 모양으로 보기(#/driver/:date?device=phone): 휴대폰 크기 틀. 창 · 판(position: fixed)은 틀 안에 뜬다. */
 .sn-root.pos-phone-stage { display: flex; align-items: center; justify-content: center; background: var(--sn-ink-soft); }
 .pos-phone-frame {
@@ -132,6 +141,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; }
 
 /* 반납 확인 창(V1, spec 3-1): 창 860 × 440 = 제목 56 + 본문 312 + 바닥 72. 본문 = 위 12 + ① 24 + ② 품목 칸(52 + 8 + 52) + ③ 40 + ④ 28
    + ⑤ 52 + 사이 8 × 4 + 아래 12. 줄 높이는 모두 고정이라 번호를 빼도 · 쪽을 넘겨도 창 높이가 그대로다. */
+/* 보증금/잔여가 두 줄로 바뀌어도 실행 버튼은 같은 자리에 둔다. 작은 POS의 최대 505px 안에 들어가는 기존 토큰 높이. */
+.pos-return:not(.is-compact) { height: calc(var(--sn-target) * 9 + var(--sn-space-s) * 4); }
 .pos-return .sn-dialog-body { gap: var(--sn-space-s); }
 .pos-return-lead { display: flex; align-items: center; height: calc(var(--sn-font-min) * 1.5); font-size: var(--sn-font-min); font-weight: 600; color: var(--sn-ink-muted); }
 .pos-return-lead > .sn-rich,
@@ -274,6 +285,19 @@ html, body { margin: 0; height: 100%; overflow: hidden; }
 .pos-checkout .sn-dialog-body { gap: 0; padding-bottom: 0; }
 .pos-checkout-payer { display: flex; align-items: center; gap: var(--sn-space-m); flex: none; height: var(--sn-confirm-payer-h); min-width: 0; }
 .pos-checkout-payer.is-blank { visibility: hidden; }
+/* 휴대폰 결제는 칸별 쪽 넘김과 세 칸 수단 버튼으로 같은 선택을 유지한다. */
+.pos-checkout.is-compact .sn-method-row { height: auto; gap: var(--sn-space-s); }
+.pos-checkout.is-compact .sn-method-top { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sn-space-s); padding: var(--sn-space-s) 0; }
+.pos-checkout.is-compact .sn-method-amount { grid-column: 2; grid-row: 1; font-size: var(--sn-font-body); }
+.pos-checkout.is-compact .sn-method-items, .pos-checkout.is-compact .sn-method-disc, .pos-checkout.is-compact .sn-method-payer { grid-column: 1 / -1; white-space: normal; }
+.pos-checkout.is-compact .sn-method-buttons { height: auto; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sn-space-s); }
+.pos-checkout.is-compact .sn-method-buttons > .sn-choice { width: 100%; min-width: 0; padding: 0 var(--sn-space-xs); font-size: var(--sn-font-min); }
+.pos-checkout.is-compact .sn-method-buttons > .sn-method-discount { margin-left: 0; }
+.pos-checkout.is-compact .pos-checkout-payer { height: auto; flex-wrap: wrap; gap: var(--sn-space-s); padding: var(--sn-space-s) 0; }
+.pos-checkout.is-compact .pos-checkout-payer.is-blank { display: none; }
+.pos-checkout.is-compact .pos-checkout-payer > .sn-choices { width: 100%; }
+.pos-checkout.is-compact .pos-checkout-due { height: auto; min-height: var(--sn-target); }
+.pos-checkout.is-compact .pos-checkout-due > .sn-rich { flex-wrap: wrap; gap: var(--sn-space-s); }
 .pos-checkout-payer-label { flex: none; font-size: var(--sn-font-min); font-weight: 800; color: var(--sn-ink-muted); white-space: nowrap; }
 .pos-checkout-payer > .sn-choices { flex: 0 1 auto; }
 .pos-checkout-find { flex: none; gap: var(--sn-space-s); }
@@ -314,7 +338,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; }
   font-size: var(--sn-font-body); font-weight: 800;
 }
 .pos-group-part-face > .sn-fit { flex: 0 1 auto; }
-.pos-group-side { gap: var(--sn-space-s); }
+.pos-group-side { gap: var(--sn-space-xs); }
 .pos-group-money { display: flex; flex-direction: column; justify-content: center; gap: var(--sn-space-xs); flex: none; min-height: calc(var(--sn-target) + var(--sn-space-m)); padding: 0 var(--sn-space-xs); }
 .pos-group-total { font-size: calc(var(--sn-font-title) + var(--sn-space-xs)); font-weight: 900; line-height: 1.1; white-space: nowrap; }
 .pos-group-note { font-size: var(--sn-font-body); font-weight: 800; color: var(--sn-ink-soft); }
@@ -479,6 +503,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; }
 /* 좁은 포스의 현금 점검 표(is-compact, closingColumns): 이름 138 · 끝 칸 96으로 줄여 `실제 540,000원 · 차액 −5,000원`이 들어가게. */
 .pos-closing-table.is-compact col.is-name { width: calc(var(--sn-target) * 2.5 + var(--sn-space-s)); }
 .pos-closing-table.is-compact col.is-end { width: calc(var(--sn-target) * 2 - var(--sn-space-s)); }
+/* 금액 두 조각은 모두 남긴다. 좁은 점검 표는 이 칸의 여백만 줄여 여섯 자리 차액까지 같은 줄에 둔다. */
+.pos-closing-table.is-cash.is-compact .sn-row > td:nth-child(2):not([colspan]) { padding-inline: var(--sn-space-xs); }
 
 /* 관리(카드 목록, ui 3-6 · 6-9): 장부형 틀의 본문 = 위 12 + 카드 두 칸(사이 16 · 8). 카드 전체가 누르는 곳(두 줄 줄 높이), 크림 바탕 · 2px 옅은
    테두리 · 모서리 10(운영 규칙 카드와 같은 모양), 굵은 이름 + 오른쪽 `›`. */
@@ -499,6 +525,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; }
 .pos-rules-body { display: flex; gap: var(--sn-space-l); flex: 1 1 0; min-height: 0; padding-top: var(--sn-space-m); }
 .pos-rules-body.is-soon { flex-direction: column; }
 .pos-rules-col { display: flex; flex-direction: column; gap: var(--sn-space-s); flex: 1 1 0; min-width: 0; }
+.pos-rules-body.has-compact-cards .sn-rule-card { padding: var(--sn-space-xs); }
+.pos-rules-body.has-compact-cards .sn-rule-rows { gap: var(--sn-space-xs); }
 /* 저장 확인 창: 바뀐 곳 목록(줄 높이 = 장부 줄, 한 쪽 줄 수만큼 자리를 늘 둔다) + 한 줄 안내(거절되면 까닭, 굵게). */
 .pos-rules-save-list {
   display: flex; flex-direction: column; flex: none; height: calc(var(--pos-rules-save-rows) * var(--sn-row-h)); margin: 0; padding: 0; list-style: none;
@@ -629,3 +657,253 @@ a.pos-call-link { display: inline-flex; align-items: center; justify-content: ce
 .pos-refund .sn-dialog-body { gap: var(--sn-space-s); }
 /* 마감의 막는 단계(features-1 §9-3): 확인 창 안의 한 줄(ReviewStep). */
 .pos-closing-step { margin-top: var(--sn-space-s); }
+
+/* 기사 연결 끊김 기록(work/impl-offline/plan.md §8): 일정 변경 창의 `유지` 줄 자리에 끊긴 차량의 사실(연결 띠와 같은 노랑, 창 높이는 그대로). */
+.pos-summary-link { background: var(--sn-strip); border-radius: var(--sn-radius-s); font-weight: 800; }
+/* 마감 넘기기(관리자 승인): 막는 단계 줄 아래의 권한 줄 · 사유 줄. */
+.pos-closing-step-note { margin-top: var(--sn-space-s); font-size: var(--sn-font-body); font-weight: 700; }
+/* 연결 끊김 화면의 전송 대기 줄 · 앱 잠금 타일(한 사람). */
+.pos-card-waiting { font-weight: 800; }
+
+
+/* 2026-10-28 사용자 시안: 밝은 배경·청록 강조, 큰 단계와 한 팀 작업. 기존 확인 창·기사 등급은 유지한다. */
+.pos-counter { --sn-desk: var(--sn-counter-desk); --sn-paper: var(--sn-counter-paper); --sn-paper-shade: var(--sn-counter-desk); --sn-ink: var(--sn-counter-ink); --sn-accent: var(--sn-counter-accent); background: var(--sn-desk); }
+.pos-counter .sn-button { border-color: var(--sn-rule-soft); border-width: var(--sn-line); }
+/* 시안의 고딕 위계: 제목 800, 버튼 700, 설명 500. 번들 Pretendard를 유지하고 과한 900·넓은 자간을 줄인다. */
+.pos-counter { font-weight: 500; letter-spacing: normal; line-height: 1.35; }
+.pos-counter .sn-button, .pos-counter .sn-primary, .pos-counter .sn-tab { font-weight: 700; letter-spacing: normal; }
+.pos-counter .sn-dialog-title, .pos-counter .sn-kind-name, .pos-counter .pos-new-value { font-weight: 800; letter-spacing: normal; }
+.pos-counter .sn-kind-second, .pos-counter .sn-method-items, .pos-counter .sn-method-disc { font-weight: 500; }
+.pos-counter .sn-method-name, .pos-counter .sn-method-amount, .pos-counter .sn-list-amount, .pos-counter .sn-rich > b { font-weight: 800; }
+.pos-counter .sn-choice[aria-pressed="true"] { background: var(--sn-accent); border-color: var(--sn-accent); color: var(--sn-on-accent); }
+.pos-counter .sn-slip-title { letter-spacing: normal; line-height: 1.2; }
+.pos-customer-pickup-team { margin: 0; font-size: var(--sn-font-big); font-weight: 800; overflow-wrap: anywhere; }
+.pos-customer-pickup-check { width: 100%; min-height: var(--sn-target); justify-content: flex-start; gap: var(--sn-space-m); }
+.pos-customer-pickup-check[aria-checked="true"] { background: var(--sn-counter-wash); border-color: var(--sn-accent); color: var(--sn-accent); }
+.pos-customer-pickup-note { margin: 0; color: var(--sn-ink-muted); font-size: var(--sn-font-min); }
+.pos-urgent-request-info { display: grid; gap: var(--sn-space-m); padding: var(--sn-space-m); border: var(--sn-line) solid var(--sn-rule-soft); border-radius: var(--sn-radius-m); font-size: var(--sn-font-body); overflow-wrap: anywhere; }
+.pos-urgent-request-actions { display: flex; flex-wrap: wrap; gap: var(--sn-space-s); }
+.pos-urgent-request-actions > * { flex: 1 1 auto; min-width: 0; }
+
+.pos-counter-header { display: flex; align-items: center; gap: var(--sn-space-m); height: var(--sn-header-h); flex: none; padding: 0 var(--sn-space-l); border-bottom: var(--sn-line) solid var(--sn-rule-soft); background: var(--sn-paper); }
+.pos-counter-header .sn-button { background: transparent; border-color: transparent; }
+.pos-counter-brand { font-size: var(--sn-font-title); font-weight: 800; }
+.pos-counter-mark { color: var(--sn-counter-accent); font-size: var(--sn-counter-title); }
+.pos-counter-shop { flex: 1; color: var(--sn-ink-muted); }
+.pos-counter-main { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; gap: var(--sn-space-s); padding: var(--sn-space-l); }
+.pos-counter-main:has(> .pos-counter-link) { gap: var(--sn-space-xs); }
+.pos-counter-title-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sn-space-m); flex: none; min-height: var(--sn-counter-stage); }
+.pos-counter-title-row > div { display: flex; align-items: baseline; gap: var(--sn-space-l); min-width: 0; }
+.pos-counter-title-row h1 { font-family: var(--sn-font-family); font-size: var(--sn-counter-title); font-weight: 800; }
+.pos-counter-title-row > div > span { color: var(--sn-ink-muted); }
+.pos-counter-stages { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); flex: none; min-height: var(--sn-counter-stage); border: var(--sn-line) solid var(--sn-rule-soft); border-radius: var(--sn-radius-m); background: var(--sn-paper); }
+.pos-counter-stages > button { display: flex; justify-content: center; align-items: center; gap: var(--sn-space-m); min-width: 0; min-height: var(--sn-counter-stage); padding: var(--sn-space-s); color: var(--sn-ink); font-size: var(--sn-font-title); font-weight: 800; border: 0; background: transparent; border-right: var(--sn-line) solid var(--sn-rule-soft); }
+.pos-counter-stages > button:last-child { border-right: 0; }
+.pos-counter-stages > button[aria-pressed='true'] { color: var(--sn-counter-accent); background: var(--sn-counter-wash); box-shadow: inset 0 calc(var(--sn-line-strong) * -2) 0 var(--sn-counter-accent); }
+.pos-counter-stages b { font-size: var(--sn-font-body); border-radius: var(--sn-radius-m); padding: var(--sn-space-xs) var(--sn-space-s); background: var(--sn-counter-desk); }
+.pos-counter-stages [aria-pressed='true'] b { background: var(--sn-counter-accent); color: var(--sn-on-accent); }
+.pos-counter-search { justify-content: flex-start; gap: var(--sn-space-m); width: 100%; color: var(--sn-ink-muted); flex: none; }
+.pos-counter-list { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; border: var(--sn-line) solid var(--sn-rule-soft); border-radius: var(--sn-radius-m); background: var(--sn-paper); }
+.pos-counter-columns, .pos-counter-row { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, .7fr); align-items: center; gap: var(--sn-space-l); padding: 0 var(--sn-space-l); text-align: left; }
+.pos-counter-columns { min-height: var(--sn-thead-h); flex: none; font-weight: 700; color: var(--sn-ink-muted); background: var(--sn-counter-desk); }
+.pos-counter-rows { flex: 1; min-height: 0; }
+.pos-counter-row { min-height: var(--sn-counter-row); height: var(--sn-counter-row); width: 100%; border: 0; border-bottom: var(--sn-line) solid var(--sn-rule-soft); background: transparent; color: var(--sn-ink); font-size: var(--sn-font-body); }
+.pos-counter-row:hover, .pos-counter-row.is-selected { background: var(--sn-counter-wash); }
+.pos-counter-row.is-selected { box-shadow: inset calc(var(--sn-line-strong) * 2) 0 0 var(--sn-counter-accent); }
+.pos-counter-person { display: flex; flex-direction: column; min-width: 0; gap: var(--sn-space-xs); font-size: var(--sn-font-big); font-weight: 800; }
+.pos-counter-name { display: block; width: 100%; min-width: 0; white-space: normal; word-break: break-all; overflow-wrap: anywhere; line-height: 1.25; }
+.pos-counter-person small { font-size: var(--sn-font-min); font-weight: 500; color: var(--sn-ink-muted); }
+.pos-counter-return { display: flex; flex-direction: column; min-width: 0; gap: var(--sn-space-xs); }
+.pos-counter-place { display: block; width: 100%; white-space: normal; word-break: break-all; overflow-wrap: anywhere; line-height: 1.25; color: var(--sn-ink-muted); font-size: var(--sn-font-min); }
+.pos-counter-status { display: block; padding: var(--sn-space-s); border-radius: var(--sn-radius-s); background: var(--sn-counter-wash); color: var(--sn-ink); font-weight: 700; }
+.pos-counter-open { display: flex; align-items: center; justify-content: center; min-height: var(--sn-target); border: var(--sn-line) solid var(--sn-counter-accent); border-radius: var(--sn-radius-s); color: var(--sn-counter-accent); font-weight: 800; }
+.pos-counter-paging { display: flex; align-items: center; justify-content: space-between; flex: none; min-height: var(--sn-target); padding: 0 var(--sn-space-s); }
+.pos-counter-paging > span { flex: 1; }
+.pos-counter-paging > span:last-child { text-align: right; }
+.pos-counter.is-compact .pos-counter-list .pos-counter-paging { flex-wrap: wrap; }
+.pos-counter.is-compact .pos-counter-list .pos-counter-paging > .sn-pager { order: 3; flex-basis: 100%; justify-content: center; }
+.pos-counter-empty { padding: var(--sn-space-l); color: var(--sn-ink-muted); }
+.pos-counter-bottom { display: flex; justify-content: space-between; flex: none; }
+.pos-counter-bottom .sn-button { background: var(--sn-counter-desk); }
+.pos-counter-link { color: var(--sn-ink); background: var(--sn-now-wash); padding: var(--sn-space-xs) var(--sn-space-s); flex: none; }
+.pos-counter-workspace { display: flex; flex: 1; min-height: 0; min-width: 0; gap: var(--sn-space-m); }
+.pos-counter-rail { display: flex; flex-direction: column; flex: none; width: var(--sn-counter-rail); min-height: 0; gap: var(--sn-space-m); padding: var(--sn-space-l); background: var(--sn-paper); border: var(--sn-line) solid var(--sn-rule-soft); border-radius: var(--sn-radius-m); }
+.pos-counter-rail h2 { font-size: var(--sn-font-title); }
+.pos-counter-list.is-rail { border: 0; }
+.pos-counter-list.is-rail .pos-counter-row, .pos-counter-list.is-compact .pos-counter-row { grid-template-columns: minmax(0, 1fr) var(--sn-target); }
+.pos-counter-list.is-rail .pos-counter-open, .pos-counter-list.is-compact .pos-counter-open { border: 0; }
+.pos-counter-detail { display: grid; grid-template-columns: minmax(0, 1fr) var(--sn-counter-money); grid-template-rows: minmax(0, 1fr) auto; gap: var(--sn-space-m); flex: 1; min-height: 0; min-width: 0; }
+.pos-counter-detail-content { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: var(--sn-space-l); border: var(--sn-line) solid var(--sn-rule-soft); border-radius: var(--sn-radius-m); background: var(--sn-paper); }
+.pos-counter-team-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sn-space-s); flex: none; }
+.pos-counter-team-head > .sn-button { padding: 0 var(--sn-space-s); color: var(--sn-counter-accent); }
+.pos-counter-team-title { display: flex; align-items: center; gap: var(--sn-space-m); flex: 1; min-width: 0; }
+.pos-counter-team-title h1 { width: 100%; font-size: var(--sn-font-title); font-weight: 800; min-width: 0; flex: 1; }
+.pos-counter-team-title > span { color: var(--sn-ink-muted); font-size: var(--sn-font-min); }
+.pos-counter-badge { padding: var(--sn-space-xs) var(--sn-space-s); background: var(--sn-counter-wash); border-radius: var(--sn-radius-s); font-weight: 800; }
+.pos-counter-schedule { margin-top: var(--sn-space-s); flex: none; background: var(--sn-counter-desk); justify-content: flex-start; gap: var(--sn-space-s); }
+.pos-counter-schedule .sn-fit { flex: 1; text-align: left; }
+.pos-counter-schedule > span:last-child { font-size: var(--sn-font-min); color: var(--sn-counter-accent); }
+.pos-counter-items-title { display: flex; align-items: center; justify-content: space-between; gap: var(--sn-space-s); min-height: var(--sn-target); flex: none; }
+.pos-counter-items-title h2 { font-size: var(--sn-font-big); flex: none; }
+.pos-counter-items-title > .sn-fit { text-align: right; color: var(--sn-ink-muted); }
+.pos-counter-items { flex: 1; min-height: 0; border-top: var(--sn-line) solid var(--sn-rule-soft); }
+.pos-counter-item { display: grid; grid-template-columns: var(--sn-target) minmax(0, 1fr) auto auto; align-items: center; gap: var(--sn-space-l); height: var(--sn-counter-item); border-bottom: var(--sn-line) solid var(--sn-rule-soft); }
+.pos-counter-item > .sn-fit { font-size: var(--sn-font-big); font-weight: 800; }
+.pos-counter-item > strong { font-size: var(--sn-font-title); }
+.pos-counter-item-mark { display: flex; align-items: center; justify-content: center; height: var(--sn-target); border-radius: var(--sn-radius-m); background: var(--sn-counter-desk); color: var(--sn-counter-accent); font-size: var(--sn-font-title); }
+.pos-counter-money { min-width: 0; display: flex; flex-direction: column; gap: var(--sn-space-l); padding: var(--sn-space-l); border: var(--sn-line) solid var(--sn-rule-soft); background: var(--sn-paper); border-radius: var(--sn-radius-m); }
+.pos-counter-money-card { display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: var(--sn-space-m); min-width: 0; min-height: var(--sn-counter-stage); width: 100%; border: 0; border-radius: var(--sn-radius-m); background: var(--sn-counter-wash); padding: var(--sn-space-l); text-align: left; color: var(--sn-ink); font-size: var(--sn-font-body); }
+.pos-counter-money-card > strong { font-size: var(--sn-counter-title); font-weight: 800; }
+.pos-counter-money-card > .sn-fit { width: 100%; }
+.pos-counter-money-lines { display: flex; flex-direction: column; gap: var(--sn-space-l); padding: var(--sn-space-l) 0; border-top: var(--sn-line-strong) solid var(--sn-rule-soft); }
+.pos-counter-detail-actions { display: flex; gap: var(--sn-space-m); grid-column: 1 / -1; min-width: 0; min-height: var(--sn-primary-h); }
+.pos-counter-detail-actions > .sn-button { min-width: var(--sn-counter-money); background: var(--sn-rule-soft); font-size: var(--sn-font-big); }
+.pos-counter-no-action { display: flex; align-items: center; flex: 1; font-size: var(--sn-font-big); font-weight: 800; }
+.pos-counter-detail:not(.is-wide) { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto auto; }
+.pos-counter-detail:not(.is-wide) .pos-counter-money { padding: 0; }
+.pos-counter-detail:not(.is-wide) .pos-counter-money-card { flex-direction: row; align-items: center; gap: var(--sn-space-m); padding: var(--sn-space-s) var(--sn-space-l); }
+.pos-counter-detail:not(.is-wide) .pos-counter-money-card > strong { font-size: var(--sn-font-title); flex: none; }
+.pos-counter-detail:not(.is-wide) .pos-counter-money-card > span:first-child { flex: none; }
+.pos-counter.is-compact .pos-counter-header { gap: var(--sn-space-xs); padding: 0 var(--sn-space-s); }
+.pos-counter.is-compact .pos-counter-shop, .pos-counter.is-compact .pos-counter-mark { display: none; }
+.pos-counter.is-compact .pos-counter-brand { flex: 1; padding: 0; justify-content: flex-start; font-size: var(--sn-font-big); }
+.pos-counter.is-compact .pos-counter-header .sn-button { padding: 0 var(--sn-space-s); }
+.pos-counter.is-compact .pos-counter-main { padding: var(--sn-space-s); gap: var(--sn-space-s); }
+.pos-counter.is-compact .pos-counter-title-row h1 { font-size: var(--sn-font-title); }
+.pos-counter.is-compact .pos-counter-stages > button { flex-direction: column; gap: var(--sn-space-xs); font-size: var(--sn-font-min); }
+.pos-counter.is-compact .pos-counter-stages b { padding: 0 var(--sn-space-xs); }
+.pos-counter-detail.is-compact .pos-counter-detail-content { padding: var(--sn-space-s); }
+.pos-counter-detail.is-compact .pos-counter-team-title { flex-direction: column; align-items: flex-start; gap: 0; }
+.pos-counter-detail.is-compact .pos-counter-team-title h1 { width: 100%; font-size: var(--sn-font-big); }
+.pos-counter-detail.is-compact .pos-counter-schedule { padding: 0 var(--sn-space-s); }
+.pos-counter-detail.is-compact .pos-counter-schedule > .sn-icon, .pos-counter-detail.is-compact .pos-counter-item-mark { display: none; }
+.pos-counter-detail.is-compact .pos-counter-item { grid-template-columns: minmax(0, 1fr) auto auto; gap: var(--sn-space-s); }
+.pos-counter-detail.is-compact .pos-counter-item > .sn-fit { font-size: var(--sn-font-body); }
+.pos-counter-detail.is-compact .pos-counter-detail-actions > .sn-button { min-width: var(--sn-target); padding: 0 var(--sn-space-s); font-size: var(--sn-font-body); }
+.pos-counter-detail.is-compact .pos-counter-detail-actions > .sn-button > .sn-icon { display: none; }
+.pos-counter-detail.is-compact .pos-counter-money-card { flex-wrap: wrap; gap: var(--sn-space-s); }
+.pos-counter-detail.is-compact .pos-counter-money-card > .sn-fit { flex-basis: 100%; }
+
+/* 새 접수도 같은 카운터 표면을 쓴다. 이름은 필수, 기본 일정은 선택 품목 아래에서 확인한다. */
+.pos-counter-new .sn-desk { padding: var(--sn-space-l); padding-bottom: 0; }
+.pos-counter-new .sn-slip, .pos-counter-new .pos-side { border: var(--sn-line) solid var(--sn-rule-soft); border-radius: var(--sn-radius-m); box-shadow: none; }
+.pos-counter-new .sn-slip-title { font-family: var(--sn-font-family); font-weight: 800; }
+.pos-counter-new .sn-slip-head { box-shadow: none; border-bottom: var(--sn-line) solid var(--sn-rule-soft); }
+.pos-counter-new .sn-tab[aria-selected='true'] { color: var(--sn-counter-accent); background: var(--sn-counter-wash); }
+.pos-counter-new .pos-new-side { gap: var(--sn-space-xs); padding: var(--sn-space-xs) var(--sn-space-s); }
+.pos-counter-new .pos-new-panel-title { height: auto; box-shadow: none; font-size: var(--sn-font-big); }
+.pos-counter-new .pos-new-field.is-missing { border-color: var(--sn-counter-accent); box-shadow: inset 0 0 0 var(--sn-line) var(--sn-counter-accent); }
+.pos-new-defaults { display: flex; flex-direction: column; align-items: stretch; justify-content: center; flex: none; gap: var(--sn-space-xs); width: 100%; padding: var(--sn-space-s); min-height: var(--sn-target); color: var(--sn-ink); background: var(--sn-counter-desk); text-align: left; font-size: var(--sn-font-min); }
+.pos-new-defaults > span { white-space: normal; }
+/* 휴대폰 접수는 한 번에 한 판이다. 선택 내용에서 품목을 누르면 해당 선택 판으로 돌아간다. */
+.pos-counter-new.is-compact .sn-desk { padding: var(--sn-space-s); padding-bottom: 0; }
+.pos-counter-new.is-compact .pos-side { flex: 1 1 0; width: auto; }
+.pos-counter-new.is-compact .sn-slip { padding: var(--sn-space-s); }
+.pos-counter-new.is-compact .sn-slip-head { height: auto; padding-bottom: var(--sn-space-s); flex-direction: column; align-items: stretch; gap: var(--sn-space-s); }
+.pos-counter-new.is-compact .pos-new-tabs { align-self: stretch; }
+.pos-counter-new.is-compact .pos-new-tabs .sn-tab { flex: 1 1 0; padding: 0 var(--sn-space-xs); }
+.pos-counter-new.is-compact .pos-new-rep { height: auto; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.pos-counter-new.is-compact .pos-new-people { grid-column: 1 / -1; justify-content: flex-end; }
+.pos-counter-new.is-compact .pos-new-field { min-width: 0; padding: 0 var(--sn-space-s); }
+.pos-counter-new.is-compact .is-phone .pos-new-value { display: none; }
+.pos-counter-new.is-compact .pos-new-pick-label { width: 3em; }
+.pos-counter-new.is-compact .pos-new-pick .sn-choice { min-width: 0; }
+.pos-counter-new.is-compact .pos-new-pick-note { display: none; }
+.pos-counter-new.is-compact .pos-new-go { flex: none; }
+.pos-counter-new.is-compact .sn-footer { padding-inline: var(--sn-space-s); gap: var(--sn-space-s); }
+.pos-counter-new.is-compact .pos-footer-back { gap: var(--sn-space-s); }
+.pos-counter-new.is-compact .pos-footer-back > .sn-button { flex: none; padding-inline: var(--sn-space-xs); }
+.pos-counter-new.is-compact .pos-footer-back > .sn-fit { display: none; }
+.pos-counter-new.is-compact .pos-new-block .sn-choice { min-width: 0; }
+.pos-counter-new.is-compact .pos-new-schedule.is-compact .pos-new-block { display: flex; }
+.pos-counter-money-detail { display: flex; flex-direction: column; }
+.pos-counter-money-detail > p { display: flex; align-items: center; min-height: var(--sn-target); border-bottom: var(--sn-line) solid var(--sn-rule-soft); }
+.pos-counter-money-detail .sn-fit { width: 100%; }
+
+/* 긴급 요청은 목록을 막지 않는 한 줄. 확인 뒤에도 실제 작업 전까지 남는다. */
+.pos-urgent-bar { flex: none; width: 100%; min-height: var(--sn-target); border-color: var(--sn-rule-soft); background: var(--sn-counter-wash); color: var(--sn-counter-ink); justify-content: flex-start; padding-inline: var(--sn-space-m); font-weight: 800; }
+.sn-pin-slot .pos-urgent-bar { height: 100%; }
+.pos-urgent-list .sn-dialog-body, .pos-urgent-rows { gap: var(--sn-space-m); }
+.pos-urgent-rows { display: flex; flex-direction: column; }
+.pos-urgent-row { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) minmax(0,1fr); gap: var(--sn-space-m); align-items: center; padding: var(--sn-space-m); border: var(--sn-line) solid var(--sn-rule-soft); border-radius: var(--sn-radius-m); }
+.pos-urgent-team, .pos-urgent-place, .pos-urgent-state { display: grid; gap: var(--sn-space-s); min-width: 0; overflow-wrap: anywhere; }
+.pos-urgent-team strong { font-size: var(--sn-font-big); font-weight: 800; }
+.pos-urgent-state { font-size: var(--sn-font-min); }
+.pos-urgent-state .sn-button { border-color: var(--sn-counter-accent); color: var(--sn-counter-accent); }
+.pos-urgent-list.is-compact .pos-urgent-row { grid-template-columns: minmax(0,1fr); }
+.pos-urgent-list.is-compact .pos-urgent-team { grid-template-columns: minmax(0,1fr) auto; align-items: start; }
+.pos-urgent-list.is-compact .pos-urgent-team > span { white-space: nowrap; }
+
+
+/* 상세 시안 21–24: 기존 확인 창을 넓은 작업판과 모바일 한 작업으로 배치한다. */
+.pos-detail { --sn-paper: var(--sn-counter-paper); --sn-paper-shade: var(--sn-counter-desk); --sn-ink: var(--sn-counter-ink); --sn-accent: var(--sn-counter-accent); font-weight: 500; }
+.pos-detail .sn-dialog-head { border-color: var(--sn-rule-soft); }
+.pos-detail .sn-dialog-title { font-weight: 800; letter-spacing: normal; }
+.pos-detail .sn-dialog-body { gap: var(--sn-space-m); }
+.pos-detail .sn-button, .pos-detail .sn-primary { border-width: var(--sn-line); font-weight: 700; letter-spacing: normal; }
+.pos-detail .sn-choice[aria-pressed="true"] { background: var(--sn-counter-accent); border-color: var(--sn-counter-accent); color: var(--sn-on-accent); }
+.pos-detail .sn-qty-button:not(:disabled) { color: var(--sn-counter-accent); background: var(--sn-counter-wash); }
+.pos-detail-columns { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: var(--sn-space-m); }
+.pos-detail-section { display: flex; flex-direction: column; gap: var(--sn-space-m); min-width: 0; padding: var(--sn-space-m); border: var(--sn-line) solid var(--sn-rule-soft); border-radius: var(--sn-radius-m); }
+.pos-detail h3 { margin: 0; font-size: var(--sn-font-big); font-weight: 800; }
+.pos-detail-summary { background: var(--sn-counter-wash); border-radius: var(--sn-radius-m); padding: var(--sn-space-m); box-shadow: none; }
+.pos-detail-note { margin: 0; font-size: var(--sn-font-min); color: var(--sn-ink-muted); overflow-wrap: anywhere; }
+.pos-detail-settlement .pos-return-refund .sn-choice { min-width: var(--sn-target); }
+.pos-detail-settlement .pos-return-left { height: auto; min-height: var(--sn-target); box-shadow: none; padding: 0; }
+.pos-detail-settlement .pos-return-deposit { height: auto; min-height: var(--sn-target); font-size: var(--sn-font-big); background: var(--sn-counter-wash); border-radius: var(--sn-radius-m); padding: var(--sn-space-s); }
+.pos-detail .sn-rich { white-space: normal; overflow-wrap: anywhere; }
+.pos-detail .sn-dialog-foot .sn-dialog-primary { flex: 1; }
+.pos-detail .sn-primary { width: 100%; }
+.sn-piece-lines.is-single { grid-template-columns: minmax(0, 1fr); }
+.sn-piece-lines.is-stacked .sn-piece-line { height: auto; flex-direction: column; align-items: stretch; padding: var(--sn-space-s); }
+.sn-piece-lines.is-stacked .sn-piece-name { min-height: var(--sn-target); }
+.sn-piece-lines.is-stacked .sn-pieces { justify-content: flex-end; }
+.pos-detail.is-compact .pos-detail-columns { grid-template-columns: minmax(0, 1fr); }
+.pos-detail.is-compact .sn-form-row { grid-template-columns: minmax(0,1fr); gap: var(--sn-space-s); }
+.pos-detail.is-compact .sn-form-row.is-top > .sn-form-label { height: auto; }
+.pos-detail.is-compact .sn-steps { grid-template-columns: minmax(0,1fr); }
+.pos-detail.is-compact .sn-form-row.is-blank { display: none; }
+.pos-detail.is-compact .sn-dialog-foot { display: grid; grid-template-columns: auto 1fr; gap: var(--sn-space-s); height: auto; padding-block: var(--sn-space-s); }
+.pos-detail.is-compact .sn-dialog-primary { grid-column: 1 / -1; margin-inline-start: 0; width: 100%; }
+.pos-detail.is-compact .pos-return-refund { height: auto; flex-wrap: wrap; }
+.pos-detail.is-compact .pos-return-refund > .sn-choices { flex-basis: 100%; }
+.pos-detail.is-compact .sn-summary-row { grid-template-columns: minmax(0,1fr); white-space: normal; }
+.pos-detail.is-compact .pos-exchange-summary, .pos-detail.is-compact .pos-discount-summary { height: auto; min-height: var(--sn-target); }
+.pos-detail.is-compact .sn-step-name > b, .pos-detail.is-compact .sn-step-name > small { white-space: normal; }
+.pos-detail-methods { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: var(--sn-space-s); }
+.pos-discount-refunds.is-compact { display: flex; flex-direction: column; gap: var(--sn-space-s); }
+.pos-discount-refunds.is-compact .pos-discount-refund { display: flex; flex-direction: column; align-items: stretch; gap: var(--sn-space-s); padding-top: var(--sn-space-s); }
+.pos-discount-refunds.is-compact .pos-discount-refund.is-blank { display: none; }
+.pos-discount-refunds.is-compact .pos-discount-refund-text { flex: none; min-height: var(--sn-font-title); }
+.pos-discount-refunds.is-compact .sn-choice { min-width: 0; }
+
+.pos-promise.pos-detail .sn-dialog-body, .pos-promise .pos-detail-section { gap: var(--sn-space-s); }
+.pos-promise .pos-detail-section, .pos-promise .pos-detail-summary { padding: var(--sn-space-s); }
+.pos-promise.pos-detail .sn-form-row { grid-template-columns: minmax(0,1fr); row-gap: var(--sn-space-s); }
+.pos-promise.pos-detail .sn-form-row.is-top > .sn-form-label { height: auto; }
+.pos-promise.pos-detail .sn-steps { grid-template-columns: minmax(0,1fr); }
+.pos-detail .sn-step-name > b { min-width: 0; }
+
+button.pos-counter-item { width: 100%; border-top: 0; border-inline: 0; padding: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+
+/* 작은 POS: 이름과 일정은 같은 줄, 품목 페이지는 실행 줄. 한 품목의 온전한 높이를 확보한다. */
+.pos-counter-detail:not(.is-wide):not(.is-compact) .pos-counter-detail-content { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); grid-template-rows: auto auto minmax(0,1fr); gap: var(--sn-space-xs); padding: var(--sn-space-s); }
+.pos-counter-detail:not(.is-wide):not(.is-compact) .pos-counter-team-head { grid-column: 1; grid-row: 1; }
+.pos-counter-detail:not(.is-wide):not(.is-compact) .pos-counter-team-title { flex-direction: column; align-items: flex-start; gap: var(--sn-space-xs); }
+.pos-counter-detail:not(.is-wide):not(.is-compact) .pos-counter-schedule { grid-column: 2; grid-row: 1; margin: 0; }
+.pos-counter-detail:not(.is-wide):not(.is-compact) .pos-counter-items-title { grid-column: 1 / -1; grid-row: 2; min-height: var(--sn-font-title); }
+.pos-counter-detail:not(.is-wide):not(.is-compact) .pos-counter-items { grid-column: 1 / -1; grid-row: 3; }
+.pos-counter-detail:not(.is-wide):not(.is-compact) .pos-counter-item { height: var(--sn-target-repeat); }
+.pos-counter-detail:not(.is-wide):not(.is-compact) .pos-counter-detail-actions > .sn-button { min-width: var(--sn-target); padding: 0 var(--sn-space-m); }
+
+.pos-counter-row.is-finished { color: var(--sn-ink-muted); }
+
+/* 취소의 최대 정산 상태(금액·수단·환불 페이지)를 처음부터 예약한다. 최소 POS에서도 실행 줄을 지킨다. */
+.pos-cancel.pos-detail .sn-dialog-body, .pos-cancel .pos-detail-section { gap: var(--sn-space-s); }
+.pos-cancel .pos-detail-section, .pos-cancel .pos-detail-summary { padding: var(--sn-space-s); }
+.pos-cancel .pos-detail-columns { min-height: calc(var(--sn-target) * 3 + var(--sn-font-title) + var(--sn-space-s) * 6 + var(--sn-line) * 2); }
+.pos-cancel .pos-detail-note.is-blank { visibility: hidden; }
+
+/* 지연 기준은 기존 장부가 주는 lateAt. 정상 미수는 색을 바꾸지 않는다. */
+.pos-counter-row.is-late { box-shadow: inset var(--sn-line-stamp) 0 0 var(--sn-late); }
+.pos-counter-row.is-late .pos-counter-return > strong, .pos-counter-row.is-late .pos-counter-status, .pos-counter-money-card .tone-late { color: var(--sn-late); }

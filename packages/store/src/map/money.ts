@@ -258,10 +258,12 @@ function insertDeposit(ctx: WriteContext, d: FxDeposit): void {
 
 /** 결제 자리 · 접수마다의 몫 · 보증금. */
 export function loadMoney(db: Db, shopId: string, byId: Map<string, FxOrder>): { paymentGroups: FxPaymentGroup[]; deposits: FxDeposit[] } {
-  const payments = all(db, `SELECT p.id, p.payment_group_id, p.kind_key, p.method_id, p.amount, p.cash_drawer_id, p.payer_order_id, p.occurred_at, p.request_id,
-      p.refund_of_payment_id, p.reason, g.purpose_key AS group_purpose, c.depends_on_json FROM payments p
+  // 보냄 대기로 늦게 온 돈(work/impl-offline/plan.md §5-2): 그 명령이 기기 번호를 가졌고 적은 때가 일어난 때와 다르면 recordedAt. 현장 수납의 기기(deviceId).
+  const payments = all(db, `SELECT p.id, p.payment_group_id, p.kind_key, p.method_id, p.amount, p.cash_drawer_id, p.payer_order_id, p.occurred_at, p.recorded_at,
+      p.device_id, p.request_id, p.refund_of_payment_id, p.reason, g.purpose_key AS group_purpose, c.depends_on_json, q.device_seq AS queued_seq FROM payments p
       LEFT JOIN payment_groups g ON g.shop_id = p.shop_id AND g.id = p.payment_group_id
       LEFT JOIN command_log c ON c.shop_id = p.shop_id AND c.request_id = p.request_id AND p.kind_key = 'refund'
+      LEFT JOIN command_log q ON q.shop_id = p.shop_id AND q.request_id = p.request_id AND q.device_seq IS NOT NULL
       WHERE p.shop_id = ? ORDER BY p.rowid`, shopId);
   const allocations = new Map<string, { order_id: string; line_id?: string; amount: number; quantity?: number; section?: string; seq: number }[]>();
   for (const r of all(db, `SELECT a.payment_id, a.seq, a.order_id, a.line_id, a.amount, a.allocated_quantity, s.payment_section_id FROM payment_allocations a
@@ -276,13 +278,15 @@ export function loadMoney(db: Db, shopId: string, byId: Map<string, FxOrder>): {
     allocations.set(str(r.payment_id), list);
   }
   const paymentGroups: FxPaymentGroup[] = [];
-  const depositMoney = new Map<string, { method: string; drawer?: string; at: number }>();
+  const depositMoney = new Map<string, { method: string; drawer?: string; at: number; recordedAt?: number }>();
   for (const p of payments) {
     const id = str(p.id);
     const kind = str(p.kind_key);
     const at = msOf(str(p.occurred_at));
     const method = str(p.method_id);
     const drawer = text(p.cash_drawer_id);
+    const recorded = p.queued_seq !== null && p.queued_seq !== undefined ? msOf(str(p.recorded_at)) : at;
+    const late = recorded !== at ? { recordedAt: recorded } : {};
     if (kind === 'refund') {
       // 환불: 배분 행의 접수에, 가리키는 돈 행의 그 접수 몫(결제 자리 몫 또는 그 행)을 refundOf로.
       const rows = allocations.get(id) ?? [];
@@ -306,9 +310,10 @@ export function loadMoney(db: Db, shopId: string, byId: Map<string, FxOrder>): {
       continue;
     }
     if (kind !== 'payment' && kind !== 'deposit_apply') {
-      depositMoney.set(id, { method, ...(drawer !== undefined ? { drawer } : {}), at });
+      depositMoney.set(id, { method, ...(drawer !== undefined ? { drawer } : {}), at, ...late });
       continue;
     }
+    const fieldDevice = str(p.group_purpose ?? '') === 'driver_field' && text(p.device_id) !== undefined ? { deviceId: str(p.device_id) } : {};
     const groupId = text(p.payment_group_id);
     if (groupId !== undefined) {
       paymentGroups.push({
@@ -341,6 +346,8 @@ export function loadMoney(db: Db, shopId: string, byId: Map<string, FxOrder>): {
         ...(groupId !== undefined ? { groupId } : {}),
         ...(drawer !== undefined ? { drawerId: drawer } : {}),
         ...(lines.length ? { lines: lines.map((r) => ({ lineId: r.line_id!, quantity: r.quantity ?? 0, amount: r.amount })) } : {}),
+        ...late,
+        ...fieldDevice,
       };
       o.payments.push(share);
     });
@@ -381,6 +388,7 @@ export function loadMoney(db: Db, shopId: string, byId: Map<string, FxOrder>): {
       ...(money && money.method !== DEPOSIT_METHOD ? { methodKey: money.method as FxMethodKey } : {}),
       ...(money?.drawer !== undefined ? { drawerId: money.drawer } : {}),
       at: msOf(str(r.occurred_at)),
+      ...(money?.recordedAt !== undefined ? { recordedAt: money.recordedAt } : {}),
     };
     d.entries.push(entry);
     last = { d, payment, line, entry };

@@ -10,12 +10,13 @@ import {
   CHECKOUT_KEYS, createdOrder, envelopeFor, isAccepted, type AnyCommandDraft, type AnyCommandEnvelope, type Basis, type CheckoutChoice,
   type CheckoutSheetParams, type CheckoutSheetView, type ConfirmCommand, type FindResult, type ManualDiscount, type OrderDraftInput,
 } from '@skinote/contract';
-import { ChoiceRow, DialogFrame, Icon, Keypad, MethodRow, PrimaryButton, RichLine, t, useCommandDraft } from '@skinote/ui';
+import { ChoiceRow, DialogFrame, Icon, Keypad, MethodRow, Pager, PrimaryButton, RichLine, t, useCommandDraft } from '@skinote/ui';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useClient } from '../app/client.tsx';
 import { say } from '../app/strings.ts';
 import { ManualDiscountFlow } from './ManualDiscountFlow.tsx';
 import { ChoiceSheet } from './NoticeDialog.tsx';
+import { useCounterLayout } from './CounterWorkspace.tsx';
 
 const NO_BASIS: Basis = { epoch: '', rev: 0 };
 /** 그사이 반납 시각이 지나는지(10분 이내 · 시간 지남) 다시 읽는 간격. */
@@ -102,6 +103,8 @@ export interface CheckoutDialogProps {
 
 export function CheckoutDialog({ draft: orderDraft, addTo, onClose, onDone }: CheckoutDialogProps) {
   const client = useClient();
+  const { compact } = useCounterLayout();
+  const [sectionPage, setSectionPage] = useState(0);
   const [params, setParams] = useState<CheckoutSheetParams>({ draft: orderDraft, ...(addTo !== undefined ? { addTo } : {}) });
   const [loaded, setLoaded] = useState<{ key: string; view: CheckoutSheetView } | null>(null);
   const [tick, setTick] = useState(0);
@@ -185,7 +188,7 @@ export function CheckoutDialog({ draft: orderDraft, addTo, onClose, onDone }: Ch
       <DialogFrame
         title={view.title}
         onClose={onClose}
-        className="pos-checkout"
+        className={'pos-checkout' + (compact ? ' is-compact' : '')}
         {...(draft ? { requestId: draft.requestId } : {})}
         primary={(
           <PrimaryButton
@@ -197,7 +200,7 @@ export function CheckoutDialog({ draft: orderDraft, addTo, onClose, onDone }: Ch
           />
         )}
       >
-        {view.sections.map((s) => (
+        {(compact ? view.sections.slice(Math.min(sectionPage, view.sections.length - 1), Math.min(sectionPage, view.sections.length - 1) + 1) : view.sections).map((s) => (
           <MethodRow
             key={s.key}
             section={s}
@@ -205,6 +208,7 @@ export function CheckoutDialog({ draft: orderDraft, addTo, onClose, onDone }: Ch
             {...(s.discountable ? { onDiscount: () => setSheet({ kind: 'discount', sectionKey: s.key }) } : {})}
           />
         ))}
+        {compact && view.sections.length > 1 ? <Pager page={Math.min(sectionPage, view.sections.length - 1)} pageCount={view.sections.length} onChange={setSectionPage} /> : null}
         <div className={'pos-checkout-payer' + (view.payer.visible ? '' : ' is-blank')} {...(view.payer.visible ? {} : { 'aria-hidden': true })}>
           <span className="pos-checkout-payer-label">{view.payer.label}</span>
           <ChoiceRow options={view.payer.options} label={say('payerGroup')} onPress={(key) => change(withPayer(params, key))} />

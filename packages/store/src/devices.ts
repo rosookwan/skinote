@@ -125,6 +125,61 @@ export interface DeviceRows {
    * 기기 번호 차례.
    */
   lastUsers(): Map<string, { id: string; label: string }[]>;
+  // ── 기사 기기의 연결 끊김 기록(work/impl-offline/plan.md §6-1) ──
+  /** 기기가 보낸 가장 높은 번호(devices.last_device_seq). */
+  highWater(deviceId: string): number;
+  /** 기기의 연결 사실을 적는다(devices.last_seen_at · 판 · 저장 허락 + device_sync_cursors 'changes'): 장부가 아니다. 서버가 드물게(1분) 부른다. */
+  noteLink(deviceId: string, link: DeviceLinkNote, now: number): void;
+  /** 적어 둔 연결 사실(서버를 다시 띄운 뒤 연결 셈을 다시 세움). */
+  linkNotes(): DeviceLinkRow[];
+  /**
+   * 받지 못한 기기 번호(O9): 이어진 끝(device_sync_cursors.last_device_seq) 뒤에서 가장 높은 번호 아래의 빈 번호(50개까지)와 그 빈 곳 다음 번호를 받은 때.
+   * above면 가장 높은 번호 위 (highWater, lastSeq]도 빈 번호(끊은 · 오래 조용한 기기). 이어진 끝을 앞으로 옮긴다.
+   */
+  gaps(deviceId: string, options?: { lastSeq?: number; above?: boolean }): { missing: number[]; count: number; since?: number };
+  /** 이 기기의 기록(device_seq ≥ fromSeq, 번호 차례, limit개까지)과 더 있는지. 사본과 같은 읽기에서 부른다(O4). */
+  recorded(deviceId: string, fromSeq: number, limit: number): { items: RecordedRow[]; more: boolean };
+  /** 이 기기의 온라인 명령 결과(답을 잃은 온라인 명령, O18). */
+  onlineRecorded(deviceId: string, requestIds: readonly string[]): { requestId: string; outcome: string; rev: number }[];
+  /** 기기마다 보류된 기록 수(끊은 기기의 것 · 그 밖, 미반영 결정 뺌, O21). */
+  heldCounts(): { deviceId: string; label: string; revoked: number; held: number }[];
+  /** 그때(at) 이 기기에 마지막으로 로그인한 직원(보냄 대기 기록의 행위자 확인, §6-3). */
+  lastSignIn(deviceId: string, at: number): string | undefined;
+}
+
+/** 기기의 연결 사실(서버의 연결 셈이 적는 것, 개인정보 없음). */
+export interface DeviceLinkNote {
+  queueDepth: number;
+  lastSeq: number;
+  clockOffsetMs: number;
+  appVersion: string;
+  offlineCapable: boolean;
+  epoch: string;
+  lastRev?: number;
+  pushed?: boolean;
+  pulled?: boolean;
+}
+
+export interface DeviceLinkRow {
+  deviceId: string;
+  kind: DeviceKind;
+  vehicleId?: string;
+  label: string;
+  status: DeviceStatus;
+  lastSeenAt?: number;
+  queueDepth?: number;
+  lastSeq: number;
+  highWater: number;
+}
+
+export interface RecordedRow {
+  requestId: string;
+  deviceSeq: number;
+  outcome: string;
+  rev: number;
+  reviews: string[];
+  /** 결과의 오류 코드(있으면, §18 R4-14). */
+  errorCode?: string;
 }
 
 export function deviceRows(db: Db, shopId: string): DeviceRows {
@@ -267,6 +322,105 @@ export function deviceRows(db: Db, shopId: string): DeviceRows {
     statusMap() {
       return new Map(all(db, 'SELECT id, status_key FROM devices WHERE shop_id = ?', shopId).map((r) => [str(r.id), str(r.status_key) as DeviceStatus]));
     },
+    highWater(deviceId) {
+      return num(one(db, 'SELECT last_device_seq FROM devices WHERE shop_id = ? AND id = ?', shopId, deviceId)?.last_device_seq);
+    },
+    noteLink(deviceId, link, now) {
+      const at = isoOf(now);
+      run(db, 'UPDATE devices SET last_seen_at = ?, app_version = ?, offline_capable = ? WHERE shop_id = ? AND id = ?', at, link.appVersion.slice(0, 40), link.offlineCapable ? 1 : 0, shopId, deviceId);
+      run(db, `INSERT INTO device_sync_cursors (shop_id, device_id, stream_key, epoch_id, last_rev, last_device_seq, clock_offset_ms, queue_depth, app_version, last_pull_at, last_push_at)
+        VALUES (?, ?, 'changes', ?, ?, 0, ?, ?, ?, ?, ?)
+        ON CONFLICT (shop_id, device_id, stream_key) DO UPDATE SET epoch_id = excluded.epoch_id, last_rev = max(last_rev, excluded.last_rev),
+          clock_offset_ms = excluded.clock_offset_ms, queue_depth = excluded.queue_depth, app_version = excluded.app_version,
+          last_pull_at = coalesce(excluded.last_pull_at, last_pull_at), last_push_at = coalesce(excluded.last_push_at, last_push_at)`,
+      shopId, deviceId, link.epoch, link.lastRev ?? 0, Math.trunc(link.clockOffsetMs), link.queueDepth, link.appVersion.slice(0, 40), link.pulled ? at : null,
+      link.pushed ? at : null);
+      // 알린 가장 큰 번호(lastSeq)는 기록 수를 세는 데만 쓴다(번호 빈 곳 · 끊은 기기의 위 번호): 커서의 이어진 끝과 따로 둔다.
+      linkSeq.set(deviceId, link.lastSeq);
+    },
+    linkNotes() {
+      return all(db, `SELECT d.id, d.kind_key, d.vehicle_id, d.label, d.status_key, d.last_seen_at, d.last_device_seq, c.queue_depth FROM devices d
+        LEFT JOIN device_sync_cursors c ON c.shop_id = d.shop_id AND c.device_id = d.id AND c.stream_key = 'changes' WHERE d.shop_id = ? ORDER BY d.short_no`, shopId).map((r) => ({
+        deviceId: str(r.id), kind: str(r.kind_key) as DeviceKind, ...(text(r.vehicle_id) !== undefined ? { vehicleId: str(r.vehicle_id) } : {}), label: str(r.label),
+        status: str(r.status_key) as DeviceStatus, ...(text(r.last_seen_at) !== undefined ? { lastSeenAt: msOf(str(r.last_seen_at)) } : {}),
+        ...(r.queue_depth !== null && r.queue_depth !== undefined ? { queueDepth: num(r.queue_depth) } : {}), lastSeq: linkSeq.get(str(r.id)) ?? num(r.last_device_seq),
+        highWater: num(r.last_device_seq),
+      }));
+    },
+    gaps(deviceId, options = {}) {
+      const cursor = one(db, "SELECT last_device_seq FROM device_sync_cursors WHERE shop_id = ? AND device_id = ? AND stream_key = 'changes'", shopId, deviceId);
+      let contiguous = num(cursor?.last_device_seq);
+      const high = rows.highWater(deviceId);
+      const missing: number[] = [];
+      let count = 0;
+      let since: number | undefined;
+      let expected = contiguous + 1;
+      let gapped = false;
+      for (const r of all(db, 'SELECT device_seq, received_at FROM command_log WHERE shop_id = ? AND device_id = ? AND device_seq > ? ORDER BY device_seq', shopId, deviceId, contiguous)) {
+        const seq = num(r.device_seq);
+        if (seq > expected) {
+          count += seq - expected;
+          for (let n = expected; n < seq && missing.length < MISSING_MAX; n += 1) missing.push(n);
+          since ??= msOf(str(r.received_at));
+          gapped = true;
+        }
+        if (!gapped) contiguous = seq;
+        expected = seq + 1;
+      }
+      if (options.above && options.lastSeq !== undefined && options.lastSeq > high) {
+        count += options.lastSeq - high;
+        for (let n = high + 1; n <= options.lastSeq && missing.length < MISSING_MAX; n += 1) missing.push(n);
+      }
+      if (cursor && contiguous > num(cursor.last_device_seq)) {
+        run(db, "UPDATE device_sync_cursors SET last_device_seq = ? WHERE shop_id = ? AND device_id = ? AND stream_key = 'changes'", contiguous, shopId, deviceId);
+      }
+      return { missing, count, ...(since !== undefined ? { since } : {}) };
+    },
+    recorded(deviceId, fromSeq, limit) {
+      const list = all(db, `SELECT request_id, device_seq, status_key, applied_rev, error_code, result_json FROM command_log WHERE shop_id = ? AND device_id = ? AND device_seq >= ?
+        ORDER BY device_seq LIMIT ?`, shopId, deviceId, fromSeq, limit + 1).map((r): RecordedRow => {
+        const result = text(r.result_json) !== undefined ? (JSON.parse(str(r.result_json)) as { rev?: number; reviews?: string[]; error?: { code?: unknown } }) : {};
+        // 결과의 오류 코드(적지 않은 까닭, 기기의 줄 메모, §18 R4-14): 결과 글의 것, 없으면 줄의 칸.
+        const errorCode = typeof result.error?.code === 'string' ? result.error.code : text(r.error_code);
+        return {
+          requestId: str(r.request_id), deviceSeq: num(r.device_seq), outcome: str(r.status_key), rev: r.applied_rev !== null ? num(r.applied_rev) : result.rev ?? 0,
+          reviews: Array.isArray(result.reviews) ? result.reviews : [], ...(errorCode !== undefined ? { errorCode } : {}),
+        };
+      });
+      return { items: list.slice(0, limit), more: list.length > limit };
+    },
+    onlineRecorded(deviceId, requestIds) {
+      return requestIds.flatMap((id) => {
+        const r = one(db, 'SELECT request_id, status_key, applied_rev, result_json FROM command_log WHERE shop_id = ? AND device_id = ? AND request_id = ?', shopId, deviceId, id);
+        if (!r) return [];
+        const rev = r.applied_rev !== null ? num(r.applied_rev) : (text(r.result_json) !== undefined ? (JSON.parse(str(r.result_json)) as { rev?: number }).rev ?? 0 : 0);
+        return [{ requestId: id, outcome: str(r.status_key), rev }];
+      });
+    },
+    heldCounts() {
+      const out = new Map<string, { deviceId: string; label: string; revoked: number; held: number }>();
+      for (const r of all(db, `SELECT c.device_id, d.label, c.result_json FROM command_log c JOIN devices d ON d.shop_id = c.shop_id AND d.id = c.device_id
+        WHERE c.shop_id = ? AND c.status_key = 'held' ORDER BY d.short_no`, shopId)) {
+        const held = (text(r.result_json) !== undefined ? (JSON.parse(str(r.result_json)) as { held?: { reason?: string; dismissed?: unknown } }).held : undefined) ?? {};
+        if (held.dismissed) continue;
+        const id = str(r.device_id);
+        const row = out.get(id) ?? { deviceId: id, label: str(r.label), revoked: 0, held: 0 };
+        if (held.reason === 'revoked') row.revoked += 1;
+        else row.held += 1;
+        out.set(id, row);
+      }
+      return [...out.values()];
+    },
+    lastSignIn(deviceId, at) {
+      const row = one(db, `SELECT staff_member_id FROM device_sign_ins WHERE shop_id = ? AND device_id = ? AND signed_in_at <= ?
+        ORDER BY signed_in_at DESC, seq DESC LIMIT 1`, shopId, deviceId, isoOf(at));
+      return row ? text(row.staff_member_id) : undefined;
+    },
   };
+  /** 기기가 알린 가장 큰 번호(서버 메모리: 적는 표 칸이 없다). */
+  const linkSeq = new Map<string, number>();
   return rows;
 }
+
+/** 한 번에 알리는 빠진 번호의 끝(MISSING_LIMIT와 같게). */
+const MISSING_MAX = 50;

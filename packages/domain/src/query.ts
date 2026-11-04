@@ -23,11 +23,27 @@ export interface ReadContext {
   config: UiConfig;
   now: number;
   pendingTasks?: ReadonlySet<string>;
+  /** 그중 보낸 뒤 답을 잃은 업무(`{시각} 처리 · 결과 확인 중`, work/impl-offline/plan.md O18). */
+  unconfirmedTasks?: ReadonlySet<string>;
+  /** 사본에 없는 보냄 대기 항목 수(기사 목록 바닥줄 `전송 대기`, §5-5). */
+  unplacedCount?: number;
+  /** 기사 기기에 남은 기록 수(바닥줄 · 업무 판의 `전송 대기 {n}`, 띠와 같은 수, §18 R4-11). */
+  pendingRecordCount?: number;
+  /** 기기 자신이 받은 답의 줄 메모(§5-9). */
+  deviceOutcomes?: ViewContext['deviceOutcomes'];
+  /** 보냄 대기로만 받은 돈이 있는 접수 → 답을 잃었는지(업무 판 돈 줄의 `· 전송 대기`, §17 R3-18). */
+  pendingMoney?: ViewContext['pendingMoney'];
   lines?: DomainLines;
   /** 보는 사람(서버: 세션의 역할 권한). 없으면 모두 허락(메모리 어댑터). */
   viewer?: Viewer;
   /** 직원이 쓴 기기(서버, 매장 설정 `차량 · 직원`). */
   staffDevices?: Readonly<Record<string, readonly StaffDevice[]>>;
+  /** 차량의 연결(서버, work/impl-offline/plan.md O11): 카운터의 차량 표시 · 경고 · 마감. */
+  vehicleLinks?: ViewContext['vehicleLinks'];
+  /** 기기의 번호 빈 곳(O9). */
+  deviceGaps?: ViewContext['deviceGaps'];
+  /** 기기마다 보류된 기록 수(O21). */
+  heldCounts?: ViewContext['heldCounts'];
 }
 
 const viewContext = (state: ShopState, ctx: ReadContext): ViewContext => ({ ...ctx, state });

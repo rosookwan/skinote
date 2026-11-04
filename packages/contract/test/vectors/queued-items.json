@@ -1,0 +1,26 @@
+[
+  {
+    "name": "stock.collect two lines",
+    "text": "{\"type\":\"stock.collect\",\"requestId\":\"01JF3Q8W2Z6N9XK4T7B5R1C0DM\",\"deviceSeq\":12,\"ageMs\":5400123,\"clockAnchor\":\"mono-k3Jd9Qa1Zx\",\"madeAt\":\"2026-12-26T12:55:00.000Z\",\"commandVersion\":1,\"basis\":{\"epoch\":\"01JF0EPOCH00000000000000AA\",\"rev\":48190},\"recordedBy\":{\"staffId\":\"01JE0STAFF00000000000000AA\",\"sessionId\":\"01JF0SESS000000000000000AA\",\"signature\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"},\"dependsOn\":[],\"payload\":{\"taskId\":\"collect:n261226005\",\"lines\":[{\"lineId\":\"n261226005-l1\",\"quantity\":2},{\"quantity\":1,\"lineId\":\"n261226005-l2\"}]}}",
+    "canonical": "{\"ageMs\":5400123,\"basis\":{\"epoch\":\"01JF0EPOCH00000000000000AA\",\"rev\":48190},\"clockAnchor\":\"mono-k3Jd9Qa1Zx\",\"commandVersion\":1,\"dependsOn\":[],\"deviceSeq\":12,\"madeAt\":\"2026-12-26T12:55:00.000Z\",\"payload\":{\"lines\":[{\"lineId\":\"n261226005-l1\",\"quantity\":2},{\"lineId\":\"n261226005-l2\",\"quantity\":1}],\"taskId\":\"collect:n261226005\"},\"recordedBy\":{\"sessionId\":\"01JF0SESS000000000000000AA\",\"staffId\":\"01JE0STAFF00000000000000AA\"},\"requestId\":\"01JF3Q8W2Z6N9XK4T7B5R1C0DM\",\"type\":\"stock.collect\"}",
+    "hash": "en8mTakXZ7m7DPkkVYgoQjReV3RFpChMLGGJQoXK6Vg"
+  },
+  {
+    "name": "field.collect 35000 cash",
+    "text": "{\"payload\":{\"taskId\":\"collect:n261226007\",\"orderId\":\"n261226007\",\"amount\":35000,\"methodKey\":\"cash\"},\"type\":\"field.collect\",\"requestId\":\"01JF3Q8W2Z6N9XK4T7B5R1C0DN\",\"deviceSeq\":13,\"ageMs\":0,\"clockAnchor\":\"wall-Zx81kk20aa\",\"madeAt\":\"2026-12-26T13:50:00.000Z\",\"commandVersion\":1,\"basis\":{\"epoch\":\"01JF0EPOCH00000000000000AA\",\"rev\":48190},\"recordedBy\":{\"staffId\":\"01JE0STAFF00000000000000AA\",\"sessionId\":\"01JF0SESS000000000000000AA\",\"signature\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"},\"expect\":{\"dueAmount\":35000},\"dependsOn\":[\"01JF3Q8W2Z6N9XK4T7B5R1C0DM\"]}",
+    "canonical": "{\"ageMs\":0,\"basis\":{\"epoch\":\"01JF0EPOCH00000000000000AA\",\"rev\":48190},\"clockAnchor\":\"wall-Zx81kk20aa\",\"commandVersion\":1,\"dependsOn\":[\"01JF3Q8W2Z6N9XK4T7B5R1C0DM\"],\"deviceSeq\":13,\"expect\":{\"dueAmount\":35000},\"madeAt\":\"2026-12-26T13:50:00.000Z\",\"payload\":{\"amount\":35000,\"methodKey\":\"cash\",\"orderId\":\"n261226007\",\"taskId\":\"collect:n261226007\"},\"recordedBy\":{\"sessionId\":\"01JF0SESS000000000000000AA\",\"staffId\":\"01JE0STAFF00000000000000AA\"},\"requestId\":\"01JF3Q8W2Z6N9XK4T7B5R1C0DN\",\"type\":\"field.collect\"}",
+    "hash": "XCSjWLNmTqlUprhPEdKcC2CcCnV5EiFJU-YTgPc-S_E"
+  },
+  {
+    "name": "task.visit with retry, -0 age",
+    "text": "{\"type\":\"task.visit\",\"commandVersion\":1,\"requestId\":\"01JF3Q8W2Z6N9XK4T7B5R1C0DP\",\"deviceSeq\":14,\"ageMs\":-0,\"clockAnchor\":\"jump-00000000\",\"madeAt\":\"2026-12-26T14:00:00.000Z\",\"basis\":{\"rev\":48190,\"epoch\":\"01JF0EPOCH00000000000000AA\"},\"recordedBy\":{\"signature\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"sessionId\":\"01JF0SESS000000000000000AA\",\"staffId\":\"01JE0STAFF00000000000000AA\"},\"payload\":{\"taskId\":\"collect:n261226009\",\"outcomeKey\":\"customer_absent\",\"retry\":{\"date\":\"2026-12-26\",\"at\":\"2026-12-26T13:30:00.000Z\"}}}",
+    "canonical": "{\"ageMs\":0,\"basis\":{\"epoch\":\"01JF0EPOCH00000000000000AA\",\"rev\":48190},\"clockAnchor\":\"jump-00000000\",\"commandVersion\":1,\"deviceSeq\":14,\"madeAt\":\"2026-12-26T14:00:00.000Z\",\"payload\":{\"outcomeKey\":\"customer_absent\",\"retry\":{\"at\":\"2026-12-26T13:30:00.000Z\",\"date\":\"2026-12-26\"},\"taskId\":\"collect:n261226009\"},\"recordedBy\":{\"sessionId\":\"01JF0SESS000000000000000AA\",\"staffId\":\"01JE0STAFF00000000000000AA\"},\"requestId\":\"01JF3Q8W2Z6N9XK4T7B5R1C0DP\",\"type\":\"task.visit\"}",
+    "hash": "J2uiezw9YndFada5V6mvc_1s3xW1oPUCIhJ8J_3xi3M"
+  },
+  {
+    "name": "generic korean nested",
+    "text": "{\"이름\":\"김민수 · 0025\",\"b\":[[1,[2,3]],[],{\"z\":null,\"a\":\"줄\\n바꿈\"}],\"a\":35000,\"c\":true}",
+    "canonical": "{\"a\":35000,\"b\":[[1,[2,3]],[],{\"a\":\"줄\\n바꿈\",\"z\":null}],\"c\":true,\"이름\":\"김민수 · 0025\"}",
+    "hash": "hCLifhWZ5LjlJbwB8rZ6C3oL45RFAxs5g8rL81kAAtE"
+  }
+]

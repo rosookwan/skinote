@@ -32,6 +32,10 @@ import { messageOf } from './errors.js';
 import { acquireShopLocks, openShopPort, releaseShopLocks } from './shops.js';
 import { ONLINE_OPS, OpError } from './shop-ops.js';
 import { createHub, PING_MS } from './sse.js';
+import { createDeviceLinks } from './device-links.js';
+import { createApprovals } from './approvals.js';
+import { createOffline, OFFLINE_BODY_LIMITS, policyOf } from './offline.js';
+import { DEVICE_LINK } from '@skinote/contract';
 
 /**
  * @typedef {import('./config.js').ServerConfig} ServerConfig
@@ -46,6 +50,8 @@ import { createHub, PING_MS } from './sse.js';
 export const BODY_LIMITS = Object.freeze({
   enroll: 4096, openEnroll: 4096, openRelease: 4096, challenge: 1024, staff: 4096, login: 1024, logout: 16, query: 32 * 1024, command: 64 * 1024,
   staffPin: 1024, deviceBlock: 1024,
+  // 기사 기기의 연결 끊김 기록(work/impl-offline/plan.md §6-3).
+  ...OFFLINE_BODY_LIMITS,
 });
 
 const JSON_HEADERS = Object.freeze({
@@ -239,6 +245,10 @@ export async function startServer(config, { log = console.log, now = () => new D
   const ports = new Map();
   /** @type {ReturnType<typeof createAuth> | null} */
   let auth = null;
+  /** @type {NodeJS.Timeout | null} */
+  let sweeper = null;
+  /** @type {ReturnType<typeof createDeviceLinks> | null} */
+  let links = null;
   if (config.api === 'on') {
     const secrets = /** @type {import('./secrets.js').Secrets} */ (config.secrets);
     const openEntries = /** @type {DatabaseEntry[]} */ (entries);
@@ -246,19 +256,62 @@ export async function startServer(config, { log = console.log, now = () => new D
     const control = controlEntry?.writable && controlEntry.db ? openControlStore(/** @type {any} */ (controlEntry.db)) : null;
     const liveHub = createHub({ pingMs, check: stream => (auth ? auth.streamAlive(stream) : false), log });
     hub = liveHub;
+    // 기사 기기의 연결 셈(work/impl-offline/plan.md O11): 바뀌면 그 매장의 알림 연결에 머리(linkRev)를 보내 카운터가 다시 읽는다.
+    const liveLinks = createDeviceLinks({
+      nowMs, offlineAfterMs: config.linkOfflineMs ?? DEVICE_LINK.offlineAfterMs, log,
+      persist: (shopId, deviceId, report, now) => {
+        const port = ports.get(shopId);
+        if (!port) return;
+        port.devices.noteLink(deviceId, {
+          queueDepth: report.pendingCount, lastSeq: report.lastSeq, clockOffsetMs: report.clockOffsetMs, appVersion: report.appVersion,
+          offlineCapable: report.offlineCapable, epoch: port.head(now).epoch, ...(report.copy ? { lastRev: report.copy.rev } : {}),
+        }, now);
+      },
+      onChange: shopId => {
+        const port = ports.get(shopId);
+        if (!port) return;
+        try {
+          liveHub.publish(shopId, { ...port.head(nowMs()), linkRev: liveLinks.linkRev(shopId) });
+        } catch (error) {
+          log(`연결 알림 실패 ${shopId}: ${messageOf(error)}`);
+        }
+      },
+    });
+    links = liveLinks;
+    const approvals = createApprovals({ nowMs });
+    const localFirst = config.driverLocalFirst !== 'off';
     for (const entry of openEntries) {
       if (entry.kind !== 'shop' || !entry.shopId || !entry.db || !canWrite(openEntries, entry.shopId)) continue;
       const shopId = entry.shopId;
-      const real = openShopPort({ db: entry.db, shopId }, { secrets, log, onCommit: head => liveHub.publish(shopId, head) });
+      const real = openShopPort({ db: entry.db, shopId }, { secrets, log, onCommit: head => liveHub.publish(shopId, { ...head, linkRev: liveLinks.linkRev(shopId) }) });
       ports.set(shopId, shopPort ? shopPort(real) : real);
     }
     if (control) {
+      // 다시 띄운 뒤: 표의 연결 사실 · 열린 세션으로 연결 셈을 다시 세운다(O11).
+      for (const port of ports.values()) {
+        try {
+          const rows = port.devices.linkNotes();
+          const open = new Set(rows.filter(r => control.openSessionsOfDevice(port.shopId, r.deviceId, nowMs()).length > 0).map(r => r.deviceId));
+          liveLinks.restore(port.shopId, rows, open);
+        } catch (error) {
+          log(`연결 셈 다시 세우기 실패 ${port.shopId}: ${messageOf(error)}`);
+        }
+      }
       auth = createAuth({
         secrets, control, shops: ports, hub: liveHub, nowMs, log, ...(sleep ? { sleep } : {}),
         testOpenEnroll: config.testOpenEnroll === 'on', openEnrollUntil: config.testOpenEnrollUntil ?? null, shopCount: config.shopIds.length,
         businessDateOf: ms => businessDate(new Date(ms), config.timeZone, config.cutoffMinutes),
+        links: liveLinks, approvals, policyOf: (port, kind) => policyOf(port, { localFirst }, kind),
       });
-      const api = createApi({ hub: liveHub, nowMs, log, afterCommand: (ctx, envelope) => auth?.staffChanged(ctx.shopId, envelope) });
+      const liveAuthForOffline = auth;
+      const api = createApi({ hub: liveHub, nowMs, log, afterCommand: (ctx, envelope) => auth?.staffChanged(ctx.shopId, envelope), links: liveLinks, approvals });
+      const offline = createOffline({
+        links: liveLinks, nowMs, log, server: { localFirst }, control,
+        deliverDevice: (body, origin, now) => liveAuthForOffline.deliverDevice(body, origin, now),
+        headOf: (port, now) => ({ ...port.head(now), linkRev: liveLinks.linkRev(port.shopId), restoredUpToRev: port.restoredUpToRev?.() ?? null }),
+      });
+      sweeper = setInterval(() => liveLinks.sweep(), DEVICE_LINK.sweepMs);
+      sweeper.unref();
       const gate = { publicOrigin: config.publicOrigin, sessionOf: auth.sessionOf, csrfOk: auth.csrfOk, sessionLimit: auth.sessionLimit };
       const a = auth.handlers;
       routes.set('/api/v2/session', { GET: openGetRoute(a.session, gate) });
@@ -279,6 +332,13 @@ export async function startServer(config, { log = console.log, now = () => new D
       // 매장 설정 `차량 · 직원`(features-1 §4-3): 비밀번호 재발급 · 기기 막기(명령이 아닌 길).
       routes.set('/api/v2/staff/pin', { POST: postRoute({ limit: BODY_LIMITS.staffPin, session: true, handle: a.staffPin }, gate) });
       routes.set('/api/v2/devices/block', { POST: postRoute({ limit: BODY_LIMITS.deviceBlock, session: true, handle: a.deviceBlock }, gate) });
+      // 기사 기기의 연결 끊김 기록(work/impl-offline/plan.md §4): 사본 · 심장 박동은 쉬는 시간을 늘리지 않고(touch false), 묶음은 사람이 한 기록이라 늘린다.
+      const o = offline.handlers;
+      routes.set('/api/v2/snapshot', { POST: postRoute({ limit: BODY_LIMITS.snapshot, session: true, touch: false, handle: o.snapshot }, gate) });
+      routes.set('/api/v2/commands:batch', { POST: postRoute({ limit: BODY_LIMITS.batch, session: true, handle: o.batch }, gate) });
+      routes.set('/api/v2/heartbeat', { POST: postRoute({ limit: BODY_LIMITS.heartbeat, session: true, touch: false, handle: o.heartbeat }, gate) });
+      routes.set('/api/v2/device/deliver', { POST: postRoute({ limit: BODY_LIMITS.deliver, ipLimit: auth.ipLimit('challenge'), handle: o.deliver }, gate) });
+      routes.set('/api/v2/closing/approve', { POST: postRoute({ limit: BODY_LIMITS.closingApprove, session: true, handle: a.closingApprove }, gate) });
       const liveAuth = auth;
       if (config.adminSocket) {
         try {
@@ -295,6 +355,11 @@ export async function startServer(config, { log = console.log, now = () => new D
                   shopId: request.shopId, port: target, control, secrets, now: nowMs,
                   onRevoke: deviceId => liveAuth.revokeDevice(request.shopId, deviceId, 'cli', nowMs()),
                   onPinReset: accountId => liveAuth.resetAccount(accountId),
+                  pendingOf: deviceId => {
+                    const r = liveLinks.lastReport(request.shopId, deviceId)?.report;
+                    // pendingCount가 이미 결과 확인 중을 담는다(DeviceReport, §18 R4-7).
+                    return r ? r.pendingCount : null;
+                  },
                 }, /** @type {any} */ (request.args));
                 return { ok: true, result };
               } catch (error) {
@@ -321,7 +386,8 @@ export async function startServer(config, { log = console.log, now = () => new D
       log('control 파일에 쓸 수 없어 로그인 · 장부 API를 열지 않았습니다(503)');
       const unavailable = () => { throw new HttpError(503, 'SHOP_UNAVAILABLE'); };
       for (const path of ['/api/v2/session', '/api/v2/head', '/api/v2/stream']) routes.set(path, { GET: unavailable });
-      for (const path of ['/api/v2/device/open-enroll', '/api/v2/device/open-release', '/api/v2/device/challenge', '/api/v2/login/staff', '/api/v2/login', '/api/v2/logout', '/api/v2/query', '/api/v2/command', '/api/v2/staff/pin', '/api/v2/devices/block']) {
+      for (const path of ['/api/v2/device/open-enroll', '/api/v2/device/open-release', '/api/v2/device/challenge', '/api/v2/login/staff', '/api/v2/login', '/api/v2/logout', '/api/v2/query', '/api/v2/command', '/api/v2/staff/pin', '/api/v2/devices/block',
+        '/api/v2/snapshot', '/api/v2/commands:batch', '/api/v2/heartbeat', '/api/v2/device/deliver', '/api/v2/closing/approve']) {
         routes.set(path, { POST: unavailable });
       }
       routes.set('/api/v2/device/enroll', { GET: unavailable, POST: unavailable });
@@ -346,6 +412,7 @@ export async function startServer(config, { log = console.log, now = () => new D
   const close = () => {
     if (closing) return closing;
     shuttingDown = true;
+    if (sweeper) clearInterval(sweeper);
     const stopSocket = adminSocket ? adminSocket.close() : Promise.resolve();
     hub?.closeAll();
     closing = stopSocket.then(() => new Promise(resolve => {
@@ -370,6 +437,8 @@ export async function startServer(config, { log = console.log, now = () => new D
     get auth() { return auth; },
     /** 알림 연결(시험). */
     get hub() { return hub; },
+    /** 기사 기기의 연결 셈(시험). */
+    get links() { return links; },
     get adminSocket() { return adminSocket?.path ?? null; },
     close,
   };

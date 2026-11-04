@@ -6,7 +6,7 @@
 import { readFileSync } from 'node:fs';
 import { envelopeFor, parseRuleKey, type ConfirmCommand, type RuleCard as RuleCardView, type RuleChange, type SettingsOp, type ShopRulesView } from '@skinote/contract';
 import { fitList } from '@skinote/layout';
-import { DEVICE_PROFILES, openOrRestoreDraft, ruleListCells } from '@skinote/ui';
+import { DEVICE_PROFILES, openOrRestoreDraft, ruleCardHeight, ruleListCells } from '@skinote/ui';
 import { describe, expect, it } from 'vitest';
 import { dropFrom, fillOp, inputAccepts, inputRun, optionPress, padValue, stepValue, withChange, withOp, type StepRun } from '../src/app/settings-draft.ts';
 import { businessDateOf, type FxState, heldRule, kstAt, liftReturnable, ruleKeys, type SampleShop, shopCutoff } from '@skinote/domain';
@@ -334,6 +334,22 @@ describe('V8 화면 도우미 — 카드 쪽 · 저장 창 줄 수 · 탭', () =
     const { client } = at(0, true, 'numbered');
     const view = await client.query('shopRules', { changes: [{ key: K.prepay, value: 'fixed_amount' }] });
     expect(rulesLayout(pos, bodyOf(1024, 600), view.cards).pages).toEqual([[[0, 1], [2, 3]], [[4]]]);
+  });
+
+  it('긴급 띠가 있는 최소 POS에서도 보증금·분실금 카드와 모든 조작을 보존한다', async () => {
+    const { client } = at(0, true, 'numbered');
+    const view = await client.query('shopRules', { changes: [{ key: K.unreturned, value: 'charge_loss' }] });
+    const box = { ...bodyOf(1024, 529), height: bodyOf(1024, 529).height - pos.minTargetPx };
+    const room = box.height - pos.space.m;
+    expect(Math.max(...view.cards.map(card => ruleCardHeight(card, pos)))).toBeGreaterThan(room);
+    const compact = { ...pos, space: { ...pos.space, m: pos.space.xs, s: pos.space.xs } };
+    expect(compact.minTargetPx).toBe(pos.minTargetPx);
+    const layout = rulesLayout(pos, box, view.cards, true);
+    expect(layout.pages.flat(2).sort()).toEqual(view.cards.map((_, i) => i));
+    for (const column of layout.pages.flat()) {
+      const height = column.reduce((sum, i) => sum + ruleCardHeight(view.cards[i]!, compact), 0) + Math.max(0, column.length - 1) * pos.space.s;
+      expect(height).toBeLessThanOrEqual(room);
+    }
   });
 
   it('저장 창 한 쪽 줄 수(창 552 · 505에서 7 · 6), 금액 숫자판은 0원 · 범위 밖을 받지 않는다', () => {

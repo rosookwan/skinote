@@ -8,3 +8,13 @@ declare module 'node:fs' {
   export function readFileSync(path: string | URL, encoding: 'utf8'): string;
   export function readdirSync(path: string | URL, options: { withFileTypes: true }): Dirent[];
 }
+
+// 기사 기기의 서명 시험(sign.test.ts): 서버와 같은 검사(node:crypto verify, IEEE P1363)로 기기가 만든 서명을 본다.
+declare module 'node:crypto' {
+  export function verify(
+    algorithm: string,
+    data: Uint8Array,
+    key: { key: JsonWebKey; format: 'jwk'; dsaEncoding?: 'ieee-p1363' | 'der' },
+    signature: Uint8Array,
+  ): boolean;
+}

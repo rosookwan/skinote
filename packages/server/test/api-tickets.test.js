@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { newRequestId } from '@skinote/contract';
+import { kstAt } from '@skinote/domain';
 import { openDatabase } from '@skinote/schema';
 import { commandGuard } from '../src/permissions.js';
 import { startServer } from '../src/server.js';
@@ -19,6 +20,13 @@ after(() => temp.cleanup());
 /** @param {Record<string, any>} basis @param {string} type @param {unknown} payload @param {Record<string, unknown>} [extra] */
 const envelope = (basis, type, payload, extra = {}) => ({ type, commandVersion: 1, requestId: newRequestId(), basis: { epoch: basis.epoch, rev: basis.rev }, payload, ...extra });
 
+/**
+ * 서버의 시계: 오늘(매장 시간대) 15:00에 멈춘다. 벽시계로 돌면 21:50 ~ 22:00에는 `야간`(22:00) 반납이 `선택 불가 · 10분 이내`, 그 뒤에는 지난 시각이라
+ * 새 접수가 확정되지 않아 이 시험이 밤에만 실패했다(2026-09-28 검토 2회 중 발견, plan §18).
+ */
+const TODAY = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+const NOW = kstAt(TODAY, 0, 15, 0);
+
 describe('lift tickets, phone and print on the real shop file', () => {
   /** @type {Awaited<ReturnType<typeof startServer>>} */
   let app;
@@ -29,8 +37,8 @@ describe('lift tickets, phone and print on the real shop file', () => {
   before(async () => {
     dataDir = join(temp.dir, 'tickets');
     const shop = await provisionedShop(dataDir);
-    const codes = [await deviceCode(shop.env), await deviceCode(shop.env, ['--kind', 'driver_phone', '--label', '1호차 휴대폰', '--vehicle', 'v1'])];
-    app = await startServer(testConfig(dataDir, shop.env), { log: () => {} });
+    const codes = [await deviceCode(shop.env, undefined, () => NOW), await deviceCode(shop.env, ['--kind', 'driver_phone', '--label', '1호차 휴대폰', '--vehicle', 'v1'], () => NOW)];
+    app = await startServer(testConfig(dataDir, shop.env), { log: () => {}, now: () => new Date(NOW) });
     counter = device(app.port);
     driver = device(app.port);
     assert.equal((await counter.enroll(/** @type {string} */ (codes[0]))).status, 200);

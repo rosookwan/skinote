@@ -242,7 +242,7 @@ describe('마감', () => {
 });
 
 describe('새 접수 초안', () => {
-  it('품목은 있는데 대표자 이름이 없으면 까닭(`대표자 이름 필요`)과 대표자 칸 표시', async () => {
+  it('대표자 이름이 있어야 접수를 이어간다(그 밖의 값은 터치 입력)', async () => {
     const { client } = at(45);
     const view = await client.query('orderDraft', { draft: walkIn('', '', [{ productKey: 'ski', quantity: 1 }]) });
     expect(view.ready).toEqual({ items: false, schedule: false, itemsReason: '대표자 이름 필요', missing: 'name' });

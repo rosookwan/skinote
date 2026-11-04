@@ -6,6 +6,7 @@
 // 열린 등록(시험 매장만, 2026-09-26 시험 중 요청): 서버 설정 SKINOTE_TEST_OPEN_ENROLL이 켜져 있고 서버의 매장이 시험 매장 하나면
 // 등록 방법 묻기(GET api/v2/device/enroll)가 'open'과 차량 목록을 답하고, 새 기기는 번호 대신 종류(카운터 · 기사 휴대폰 · 기사 태블릿)와
 // 기사 기기의 차량을 골라 스스로 등록한다(같은 기기 열쇠). 그 뒤 직원 타일 · 비밀번호 · 잠금은 번호 등록과 같다.
+import type { OfflinePolicy } from './offline.ts';
 
 /** 매장 기기 종류(devices.kind_key, sys_device_kinds의 매장 기기). */
 export const DEVICE_KINDS = ['pos', 'driver_tablet', 'driver_phone'] as const;
@@ -73,6 +74,17 @@ export const API_V2 = /* @__PURE__ */ Object.freeze({
   staffPin: 'api/v2/staff/pin',
   /** 기기 막기(POST, device.manage): 본문 { deviceId } → 204. 그 기기의 세션 · 알림 연결이 끝난다. */
   deviceBlock: 'api/v2/devices/block',
+  // 기사 기기의 연결 끊김 기록(work/impl-offline/plan.md §4, ADR-22).
+  /** 차량 범위 사본(POST, 기사 기기 세션): SnapshotRequest → SnapshotResponse. */
+  snapshot: 'api/v2/snapshot',
+  /** 보냄 대기 묶음(POST, 기사 기기 세션 + CSRF): BatchRequest → BatchResponse. */
+  commandsBatch: 'api/v2/commands:batch',
+  /** 심장 박동(POST, 기사 기기 세션 + CSRF, 쉬는 시간을 늘리지 않음): HeartbeatRequest → HeartbeatResponse. */
+  heartbeat: 'api/v2/heartbeat',
+  /** 세션이 끝난 기기의 전달(POST, 세션 없음 · 한 번 값 서명): DeliverRequest → DeliverResponse. */
+  deliver: 'api/v2/device/deliver',
+  /** 마감의 관리자 승인(POST, closing.reopen 세션 + CSRF, 자기 비밀번호): ClosingApproveRequest → ClosingApproveResponse. */
+  closingApprove: 'api/v2/closing/approve',
 });
 
 /** 기기 공개 열쇠(WebCrypto exportKey('jwk')의 P-256 공개 열쇠). 비밀 열쇠(d)는 기기 밖으로 나오지 않는다. */
@@ -201,6 +213,19 @@ export interface SessionInfo {
   /** 쓰지 않고 이만큼 지나면 로그인이 끝난다(초). */
   idleTimeoutS: number;
   serverTime: string;
+  /**
+   * 세션의 공개 id와 끝(보냄 대기 봉투의 recordedBy.sessionId, 기억한 세션의 유효 셈, work/impl-offline/plan.md O15). 옛 서버는 없다.
+   */
+  session?: { id: string; expiresAt: string; idleTimeoutS: number };
+  /** 세션이 맡은 차량(기사 세션). */
+  vehicleId?: string;
+  /** 기사 기기의 운영 값(O2 · offline_policy). */
+  policy?: OfflinePolicy;
+  /**
+   * 같은 차량의 다른 기기가 보낼 기록을 가졌거나 수를 모른 채 끊겼다(로그인 때 한 번, sync 6). label은 그 기기의 등록 이름, staffName은 그 기기에
+   * 마지막으로 로그인한 직원(서버 메모리: 다시 띄운 뒤에는 없음, work/impl-offline/plan.md §17 R3-28). 옛 서버는 둘 다 없다.
+   */
+  vanPendingElsewhere?: { deviceKind: 'driver_phone' | 'driver_tablet'; pending: number | null; label?: string; staffName?: string };
 }
 
 /** 지금 머리(GET api/v2/head): 영업일과 서버 시각. */
@@ -210,6 +235,8 @@ export interface HeadInfo {
   configRev: number;
   serverTime: string;
   currentBusinessDate: string;
+  /** 차량 연결이 바뀐 차례(카운터의 차량 표시, O11). 옛 서버는 없다. */
+  linkRev?: number;
 }
 
 /** 서버가 돌려주는 실패 코드(화면 글이 아니다: 화면은 코드로 가르고 문구 표의 말을 쓴다). */
@@ -242,6 +269,11 @@ export type ApiErrorCode =
   | 'BAD_PIN' // 비밀번호 불일치(401)
   | 'PIN_MISMATCH' // 비밀번호 재발급: 요청한 사람의 비밀번호 불일치(403)
   | 'LOCKED' // 이 기기에서 이 사람의 로그인 잠김(423, lockedUntil)
+  | 'OFFLINE_NOT_ALLOWED' // 이 기기 종류가 끊긴 채 넣을 수 없는 명령(보냄 대기 봉투, 보류)
+  | 'SEQ_REUSED' // 같은 기기 번호에 다른 요청번호(항목 결과: 기기가 번호를 다시 준다)
+  | 'APPROVAL_INVALID' // 마감 승인이 없거나 지났거나 다른 요청에 쓰였다
+  | 'DEVICE_PENDING' // 보낼 기록이 남은 기기(명령줄 revoke-device, --force로 넘김)
+  | 'BUSY' // 같은 일이 이미 돌고 있다(429 로그인 확인 · 409 한 기기의 묶음)
   | 'SHOP_UNAVAILABLE' // 매장 파일을 쓸 수 없다(503)
   | 'TOO_MANY_STREAMS' // 알림 연결이 많다(429)
   | 'INTERNAL'; // 처리 오류(500)

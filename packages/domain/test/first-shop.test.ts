@@ -83,10 +83,11 @@ describe('차량 예비권(수량)보다 많이 건넨 끊긴 기사 기기의 �
     expect(review.map((x) => x.message)).toEqual(['1호 차량 야간권 재고 기록 부족 1매 · 차량 재고 확인']);
   });
 
-  it('그 차량에 그 권종의 예비권 행이 없으면 보냄 대기라도 적을 곳이 없어 거절(차량 재고 기록 없음)', () => {
+  it('그 차량에 그 권종의 예비권 행이 없으면 보냄 대기라도 적을 곳이 없어 아무것도 적지 않는다(superseded, 보냄 대기는 거절하지 않음, sync 8-12)', () => {
     const state = first();
     state.vanSpares = [];
-    expect(addTicket(state, 1, { deviceSeq: 4 }).outcome).toBe('rejected');
+    const out = addTicket(state, 1, { deviceSeq: 4 });
+    expect([out.outcome, out.error?.message]).toEqual(['superseded', '차량 권 재고 없음']);
   });
 });
 

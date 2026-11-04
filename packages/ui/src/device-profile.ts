@@ -59,6 +59,8 @@ export interface DeviceProfile {
   /** 등급의 칸 수(ui 3-7): 메뉴 · 탭 · 빠른 결제 수단 · 한 쪽 결제 칸 · 옆 동작. */
   capacity: { menu: number; tabs: number; quickMethods: number; paymentSectionsPerPage: number; sideActions: number };
   accent: AccentKey;
+  /** 터치 카운터의 목록·상세 분기와 줄 크기(사용자 시안). */
+  counter: { splitMinPx: number; compactBelowPx: number; titlePx: number; stagePx: number; rowPx: number; itemPx: number; railPx: number; moneyPx: number };
   /** 접수증(6-2)의 고정 높이 · 오른쪽 판. 접수증이 없는 등급은 null. */
   slip: { titlePx: number; fieldsPx: number; promisePx: number; moneyPx: number; sidePanelPx: number; gapPx: number } | null;
   confirm: ConfirmWindowSpec;
@@ -86,6 +88,8 @@ export interface DeviceProfile {
   radius: { s: number; m: number; paper: number };
   line: { hair: number; strong: number; stamp: number };
 }
+
+const COUNTER = { splitMinPx: 1440, compactBelowPx: 700, titlePx: 36, stagePx: 56, rowPx: 72, itemPx: 88, railPx: 320, moneyPx: 340 };
 
 const SPACE = { xs: 4, s: 8, m: 12, l: 16 } as const;
 const PAGES = { returnPieceRows: 3, partialPayRows: 3, closingCarryRows: 5, ruleCardMinTargets: 9, settingsListColumns: 3, choiceGridColumns: 4 } as const;
@@ -117,7 +121,7 @@ const PANEL_MAX_PX = 440;
 
 const pos: DeviceProfile = {
   key: 'pos',
-  checkSizes: [{ width: 1024, height: 600 }, { width: 1024, height: 569 }, { width: 1024, height: 529 }, { width: 1024, height: 768 }, { width: 1366, height: 768 }],
+  checkSizes: [{ width: 1024, height: 600 }, { width: 1024, height: 569 }, { width: 1024, height: 529 }, { width: 1024, height: 768 }, { width: 1366, height: 768 }, { width: 1920, height: 1080 }],
   minFontPx: 16, baseFontPx: 16, bodyFontPx: 17, bodyLineHeight: 1.45, titleFontPx: 24, bigFontPx: 20,
   minTargetPx: 52, repeatTargetPx: 64, primaryButtonPx: 56, primaryFullWidth: false,
   headerPx: 60, titleTabsPx: 60, footerPx: 72, connectionStripPx: 32, tableHeadPx: 40,
@@ -126,6 +130,7 @@ const pos: DeviceProfile = {
   plain: PLAIN,
   capacity: { menu: 3, tabs: 6, quickMethods: 4, paymentSectionsPerPage: 3, sideActions: 3 },
   accent: 'orange',
+  counter: COUNTER,
   slip: POS_SLIP,
   confirm: POS_CONFIRM,
   keypad: { ...KEYPAD, allowSide: false },
@@ -143,7 +148,7 @@ const posNarrow: DeviceProfile = {
 
 const driverTablet: DeviceProfile = {
   key: 'driver_tablet',
-  checkSizes: [{ width: 1024, height: 520 }, { width: 1024, height: 600 }, { width: 1280, height: 720 }],
+  checkSizes: [{ width: 1024, height: 520 }, { width: 1024, height: 600 }, { width: 1280, height: 720 }, { width: 1024, height: 768 }],
   minFontPx: 16, baseFontPx: 16, bodyFontPx: 18, bodyLineHeight: 1.45, titleFontPx: 22, bigFontPx: 22,
   minTargetPx: 56, repeatTargetPx: 72, primaryButtonPx: 72, primaryFullWidth: false,
   headerPx: 60, titleTabsPx: 56, footerPx: 80, connectionStripPx: 32, tableHeadPx: 0,
@@ -152,6 +157,7 @@ const driverTablet: DeviceProfile = {
   plain: PLAIN,
   capacity: { menu: 2, tabs: 4, quickMethods: 3, paymentSectionsPerPage: 1, sideActions: 2 },
   accent: 'purple',
+  counter: COUNTER,
   slip: null,
   confirm: DRIVER_CONFIRM,
   keypad: { ...KEYPAD, allowSide: true },
@@ -162,7 +168,7 @@ const driverTablet: DeviceProfile = {
 const driverPhone: DeviceProfile = {
   ...driverTablet,
   key: 'driver_phone',
-  checkSizes: [{ width: 360, height: 640 }, { width: 390, height: 740 }, { width: 412, height: 780 }],
+  checkSizes: [{ width: 360, height: 640 }, { width: 390, height: 740 }, { width: 412, height: 780 }, { width: 390, height: 844 }],
   titleFontPx: 20, bigFontPx: 20,
   primaryButtonPx: 64, primaryFullWidth: true,
   headerPx: 56, titleTabsPx: 56, footerPx: 72,
@@ -235,6 +241,12 @@ const px = (n: number) => n + 'px';
 export function profileCssVars(profile: DeviceProfile): Record<string, string> {
   const slip = profile.slip ?? POS_SLIP;
   return {
+    '--sn-counter-title': px(profile.counter.titlePx),
+    '--sn-counter-stage': px(profile.counter.stagePx),
+    '--sn-counter-row': px(profile.counter.rowPx),
+    '--sn-counter-item': px(profile.counter.itemPx),
+    '--sn-counter-rail': px(profile.counter.railPx),
+    '--sn-counter-money': px(profile.counter.moneyPx),
     '--sn-font-min': px(profile.minFontPx),
     '--sn-font-base': px(profile.baseFontPx),
     '--sn-font-body': px(profile.bodyFontPx),

@@ -45,7 +45,7 @@
 
 import { createPublicKey, verify as verifySignature } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
-import { CSRF_HEADER, isDriverDevice, loginMessage, parseAuthBody } from '@skinote/contract';
+import { CSRF_HEADER, deliverMessage, isDriverDevice, loginMessage, parseAuthBody, parseOfflineBody } from '@skinote/contract';
 import { sessionExpiry } from '@skinote/domain';
 import { HttpError, sendJson } from './http.js';
 import { generatePin, hashPin, verifyPin } from './pin.js';
@@ -141,12 +141,17 @@ const openDeviceLabel = shortNo => OPEN_DEVICE_LABEL.replace('{n}', String(short
  *   openEnrollUntil?: string | null,
  *   businessDateOf?: (ms: number) => string,
  *   shopCount?: number,
+ *   links?: import('./device-links.js').DeviceLinks,
+ *   approvals?: import('./approvals.js').Approvals,
+ *   policyOf?: (port: ShopPort, kind: string) => import('@skinote/contract').OfflinePolicy,
  * }} deps testOpenEnroll = 설정 SKINOTE_TEST_OPEN_ENROLL이 on, openEnrollUntil = 그 마지막 영업일(SKINOTE_TEST_OPEN_ENROLL_UNTIL, 없으면
- *   켜지지 않는다), businessDateOf = 시각의 영업일(매장 시간대 · 하루 기준 시각), shopCount = 설정한 매장 수(SKINOTE_SHOP_IDS)
+ *   켜지지 않는다), businessDateOf = 시각의 영업일(매장 시간대 · 하루 기준 시각), shopCount = 설정한 매장 수(SKINOTE_SHOP_IDS). links · approvals ·
+ *   policyOf = 기사 기기의 연결 끊김 기록(work/impl-offline/plan.md O11 · O12 · O2): 기사 기기의 요청마다 연결 한 번, 로그아웃 · 끊기 알림, 마감 승인,
+ *   세션 답의 운영 값.
  */
 export function createAuth({
   secrets, control, shops, hub, nowMs, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), log = () => {}, testOpenEnroll = false,
-  openEnrollUntil = null, businessDateOf = ms => new Date(ms).toISOString().slice(0, 10), shopCount = shops.size,
+  openEnrollUntil = null, businessDateOf = ms => new Date(ms).toISOString().slice(0, 10), shopCount = shops.size, links, approvals, policyOf,
 }) {
   /** 한 번 값 → 기기 · 끝. */
   const nonces = new CappedMap(AUTH_LIMITS.mapSize);
@@ -339,6 +344,7 @@ export function createAuth({
     const sessions = control.revokeDeviceSessions(shopId, deviceId, 'device_revoked', now);
     const streams = hub.closeDevice(shopId, deviceId);
     deviceCache.delete(shopId);
+    links?.revoked(shopId, deviceId);
     return { revoked, sessions, streams };
   }
 
@@ -357,6 +363,7 @@ export function createAuth({
     if (session.expiresAt <= now || session.lastUsedAt + session.idleTimeoutS * 1000 <= now) {
       control.revokeSession(session.id, 'expired', now);
       hub.closeSession(session.id);
+      links?.sessionEnded(session.tenantId, session.deviceId);
       return fail(401, 'SESSION_EXPIRED', true);
     }
     const port = shops.get(session.tenantId);
@@ -379,6 +386,10 @@ export function createAuth({
     // 기사 기기의 세션은 역할과 관계없이 맡은 차량(임시 차량을 맡은 카운터 · 관리자, features-1 E13b).
     const driverVan = staff.roleKey === 'driver' || isDriverDevice(device.kind) ? staff.vehicleId : undefined;
     const vehicleId = device.openEnrolled ? driverVan ?? device.vehicleId : device.vehicleId ?? driverVan;
+    // 기사 기기의 요청 · 알림 연결의 박동은 연결 한 번(카운터의 차량 표시, work/impl-offline/plan.md O11). 세션의 차량으로 센다.
+    if (links && isDriverDevice(device.kind)) {
+      links.touch(port.shopId, { id: device.id, kind: device.kind, label: device.label, staffName: staff.name, ...(vehicleId ? { vehicleId } : {}) }, now);
+    }
     return {
       ok: true,
       ctx: {
@@ -407,9 +418,11 @@ export function createAuth({
   /** @param {SessionContext} ctx */
   const sessionLimit = ctx => limiters.api.take(ctx.session.id, nowMs());
 
-  /** @param {SessionContext} ctx @param {number} now @returns {SessionInfo} */
-  function sessionInfo(ctx, now) {
+  /** @param {SessionContext} ctx @param {number} now @param {{ login?: boolean }} [options] @returns {SessionInfo} */
+  function sessionInfo(ctx, now, { login = false } = {}) {
     const { device, staff } = ctx;
+    const driver = isDriverDevice(device.kind);
+    const elsewhere = login && driver && links ? links.vanPendingElsewhere(ctx.shopId, ctx.who.vehicleId, device.id) : undefined;
     return {
       shop: { name: ctx.port.shopName(now) },
       staff: { id: staff.id, name: staff.name, roleKey: staff.roleKey },
@@ -417,6 +430,11 @@ export function createAuth({
       csrf: ctx.csrf,
       idleTimeoutS: ctx.session.idleTimeoutS,
       serverTime: iso(now),
+      // 보냄 대기 봉투의 recordedBy.sessionId · 기억한 세션의 유효 셈(work/impl-offline/plan.md O15).
+      session: { id: ctx.session.id, expiresAt: iso(ctx.session.expiresAt), idleTimeoutS: ctx.session.idleTimeoutS },
+      ...(ctx.who.vehicleId ? { vehicleId: ctx.who.vehicleId } : {}),
+      ...(driver && policyOf ? { policy: policyOf(ctx.port, device.kind) } : {}),
+      ...(elsewhere ? { vanPendingElsewhere: elsewhere } : {}),
     };
   }
 
@@ -506,6 +524,78 @@ export function createAuth({
     let ok = false;
     try {
       ok = verifySignature('sha256', Buffer.from(loginMessage(origin, deviceId, nonce), 'utf8'),
+        { key: JSON.parse(found.device.publicKey), format: 'jwk', dsaEncoding: 'ieee-p1363' }, Buffer.from(signature, 'base64url'));
+    } catch {
+      ok = false;
+    }
+    if (!ok) throw new HttpError(401, 'BAD_SIGNATURE');
+    return found;
+  }
+
+  /**
+   * 요청한 사람의 비밀번호를 다시 본다(비밀번호 재발급 · 마감 승인): 틀리면 로그인 실패처럼 세어 잠그고(423 LOCKED) 적어도 300ms 뒤 403 PIN_MISMATCH.
+   * @param {IncomingMessage} req @param {SessionContext} session @param {string} ownPin @param {string} action 사용 내역의 이름
+   */
+  async function checkOwnPin(req, session, ownPin, action) {
+    const { port, staff: me, device } = session;
+    const now = nowMs();
+    if (!limiters.pinReset.take(session.session.id, now)) throw new HttpError(429, 'RATE_LIMITED');
+    const account = control.account(session.session.accountId);
+    if (!account || !account.pinHash) throw new HttpError(403, 'PIN_MISMATCH');
+    const settings = port.authSettings(now);
+    const open = device.openEnrolled;
+    const lockId = open ? 'open:' + port.shopId : device.id;
+    const pool = open ? openIds(port, now, now - HOUR) : null;
+    const pair = pairState(account.id, lockId, now, settings.lockout, pool);
+    if (pair.until > now) throw new HttpError(423, 'LOCKED', { lockedUntil: iso(pair.until) });
+    const slot = (open ? 'open|' : '') + account.id;
+    if (checkingAccounts.has(slot)) throw new HttpError(429, 'BUSY');
+    checkingAccounts.add(slot);
+    const started = performance.now();
+    let ok = false;
+    try {
+      ok = await verifyPin(secrets.pinPepper, ownPin, account.pinHash);
+      if (!ok) {
+        const at = nowMs();
+        control.recordAttempt({ loginId: account.loginId ?? 'staff', accountId: account.id, tenantId: port.shopId, deviceId: device.id, method: 'pin', succeeded: false, reason: 'bad_password', ipHash: ipHash(req), now: at });
+        control.loginFailed(account.id, at);
+        const waited = performance.now() - started;
+        if (waited < AUTH_LIMITS.failureFloorMs) await sleep(AUTH_LIMITS.failureFloorMs - waited);
+      }
+    } finally {
+      checkingAccounts.delete(slot);
+    }
+    if (ok) return;
+    const at = nowMs();
+    control.appendAudit({
+      tenantId: port.shopId, accountId: account.id, actorLabel: 'staff:' + me.id, deviceId: device.id, sessionId: session.session.id, ipHash: ipHash(req),
+      category: 'account', action, targetType: 'staff_member', targetId: me.id, outcome: 'denied', now: at,
+    });
+    const n = control.failuresSince({ accountId: account.id, ...deviceFilter(lockId, pool), method: 'pin' }, Math.max(at - AUTH_LIMITS.pairWindowMs, pair.since));
+    if (n >= settings.lockout.maxFailures) {
+      pair.until = at + settings.lockout.lockMinutes * MINUTE;
+      pair.since = pair.until;
+      throw new HttpError(423, 'LOCKED', { lockedUntil: iso(pair.until) });
+    }
+    throw new HttpError(403, 'PIN_MISMATCH');
+  }
+
+  /**
+   * 세션 없는 전달의 기기(work/impl-offline/plan.md O6 · §4-5): 한 번 값(쓰면 버림)과 `skinote-deliver-v1` 서명. 끊은 기기도 된다(보류로 받는다). 없는 기기
+   * 404 DEVICE_UNKNOWN, 틀린 서명 · 한 번 값 401 BAD_SIGNATURE.
+   * @param {{ deviceId: string, nonce: string, signature: string }} body @param {string} origin @param {number} now
+   */
+  function deliverDevice({ deviceId, nonce, signature }, origin, now) {
+    const issued = nonces.get(nonce);
+    nonces.delete(nonce);
+    if (!issued || issued.deviceId !== deviceId || issued.expiresAt <= now) throw new HttpError(401, 'BAD_SIGNATURE');
+    // 끊은 기기도 찾는다(캐시를 새로 읽어 끊긴 상태를 본다).
+    for (const port of shops.values()) deviceCache.delete(port.shopId);
+    const found = findDevice(deviceId, now);
+    if (!found) throw new HttpError(404, 'DEVICE_UNKNOWN');
+    let ok = false;
+    try {
+      ok = verifySignature('sha256', Buffer.from(deliverMessage(origin, deviceId, nonce), 'utf8'),
         { key: JSON.parse(found.device.publicKey), format: 'jwk', dsaEncoding: 'ieee-p1363' }, Buffer.from(signature, 'base64url'));
     } catch {
       ok = false;
@@ -763,7 +853,7 @@ export function createAuth({
       port.devices.signIn({ deviceId: device.id, staffMemberId: staff.id, method: 'pin', sessionId: session.id, now: at });
       const check = checkSession(session, at);
       if (!check.ok) throw new HttpError(check.status, check.code);
-      sendJson(req, res, 200, sessionInfo(check.ctx, at), { 'set-cookie': sessionCookie(token, (expiresAt - at) / 1000) });
+      sendJson(req, res, 200, sessionInfo(check.ctx, at, { login: true }), { 'set-cookie': sessionCookie(token, (expiresAt - at) / 1000) });
     },
 
     /** 로그아웃. */
@@ -771,7 +861,24 @@ export function createAuth({
       const session = /** @type {SessionContext} */ (ctx).session;
       control.revokeSession(session.id, 'logout', nowMs());
       hub.closeSession(session.id);
+      links?.sessionEnded(session.tenantId, session.deviceId);
       sendJson(req, res, 204, null, { 'set-cookie': clearedSessionCookie() });
+    },
+
+    /**
+     * 마감의 관리자 승인(work/impl-offline/plan.md O12 · §4-7): closing.reopen 권한의 세션 · 카운터 기기만, 자기 비밀번호를 비밀번호 재발급과 같은 확인 ·
+     * 잠금 · 300ms 바닥으로 본 뒤 5분 쓰는 승인 id(세션 · 날짜에 묶임). 비밀번호 · 승인 id는 기록 줄에 적지 않는다.
+     */
+    async closingApprove(req, res, { body, ctx }) {
+      const session = /** @type {SessionContext} */ (ctx);
+      const parsed = parseOfflineBody('closingApprove', body);
+      if (!parsed.ok) throw new HttpError(400, 'BAD_INPUT', { problems: parsed.problems.slice(0, 5) });
+      const { port, staff: me, device } = session;
+      if (!approvals || isDriverDevice(device.kind) || !port.permissions(me.roleKey).has('closing.reopen')) throw new HttpError(403, 'FORBIDDEN');
+      await checkOwnPin(req, session, parsed.body.ownPin, 'closing.approve');
+      const issued = approvals.issue({ sessionId: session.session.id, staffKey: 'staff:' + me.id, date: parsed.body.date });
+      log(`마감 승인 ${port.shopId} ${parsed.body.date}`);
+      sendJson(req, res, 200, issued);
     },
 
     /**
@@ -912,6 +1019,7 @@ export function createAuth({
     streamAlive,
     revokeDevice,
     resetAccount,
+    deliverDevice,
     openEnrollStatus,
     cutAtStartup,
     /** 로그인 전 길의 주소마다 제한. @param {'enroll' | 'openEnroll' | 'challenge' | 'login'} kind */

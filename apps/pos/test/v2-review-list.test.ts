@@ -94,7 +94,7 @@ describe('확인 필요 목록(체험판)', () => {
     expect((await client.query('reviewList', {})).items.some((x) => x.kindKey === 'overpaid')).toBe(false);
   });
 
-  it('마감의 막는 단계: 기사 기기에 보낼 기록이 있으면 마감 차례에 `1호 차량 기록 1건 전송 대기 · 마감 전 전송 필요`', async () => {
+  it('마감의 막는 단계: 기사 기기가 끊긴 채 열린 일이 남으면 마감 차례에 `1호 차량 연결 끊김 · 15:40부터 · 마감 전 전송 필요`(서버처럼 수 모름)', async () => {
     const { client, state } = demo();
     const first = await client.query('closingSheet', {});
     const amount = first.next!.expectedAmount!;
@@ -104,8 +104,9 @@ describe('확인 필요 목록(체험판)', () => {
     client.setDevice('counter');
     const sheet = await client.query('closingSheet', { counts: [{ drawerId: 'counter', countedAmount: amount, expectedAmount: amount }] });
     expect(sheet.next?.kind).toBe('close');
-    expect(sheet.step?.message).toBe('1호 차량 기록 1건 전송 대기 · 마감 전 전송 필요');
-    expect(sheet.step?.choices.map((c) => c.label)).toEqual(['재확인', '닫기']);
+    expect(sheet.step?.message).toBe('1호 차량 연결 끊김 · 15:40부터 · 마감 전 전송 필요');
+    // 체험판의 보는 사람은 넘길 권한이 있다(관리자 승인, O12).
+    expect(sheet.step?.choices.map((c) => c.label)).toEqual(['재확인', '관리자 승인', '닫기']);
     client.setOffline(false);
     expect((await client.query('closingSheet', { counts: [{ drawerId: 'counter', countedAmount: amount, expectedAmount: amount }] })).step).toBeUndefined();
   });

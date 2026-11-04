@@ -5,16 +5,29 @@
 //     앱이 직원을 그 기기 안의 가짜 장부로 보내 진짜 대여 · 돈을 적게 되지 않게. GET api/v2/session이 200이면 로그인한 세션, 401이면
 //     등록 · 로그인 화면, 그 밖(404 = API 끔 · 옛 판, 5xx, JSON 아님, 시간 초과, 연결 없음)은 `연결 끊김` 화면이고 저절로 다시 묻는다.
 //     우리 호스트에서는 절대 체험판으로 가지 않는다.
+//   - 기사 기기가 기억한 세션(work/impl-offline/plan.md O15): 서버 표시가 있고 기기 저장소의 기억한 세션이 유효하면(localStart가 open · locked)
+//     서버에 묻지 않고 server-local로 곧바로 연다(산에서 새로 고침 · 앱을 다시 켬). 서버 묻기는 앱이 뒤에서 한다.
 // 순수 모듈이다(문서 · fetch는 부르는 쪽이 넘긴다): 시험이 표를 그대로 본다.
 import type { DeviceClassKey, SessionInfo } from '@skinote/contract';
 
 export const RUNTIME_META = 'skinote-runtime';
 export const RUNTIME_SERVER = 'server';
 
+/** 기억한 세션으로 여는 시작(local/boot.ts의 답): 목록으로(open) 또는 기억한 기사의 비밀번호 판(locked). */
+export interface LocalStart {
+  decision: 'open' | 'locked';
+  session: SessionInfo;
+  /** 틀려서 잠긴 동안이면 풀리는 때(기기 벽시계 ms, §17 R3-24). */
+  lockUntil?: number;
+  /** 이 기기의 서버에 가지 않은 기록 수. */
+  pending: number;
+}
+
 export type RuntimeMode =
   | { mode: 'demo' }
   | { mode: 'server'; session: SessionInfo | null }
-  | { mode: 'server-offline' };
+  | { mode: 'server-offline' }
+  | { mode: 'server-local'; start: LocalStart };
 
 /** 세션 묻기의 답: 200 SessionInfo, 401 로그아웃 상태, 그 밖은 연결 안 됨(offline). */
 export type SessionProbe = { kind: 'session'; session: SessionInfo } | { kind: 'signed_out'; code: string } | { kind: 'offline' };
@@ -34,10 +47,20 @@ export function readRuntimeMarker(doc: Pick<Document, 'querySelector'> | undefin
 /**
  * 모드 고르기(D7 표). probe는 표시가 서버일 때만 부른다(체험판은 서버에 묻지 않는다). probe가 던지면 연결 안 됨이다.
  */
-export async function decideMode({ marker, search, probe }: { marker: string | null; search: string; probe: () => Promise<SessionProbe> }): Promise<RuntimeMode> {
+export async function decideMode({ marker, search, probe, localStart }: {
+  marker: string | null; search: string; probe: () => Promise<SessionProbe>; localStart?: () => Promise<LocalStart | null>;
+}): Promise<RuntimeMode> {
   // 표시가 없으면 체험판(?demo든 아니든). 표시가 있으면 ?demo여도 서버 모드다(위 설명): search는 보지 않는다.
   void search;
   if (marker !== RUNTIME_SERVER) return { mode: 'demo' };
+  // 기억한 세션이 유효한 기사 기기는 서버를 기다리지 않는다(읽지 못하면 평소처럼 묻는다).
+  let start: LocalStart | null = null;
+  try {
+    start = localStart ? await localStart() : null;
+  } catch {
+    start = null;
+  }
+  if (start && (start.decision === 'open' || start.decision === 'locked')) return { mode: 'server-local', start };
   let answer: SessionProbe;
   try {
     answer = await probe();

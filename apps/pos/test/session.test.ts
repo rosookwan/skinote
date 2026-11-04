@@ -6,7 +6,8 @@ import { describe, expect, it } from 'vitest';
 import { createAuthApi, deviceAgent } from '../src/app/auth-api.ts';
 import { parseHash } from '../src/app/router.ts';
 import { driverRouteAllowed, homeRoute, roleOf, serverRedirect, shapeOf } from '../src/app/session-context.ts';
-import { enrollGate, enrollLine, firstVisitRole, gateOf, openDeviceLine, openEnrollLine, pinLine } from '../src/app/session.tsx';
+import { driverLocal, enrollGate, enrollLine, firstVisitRole, gateOf, openDeviceLine, openEnrollLine, pinLine } from '../src/app/session.tsx';
+import { localWords } from '../src/app/strings.ts';
 import { staffGrid } from '../src/screens/LoginScreen.tsx';
 
 describe('기기 종류 → 역할 · 첫 화면', () => {
@@ -166,5 +167,26 @@ describe('시험 매장의 열린 등록(문구 표 3-19)', () => {
     expect(calls[0]?.body).toBeUndefined();
     expect(calls[1]?.body).toEqual({ kind: 'pos', publicKey: key, agent: 'Windows Chrome' });
     expect(calls[2]?.body).toEqual({ kind: 'driver_phone', vehicleId: 'v1', publicKey: key, agent: 'Android' });
+  });
+});
+
+describe('기사 기기의 클라이언트(work/impl-offline/plan.md §7-7)', () => {
+  const base = { shop: { name: '시험 매장' }, staff: { id: 's', name: '박기사', roleKey: 'driver' }, csrf: 'c', idleTimeoutS: 1, serverTime: '' };
+  const policy = { localFirst: true, heartbeatMs: 20_000, piiWipeHours: 24, sentPiiHours: 24, sentLogDays: 7, appLockMinutes: 5, maxBackdateHours: 168, futureSkewMinutes: 5, clockWarnMinutes: 2 };
+  const session = { id: 'S', expiresAt: '', idleTimeoutS: 1 };
+
+  it('기사 기기이고 서버가 운영 값 · 세션 id를 주면 DriverClient, 카운터 · 옛 서버는 HttpClient', () => {
+    expect(driverLocal({ ...base, device: { id: 'd', kind: 'driver_phone', label: '1호' }, policy, session })).toBe(true);
+    expect(driverLocal({ ...base, device: { id: 'd', kind: 'driver_tablet', label: '1호' }, policy, session })).toBe(true);
+    expect(driverLocal({ ...base, device: { id: 'd', kind: 'pos', label: '카운터' }, policy, session })).toBe(false);
+    expect(driverLocal({ ...base, device: { id: 'd', kind: 'driver_phone', label: '1호' } })).toBe(false);
+  });
+
+  it('기기(local/)가 돌려주는 줄은 앱 문구 표의 말(문구 표 3-21)', () => {
+    const w = localWords();
+    expect([w.offlineLater, w.receiveNeedsLink, w.handoverNeedsLink, w.deferNeedsLink, w.sendFailed, w.resultChecking]).toEqual([
+      '연결 끊김 · 연결 후 가능', '입고 불가 · 연결 끊김', '인계 불가 · 연결 끊김', '후불 처리 불가 · 연결 끊김', '전송 실패 · 재전송 필요', '연결 끊김 · 결과 확인 중',
+    ]);
+    expect([w.receiveWaiting(2), w.handoverWaiting(1), w.logoutWaiting(3)]).toEqual(['입고 불가 · 전송 대기 2', '인계 불가 · 전송 대기 1', '로그아웃 불가 · 전송 대기 3']);
   });
 });

@@ -5,9 +5,41 @@
 // 전송 대기 · 긴급 · 끝 4자리 · 매장 입고 · 연결 끊김. 조사를 이름 뒤에 붙여 만들지 않는다(받침에 따라 틀린다).
 // 자리({name})의 값은 say()의 형식이 요구한다(빠지면 컴파일 오류).
 import { createStrings } from '@skinote/ui';
+import type { LocalWords } from '../local/words.ts';
 
 export const APP_STRINGS_KO = {
   appName: '스키노트',
+  counterTitle: '오늘 손님',
+  detailReturnItems: '반납 품목',
+  detailReturnSeparate: '반납 후 수납 별도 확인',
+  detailRefundRecord: '실제 환불 후 기록',
+  detailScheduleNext: '일정 선택',
+  detailMoneyNext: '금액 확인',
+  counterSteps: '방문부터 반납까지',
+  counterTeams: '손님',
+  counterItems: '대여 품목',
+  counterReturn: '반납 예정',
+  counterStatus: '확인할 일',
+  counterOpen: '접수증',
+  counterExtra: '추가 처리',
+  counterCompleted: '완료 내역',
+  counterActive: '진행 중',
+  counterFilter: '필터',
+  counterEmpty: '해당 손님 없음',
+  counterReceipt: '접수 {n}',
+  counterMoney: '정산',
+  counterCharged: '청구',
+  counterPaid: '수납',
+  counterDue: '미수',
+  counterDeposit: '보증금',
+  counterRefund: '환불',
+  counterOthers: '다른 팀 몫',
+  counterPayer: '{name} 결제 예정',
+  counterPickup: '손님 픽업',
+  counterMenu: '메뉴',
+  counterSchedule: '일정 변경',
+  counterDetail: '팀 상세',
+  counterAll: '전체',
   titleLedger: '대여 장부 · 스키노트',
   titleSlip: '대여 접수증 · 스키노트',
   titleCollection: '수거 목록 · 스키노트',
@@ -151,7 +183,24 @@ export const APP_STRINGS_KO = {
   newOrderItemsAria: '새 접수 · 품목',
   newOrderScheduleAria: '새 접수 · 일정',
   leader: '대표자',
-  leaderEmpty: '이름',
+  leaderEmpty: '이름 입력',
+  customerPickup: '손님 픽업',
+  customerPickupTitle: '손님 픽업 요청',
+  customerPickupNeed: '손님 픽업 필요',
+  customerPickupSave: '픽업 요청 저장',
+  customerPickupSeparate: '장비 배달·수거와 별도 표시',
+  customerPickupOffline: '연결 끊김 · 연결 후 저장',
+  urgentTitle: '긴급 요청',
+  urgentRelease: '긴급 해제',
+  urgentWaiting: '기사 확인 대기',
+  urgentAcknowledged: '확인함 · 처리 대기',
+  urgentOffline: '연결 끊김 · 요청 미전송',
+  urgentNoTarget: '긴급 요청 대상 없음',
+  urgentUnread: '미확인 긴급 {n}건',
+  urgentConfirmedCount: '확인한 긴급 {n}건 · 처리 대기',
+  urgentAck: '요청 확인',
+  urgentOpen: '업무 보기',
+  urgentPending: '확인 전송 대기',
   leaderInput: '대표자 {name} · 이름 입력',
   contact: '연락처',
   contactInput: '연락처 {phone} · 숫자판',
@@ -344,7 +393,55 @@ export const APP_STRINGS_KO = {
   reviewUnreadable: '확인 필요 목록 확인 불가 · 재시도 필요',
   /** 확인 필요 한 줄의 버튼 묶음(읽는 이름). */
   reviewActions: '확인 필요 처리',
+
+  // ── 기사 연결 끊김 기록(work/impl-offline/plan.md §9, 문구 표 3-21 확인 대기): 기사 기기(local/)의 거절 줄 · 결과 확인 중 · 로그아웃 거절.
+  /** 끊긴 기사 기기의 연결이 있어야 하는 일(있는 말 3-14). */
+  offlineLater: '연결 끊김 · 연결 후 가능',
+  /** 끊긴 기사 기기의 현금 인계 · 후불 처리(`입고 불가 · 연결 끊김`과 같은 모양). */
+  handoverNeedsLink: '인계 불가 · 연결 끊김',
+  deferNeedsLink: '후불 처리 불가 · 연결 끊김',
+  /** 연결되었지만 보냄 대기가 비지 않은 매장 입고 · 현금 인계(sync 8-4: 인계는 `전송 대기 0` 뒤). */
+  receiveWaiting: '입고 불가 · 전송 대기 {n}',
+  handoverWaiting: '인계 불가 · 전송 대기 {n}',
+  /** 보낸 뒤 답을 잃은 온라인 명령(있는 말 3-14): 같은 요청번호로 다음 연결에 다시 보낸다. */
+  resultChecking: '연결 끊김 · 결과 확인 중',
+  /** 보낼 기록이 남은 기기의 로그아웃. */
+  logoutWaiting: '로그아웃 불가 · 전송 대기 {n}',
+  /** 저장할 곳이 없는 기기(3-21, §17 R3-25). */
+  recordingOff: '이 기기 저장 불가',
+  /** 저장할 곳이 없는 끊긴 기기의 끊김 허용 기록(3-21, §17 R3-25: `교환 불가 · 연결 끊김 · 종이 접수증에 기록`과 같은 모양). */
+  recordNeedsPaper: '기록 불가 · 연결 끊김 · 종이 기록',
+  /** 기사 기기의 연결 끊김 화면(사본을 그릴 수 없음, 3-15 `연결 후 조회 가능`, §17 R3-30). */
+  listLater: '수거 목록 · 연결 후 조회 가능',
+  /** 마감 넘기기(관리자 승인)의 확인 창 둘째 줄(`사유`는 있는 말). */
+  reasonLine: '사유 · {reason}',
+  /** 넘길 권한이 없는 세션(있는 말 3-20). */
+  noPermission: '권한 없음 · 관리자 확인 필요',
+  /** 앱 잠금을 기기에서 풀 수 없음(확인 값 없음 · 시계가 뒤로 감): 연결되면 평소 로그인(3-21). 틀려서 잠긴 동안은 3-17 `loginLocked`. */
+  lockOffline: '로그인 잠김 · 연결 후 가능',
+  /** 되살린 서버가 모르는 기기에 보낼 기록이 남음(3-21): 기기 열쇠 · 보냄 대기를 지우지 않는다. */
+  deviceUnknown: '기기 등록 없음 · 공급자 연락',
+  /** 로그인 때 같은 차량의 다른 기기가 보낼 기록을 가짐(3-15 · 3-21, sync 6). 서버가 그 기기를 알려 주지 않는 옛 서버 · 다시 띄운 뒤. */
+  elsewherePhone: '{vehicle} 휴대폰 미전송 기록 가능 · 휴대폰 전송 필요',
+  elsewhereTablet: '{vehicle} 태블릿 미전송 기록 가능 · 태블릿 전송 필요',
+  /**
+   * 같은 알림, 서버가 그 기기(등록 이름 · 마지막 로그인 직원)와 수를 알려 줌(3-21, §17 R3-28: 한 차량에 개인 휴대폰이 둘이면 어느 기기인지). 수를 모르면
+   * `…미전송 기록 가능`. 틀은 확인 필요 device_gap의 `{기기} 기록 {n}건 … · 해당 기기 전송 필요`.
+   */
+  elsewhereDevice: '{device} 기록 {n}건 전송 대기 · 해당 기기 전송 필요',
+  elsewhereDeviceMaybe: '{device} 미전송 기록 가능 · 해당 기기 전송 필요',
+  /** 전송 대기 목록 창의 답을 잃은 줄 끝(3-14 · 3-21 `결과 확인 중`, §17 R3-19). */
+  resultPending: '결과 확인 중',
 } as const;
 
 /** 앱 화면 문구를 부르고 {이름} 자리를 채운다. */
 export const say = createStrings(APP_STRINGS_KO);
+
+/** 기사 기기(local/)가 창에 돌려주는 한 줄들(work/impl-offline/plan.md §9): session.tsx가 DriverClient에 넣는다. */
+export function localWords(): LocalWords {
+  return {
+    offlineLater: say('offlineLater'), receiveNeedsLink: say('receiveNeedsLink'), handoverNeedsLink: say('handoverNeedsLink'), deferNeedsLink: say('deferNeedsLink'),
+    sendFailed: say('sendFailed'), resultChecking: say('resultChecking'), recordNeedsPaper: say('recordNeedsPaper'),
+    receiveWaiting: (n) => say('receiveWaiting', { n }), handoverWaiting: (n) => say('handoverWaiting', { n }), logoutWaiting: (n) => say('logoutWaiting', { n }),
+  };
+}

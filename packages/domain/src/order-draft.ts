@@ -23,8 +23,6 @@ import type { ViewContext } from './views.ts';
 const won = (n: number) => Math.round(n).toLocaleString('ko-KR') + '원';
 
 const CHANNEL_PHONE = '전화 예약';
-/** 품목은 있는데 대표자 이름이 없을 때 `다음 · 일정` 위의 까닭(문구 표 3-6). */
-const NAME_NEEDED = '대표자 이름 필요';
 const STORE = '매장 직접';
 /** 전화 예약의 수령 시각 버튼과 처음 값. */
 const RESERVE_TIMES = ['08:00', '09:00', '13:00', '18:00'] as const;
@@ -42,6 +40,8 @@ const MAX_PARTY = 30;
  * 나가는 종이, 2026-09-28)에만 준다. 둘 다 서버가 열람 기록을 남긴다.
  */
 export function maskPhone(phone: string): string {
+  // 이미 가린 번호(기사 기기의 사본, work/impl-offline/plan.md §5-4)는 그대로.
+  if (phone.includes('*')) return phone;
   const digits = phone.replace(/\D/g, '');
   if (digits.length === 0) return '';
   const last4 = digits.slice(-4);
@@ -428,8 +428,8 @@ export function orderDraft(ctx: ViewContext, params: OrderDraftParams): OrderDra
     ...(quote.lift > 0 ? [{ key: 'lift', title: '리프트권 ' + won(quote.lift), note: liftNote.join(' · '), items: liftNote }] : []),
   ];
 
-  const itemsReady = addOrder ? items.length > 0 && !isCancelledOrder(addOrder) : name !== '' && items.length > 0;
-  // 품목을 골랐는데 이름이 없으면 까닭 한 줄(연락처 · 인원은 적지 않아도 된다). 품목 추가는 그 접수의 대표자.
+  // 대표자 이름은 필수다. 나머지 기본 입력은 터치로 끝낸다(2026-10-28 사용자 교정).
+  const itemsReady = items.length > 0 && (addOrder ? !isCancelledOrder(addOrder) : name !== '');
   const nameMissing = !addOrder && name === '' && items.length > 0;
   const addTitle = addOrder ? CANCEL_WORDS.addItems + ' · ' + addOrder.teamName + ' 팀' : undefined;
   const footer = addTitle ?? ['새 접수', ...(name ? [name + ' 팀'] : []), ...(party > 0 ? [party + '명'] : [])].join(' · ');
@@ -451,7 +451,7 @@ export function orderDraft(ctx: ViewContext, params: OrderDraftParams): OrderDra
     ready: {
       // 품목 추가는 ② 일정이 없다(그 접수의 일정): 품목이 있으면 바로 ③ 결제.
       items: itemsReady, schedule: addOrder ? itemsReady : itemsReady && pickup.complete && giveBack.complete,
-      ...(nameMissing ? { itemsReason: NAME_NEEDED, missing: 'name' as const } : {}),
+      ...(nameMissing ? { itemsReason: '대표자 이름 필요', missing: 'name' as const } : {}),
     },
     footer,
     quoteHash: quote.hash,

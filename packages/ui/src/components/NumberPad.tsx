@@ -35,6 +35,8 @@ export interface NumberPadProps {
    * 없으면 모드의 기본(시각은 네 자리).
    */
   accept?: (digits: string) => boolean;
+  /** 숫자 · 지우기 키를 누를 수 없음(잠긴 비밀번호 판: 풀리는 시각까지, work/impl-offline/plan.md §17 R3-24). 자판의 숫자도 받지 않는다. */
+  keysDisabled?: boolean;
 }
 
 /**
@@ -75,11 +77,11 @@ const DIGITS = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
 export const typingIn = (target: EventTarget | null) =>
   typeof HTMLElement !== 'undefined' && target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
 
-export function NumberPad({ mode, title, value, onChange, onSubmit, onClose, note, placement = 'sheet', keysOnly = false, accept }: NumberPadProps) {
+export function NumberPad({ mode, title, value, onChange, onSubmit, onClose, note, placement = 'sheet', keysOnly = false, accept, keysDisabled = false }: NumberPadProps) {
   const titleId = useId();
   const digits = value.replace(/\D/g, '').slice(0, NUMBER_PAD_DIGITS[mode]);
-  const press = (d: string) => onChange((digits + d).slice(0, NUMBER_PAD_DIGITS[mode]));
-  const erase = () => onChange(digits.slice(0, -1));
+  const press = (d: string) => { if (!keysDisabled) onChange((digits + d).slice(0, NUMBER_PAD_DIGITS[mode])); };
+  const erase = () => { if (!keysDisabled) onChange(digits.slice(0, -1)); };
   const ready = numberPadReady(mode, digits) && (accept ? accept(digits) : true);
   const submit = () => { if (ready) onSubmit(digits); };
   useEffect(() => {
@@ -116,19 +118,19 @@ export function NumberPad({ mode, title, value, onChange, onSubmit, onClose, not
       )}
       <div className="sn-keypad-keys">
         {DIGITS.map((d) => (
-          <button key={d} type="button" className="sn-key" onClick={() => press(d)}>{d}</button>
+          <button key={d} type="button" className="sn-key" disabled={keysDisabled} onClick={() => press(d)}>{d}</button>
         ))}
         {mode === 'amount' ? (
           <>
-            <button type="button" className="sn-key" onClick={() => press('000')}>000</button>
-            <button type="button" className="sn-key" onClick={() => press('0')}>0</button>
-            <button type="button" className="sn-key is-word" onClick={erase}>{t('erase')}</button>
+            <button type="button" className="sn-key" disabled={keysDisabled} onClick={() => press('000')}>000</button>
+            <button type="button" className="sn-key" disabled={keysDisabled} onClick={() => press('0')}>0</button>
+            <button type="button" className="sn-key is-word" disabled={keysDisabled} onClick={erase}>{t('erase')}</button>
             {keysOnly ? null : go}
           </>
         ) : (
           <>
-            <button type="button" className="sn-key is-word" onClick={erase}>{t('erase')}</button>
-            <button type="button" className="sn-key" onClick={() => press('0')}>0</button>
+            <button type="button" className="sn-key is-word" disabled={keysDisabled} onClick={erase}>{t('erase')}</button>
+            <button type="button" className="sn-key" disabled={keysDisabled} onClick={() => press('0')}>0</button>
             {go}
           </>
         )}

@@ -37,11 +37,16 @@ export interface LedgerProps extends LedgerRowHandlers {
   pinSlot?: ReactNode;
   /** 크기를 고정할 때(서버 그리기 · 시험). 없으면 스스로 잰다. */
   size?: Size;
+  /**
+   * 쪽을 나눌 때 늘 비워 둘 높이(px): 기사 목록은 연결 띠가 보이지 않는 동안 띠 자리(32px)를 빼고 센다(ui 4-3, §18 R4-12). 띠가 나타나고 사라져도 한
+   * 쪽의 줄 수와 줄 자리가 바뀌지 않는다(장갑 낀 손가락 밑의 줄이 옮겨 가지 않게).
+   */
+  reservePx?: number;
   /** 확대를 되돌리는 방법이 있을 때(데스크톱 포장 앱). */
   onZoomReset?: () => void;
 }
 
-export function Ledger({ view, result, steps, nowMs, page, onPaging, selectedRowId, pinSlot, size, onZoomReset, ...handlers }: LedgerProps) {
+export function Ledger({ view, result, steps, nowMs, page, onPaging, selectedRowId, pinSlot, size, reservePx = 0, onZoomReset, ...handlers }: LedgerProps) {
   const profile = useDeviceProfile();
   const ref = useRef<HTMLElement>(null);
   const measured = useElementSize(ref, size ?? null);
@@ -66,7 +71,7 @@ export function Ledger({ view, result, steps, nowMs, page, onPaging, selectedRow
     return paginate(
       result.rows.map((r) => ({ id: r.id, heightPx: rowPx, ...(groupHeadings && r.groupKey !== undefined ? { group: r.groupKey } : {}) })),
       {
-        availablePx: box.height - (showHead ? profile.tableHeadPx : 0),
+        availablePx: box.height - (showHead ? profile.tableHeadPx : 0) - Math.max(0, reservePx),
         fixedTopPx: pinSlot ? profile.pinRowPx : 0,
         groupTitlePx: groupHeadings ? profile.groupTitlePx : 0,
         nowLinePx: profile.nowLinePx,
@@ -75,7 +80,7 @@ export function Ledger({ view, result, steps, nowMs, page, onPaging, selectedRow
         combineHeadingsBelowPx: profile.combineHeadingsBelowPx,
       },
     );
-  }, [box, result.rows, rowPx, groupHeadings, showHead, pinSlot, profile, nowIndex]);
+  }, [box, result.rows, rowPx, groupHeadings, showHead, pinSlot, profile, nowIndex, reservePx]);
 
   const first = initialPage(pages, selectedRowId ?? null);
   const measuredBox = box !== null;

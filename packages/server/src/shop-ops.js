@@ -4,7 +4,7 @@
 // 돌려주는 값 가운데 비밀(등록 번호 · 비밀번호)은 명령줄이 표준 출력에 한 번 보여 줄 뿐 어디에도 적지 않는다.
 
 import { randomInt } from 'node:crypto';
-import { DEVICE_KINDS, formatEnrollCode, isDriverDevice } from '@skinote/contract';
+import { DEVICE_KINDS, formatEnrollCode, isDriverDevice, parseQueuedEnvelope, timeSourceOf } from '@skinote/contract';
 import { generatePin, hashPin } from './pin.js';
 import { sha256Hex } from './security.js';
 
@@ -20,7 +20,10 @@ import { sha256Hex } from './security.js';
  *   now: () => number,
  *   onRevoke?: (deviceId: string) => { sessions: number, streams: number } | void,
  *   onPinReset?: (accountId: string) => void,
+ *   pendingOf?: (deviceId: string) => number | null,
  * }} OpsContext
+ *   pendingOf: 서버가 도는 동안 기기가 마지막으로 알린 보낼 기록 수(연결 셈). 없으면 표에 적힌 수(device_sync_cursors.queue_depth).
+ *   이 파일은 기사 기기의 보류 기록(held, work/impl-offline/plan.md O21)과 끊기 전의 대기 확인도 한다.
  */
 
 /** 운영 명령의 실패(코드는 명령줄 · 소켓이 그대로 알린다). */
@@ -114,7 +117,7 @@ export async function rotatePinOp(ctx, args) {
  * 기기 끊기: 새 세션을 막고 그 기기의 세션을 끝낸다(서버가 돌면 알림 연결도 곧바로 닫는다). openAll이면 열린 등록으로 스스로 붙은
  * 기기(`시험 기기 N`)를 모두 끊는다(번호로 붙인 기기는 그대로). 열린 등록이 켜져 있으면 끊긴 기기는 다시 기기 선택으로 붙을 수 있다:
  * 모르는 기기를 막으려면 설정을 끈다(deploy.sh --set-env SKINOTE_TEST_OPEN_ENROLL=off, 그러면 서버가 모두 끊는다).
- * @param {OpsContext} ctx @param {{ device?: unknown, openAll?: unknown }} args
+ * @param {OpsContext} ctx @param {{ device?: unknown, openAll?: unknown, force?: unknown }} args
  */
 export function revokeDeviceOp(ctx, args) {
   if (args.openAll === true) {
@@ -134,11 +137,17 @@ export function revokeDeviceOp(ctx, args) {
   if (typeof args.device !== 'string' || args.device === '') throw new OpError('BAD_ARGS', '--device가 없습니다(기기 이름이나 id, 또는 --open-all)');
   const device = ctx.port.devices.find(args.device);
   if (!device) throw new OpError('NOT_FOUND', '그 기기가 없습니다');
+  // 기기가 알린 보낼 기록 수는 알림으로만 돌려준다(§17 R3-14): 그 수는 기기(도둑맞은 휴대폰이면 훔친 사람)가 정하고, 끊은 뒤에 온 기록은 잃지 않고
+  // 보류된다(O21, 공급자가 held --apply). 급한 끊기가 막히지 않게 묻지 않는다. --force는 옛 스크립트를 위해 받기만 한다.
+  const pending = isDriverDevice(device.kind) ? ctx.pendingOf?.(device.id) ?? ctx.port.devices.linkNotes().find(r => r.deviceId === device.id)?.queueDepth ?? 0 : 0;
   const now = ctx.now();
   const revoked = ctx.port.devices.revoke(device.id, 'cli', now);
   const sessions = ctx.control.revokeDeviceSessions(ctx.shopId, device.id, 'device_revoked', now);
   const after = ctx.onRevoke?.(device.id);
-  return { deviceId: device.id, label: device.label, revoked, sessions: sessions + (after?.sessions ?? 0), streams: after?.streams ?? 0 };
+  return {
+    deviceId: device.id, label: device.label, revoked, sessions: sessions + (after?.sessions ?? 0), streams: after?.streams ?? 0,
+    ...((pending ?? 0) > 0 ? { reportedPending: pending } : {}),
+  };
 }
 
 /**
@@ -221,6 +230,41 @@ export function setLimitOp(ctx, args) {
   return { role, limits: ctx.port.roleLimits(role) };
 }
 
+/**
+ * 보류된 기사 기록(work/impl-offline/plan.md O21, `반영` 화면 전의 공급자 길): --list(요청번호 · 기기 · 명령 · 받은 때 · 까닭, 본문 없음) ·
+ * --apply <요청번호>(받은 봉투를 다시 검사해 그 자리에서 보냄 대기 사실로 적용) · --dismiss <요청번호>(미반영: 행은 보류로 남고 셈에서 빠짐).
+ * @param {OpsContext} ctx @param {{ list?: unknown, apply?: unknown, dismiss?: unknown }} args
+ */
+export function heldOp(ctx, args) {
+  const chosen = [args.list === true, typeof args.apply === 'string', typeof args.dismiss === 'string'].filter(Boolean).length;
+  if (chosen !== 1) throw new OpError('BAD_ARGS', '--list · --apply <요청번호> · --dismiss <요청번호> 가운데 하나');
+  const now = ctx.now();
+  if (args.list === true) {
+    return { held: ctx.port.listHeld().map(h => ({ ...h, receivedAt: isoOf(h.receivedAt) })) };
+  }
+  if (typeof args.dismiss === 'string') {
+    if (!ctx.port.dismissHeld(args.dismiss, now)) throw new OpError('NOT_FOUND', '미반영으로 정할 보류 기록이 없습니다');
+    return { requestId: args.dismiss, dismissed: true };
+  }
+  const requestId = /** @type {string} */ (args.apply);
+  const held = ctx.port.heldEnvelope(requestId);
+  if (!held) throw new OpError('NOT_FOUND', '반영할 보류 기록이 없습니다');
+  const device = held.deviceId ? ctx.port.devices.device(held.deviceId) : undefined;
+  if (!device) throw new OpError('NOT_FOUND', '보류 기록의 기기가 없습니다');
+  const parsed = parseQueuedEnvelope(held.envelope, { maxQuantity: ctx.port.limits(now).maxQuantity, deviceKind: /** @type {any} */ (device.kind) });
+  if (!parsed.ok) throw new OpError('BAD_ARGS', '모양이 틀린 기록은 반영할 수 없습니다(' + parsed.code + ')');
+  const env = parsed.envelope;
+  const staff = ctx.port.staff().find(s => s.id === env.recordedBy.staffId);
+  const out = ctx.port.releaseHeld(env, {
+    key: 'staff:' + (staff?.id ?? env.recordedBy.staffId), name: staff?.name ?? device.label, roleKey: 'driver', deviceId: device.id,
+    ...(device.vehicleId ? { vehicleId: device.vehicleId } : {}),
+  }, {
+    deviceId: device.id, deviceSeq: env.deviceSeq, occurredAt: Math.max(0, held.receivedAt - env.ageMs), receivedAt: now, timeSource: timeSourceOf(env.clockAnchor),
+    signature: env.recordedBy.signature, deviceLabel: device.label,
+  });
+  return { requestId, outcome: out.outcome, rev: out.rev, reviews: out.reviews };
+}
+
 /** 관리 소켓 · 명령줄이 부르는 이름 → 명령. */
 export const ONLINE_OPS = Object.freeze({
   'device-code': deviceCodeOp,
@@ -228,6 +272,7 @@ export const ONLINE_OPS = Object.freeze({
   'revoke-device': revokeDeviceOp,
   'set-limit': setLimitOp,
   status: statusOp,
+  held: heldOp,
 });
 
 /** @typedef {keyof typeof ONLINE_OPS} OnlineOp */

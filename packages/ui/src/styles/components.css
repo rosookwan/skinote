@@ -113,6 +113,13 @@
   background: var(--sn-strip); color: var(--sn-ink); font-size: var(--sn-font-min); font-weight: 800;
 }
 .sn-strip .sn-fit { flex: 1 1 0; }
+/* 띠의 상태마다 모양(work/impl-offline/plan.md §17 R3-21, 빨강 없음): 끊김은 진한 노랑 테두리, 보낸 뒤는 차분한 초록, 보내지 못함 · 거절은 주황 옅은
+   바탕, 저장할 곳 없음은 회색 바탕 · 먹 테두리. 보내는 중은 기본(노랑). 높이는 그대로다(테두리는 안쪽 그림자). */
+.sn-strip.is-offline { background: var(--sn-strip); box-shadow: inset 0 0 0 var(--sn-line-strong) var(--sn-now); }
+.sn-strip.is-settled { background: var(--sn-green-wash); color: var(--sn-green); }
+.sn-strip.is-stuck,
+.sn-strip.is-refused { background: var(--sn-orange-wash); color: var(--sn-orange-ink); }
+.sn-strip.is-recording-off { background: var(--sn-paper-shade); box-shadow: inset 0 0 0 var(--sn-line-strong) var(--sn-ink-muted); }
 
 /* 제목 · 색인 탭 */
 .sn-titlebar {
@@ -121,6 +128,12 @@
 }
 .sn-title { flex: 1 1 0; min-width: 0; padding-bottom: var(--sn-space-s); font-family: var(--sn-font-serif); font-size: var(--sn-font-title); font-weight: 700; letter-spacing: -0.01em; }
 .sn-title-tag { display: inline-flex; align-self: center; flex: none; }
+/* 제목 옆 노랑 표시(카운터 수거 목록의 끊긴 차량): 연결 띠와 같은 노랑. 글은 IndexTabs가 잰 남는 폭에 뒤 조각부터 빼서 맞춘다. */
+.sn-title-chip {
+  display: inline-flex; align-items: center; align-self: center; flex: none; min-width: 0; padding: 0 var(--sn-space-s);
+  border: var(--sn-line) solid var(--sn-ink-muted); border-radius: var(--sn-radius-s); background: var(--sn-strip); color: var(--sn-ink);
+  font-size: var(--sn-font-min); font-weight: 800;
+}
 .sn-tabs { display: flex; align-items: flex-end; gap: var(--sn-space-xs); flex: 0 0 auto; }
 .sn-tab {
   position: relative; min-height: var(--sn-target); padding: 0 var(--sn-space-m);
@@ -237,6 +250,8 @@
 .sn-stamp.is-done.is-dated { width: calc(var(--sn-stamp) * 1.25); border-radius: 50% / 50%; transform: rotate(-4deg); line-height: 1; }
 .sn-stamp.is-todo.is-labelled { color: var(--sn-ink-muted); font-weight: 800; }
 .sn-stamp.is-pending { border-style: dashed; }
+/* 보냄 대기로만 끝난 도장(§17 R3-29): 끝난 도장(주홍 · 바탕)과 한눈에 다르게 바탕 없이 옅은 먹 점선. 빨강이 아니다. */
+.sn-stamp.is-done.is-pending { background: transparent; border-color: var(--sn-ink-muted); color: var(--sn-ink-muted); }
 .sn-stamp.is-processing { border-style: dotted; }
 .sn-stamp.is-na { width: auto; height: auto; color: var(--sn-grey); font-weight: 700; }
 .sn-stamp.is-blocked { border: var(--sn-line-strong) solid var(--sn-rule); color: var(--sn-grey); font-size: var(--sn-font-body); }
@@ -333,6 +348,8 @@
 .sn-key.is-word { font-size: var(--sn-font-body); }
 .sn-key.is-go { background: var(--sn-ink); border-color: var(--sn-ink); color: var(--sn-paper); font-size: var(--sn-font-body); }
 .sn-key.is-go:disabled { background: var(--sn-rule); border-color: var(--sn-rule); color: var(--sn-ink-muted); }
+/* 잠긴 비밀번호 판(풀리는 시각까지): 숫자 · 지우기 키도 누를 수 없다(work/impl-offline/plan.md §17 R3-24). */
+.sn-key:not(.is-go):disabled { background: var(--sn-paper-shade); color: var(--sn-ink-muted); border-style: dashed; }
 .sn-keypad-load { min-height: var(--sn-keypad-load); display: flex; align-items: center; font-size: var(--sn-font-min); font-weight: 700; color: var(--sn-ink-soft); box-shadow: inset 0 var(--sn-line) 0 var(--sn-rule); }
 .sn-keypad-load.is-items { flex-direction: column; align-items: stretch; justify-content: center; line-height: 1.25; }
 .sn-keypad-load.is-items > b { font-weight: 900; color: var(--sn-ink); }

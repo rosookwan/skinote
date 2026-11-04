@@ -9,7 +9,7 @@ import {
   type PromiseSheetView, type SlotPick,
 } from '@skinote/contract';
 import {
-  ChoiceRow, DialogFrame, FormRow, Pager, PlaceChooser, PrimaryButton, QtyStepper, RichLine, SlotChooser, t, useCommandDraft,
+  ChoiceRow, DialogFrame, FormRow, Pager, PlaceChooser, PrimaryButton, QtyStepper, RichLine, SlotChooser, TextFit, t, useCommandDraft, useUi,
 } from '@skinote/ui';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useClient } from '../app/client.tsx';
@@ -79,6 +79,9 @@ export interface PromiseDialogProps {
 
 export function PromiseDialog({ orderId, onClose, onFail }: PromiseDialogProps) {
   const client = useClient();
+  const {profile, viewport} = useUi();
+  const compact = viewport.width < profile.counter.compactBelowPx;
+  const [section, setSection] = useState(0);
   const [params, setParams] = useState<PromiseSheetParams>({ orderId });
   const [loaded, setLoaded] = useState<{ key: string; view: PromiseSheetView } | null>(null);
   const [page, setPage] = useState(0);
@@ -129,9 +132,10 @@ export function PromiseDialog({ orderId, onClose, onFail }: PromiseDialogProps) 
     });
   };
 
-  const pageCount = Math.max(1, Math.ceil(view.lines.length / PROMISE_ITEMS_PER_PAGE));
+  const perPage = compact ? 2 : PROMISE_ITEMS_PER_PAGE;
+  const pageCount = Math.max(1, Math.ceil(view.lines.length / perPage));
   const current = Math.min(page, pageCount - 1);
-  const lines = view.lines.slice(current * PROMISE_ITEMS_PER_PAGE, (current + 1) * PROMISE_ITEMS_PER_PAGE);
+  const lines = view.lines.slice(current * perPage, (current + 1) * perPage);
   // 변경 품목 칸의 줄 수는 가장 많은 쪽 기준(쪽을 넘겨도 창 높이가 그대로).
   const itemRows = Math.min(ITEM_ROWS, Math.ceil(Math.min(view.lines.length, PROMISE_ITEMS_PER_PAGE) / ITEMS_PER_ROW));
   const alert = error ?? view.notice ?? null;
@@ -142,20 +146,23 @@ export function PromiseDialog({ orderId, onClose, onFail }: PromiseDialogProps) 
       <DialogFrame
         title={view.title}
         onClose={onClose}
-        className="pos-promise"
+        wide
+        className={'pos-promise pos-detail' + (compact ? ' is-compact' : '')}
         {...(draft ? { requestId: draft.requestId } : {})}
-        pager={pageCount > 1 ? <Pager page={current} pageCount={pageCount} onChange={setPage} /> : null}
+        pager={pageCount > 1 && (!compact || section === 0) ? <Pager page={current} pageCount={pageCount} onChange={setPage} /> : null}
         primary={(
           <PrimaryButton
-            label={busy ? t('processing') : view.primary.label}
-            {...(busy ? {} : { alts: view.primary.alts.length ? view.primary.alts : [view.primary.label] })}
-            disabled={!ready}
+            label={compact && section === 0 ? say('detailScheduleNext') : busy ? t('processing') : view.primary.label}
+            {...(busy || (compact && section === 0) ? {} : { alts: view.primary.alts.length ? view.primary.alts : [view.primary.label] })}
+            disabled={compact && section === 0 ? false : !ready}
             busy={busy}
-            onPress={confirm}
+            onPress={compact && section === 0 ? () => setSection(1) : confirm}
           />
         )}
       >
-        <FormRow label={say('changeItems')} top>
+        {compact ? <ChoiceRow options={[{key:'0',label:say('changeItems'),selected:section===0,enabled:true},{key:'1',label:say('counterSchedule'),selected:section===1,enabled:true}]} label={say('counterSchedule')} onPress={key=>setSection(Number(key))}/> : null}
+        <div className="pos-detail-columns">
+        {!compact || section === 0 ? <section className="pos-detail-section"><FormRow label={say('changeItems')} top>
           <div className={'sn-steps' + (itemRows > 1 ? ' is-two-rows' : '')}>
             {lines.map((line) => (
               <QtyStepper
@@ -169,9 +176,10 @@ export function PromiseDialog({ orderId, onClose, onFail }: PromiseDialogProps) 
             ))}
           </div>
         </FormRow>
-        <FormRow label={say('returnTime')}>
+        </section> : null}
+        {!compact || section === 1 ? <section className="pos-detail-section"><FormRow label={say('returnTime')}>
           <SlotChooser
-            slots={view.slots}
+            slots={[...view.slots].sort((a,b)=>Number(b.enabled)-Number(a.enabled))}
             days={view.days}
             label={say('returnTime')}
             names={{ other: say('pickDay') }}
@@ -191,13 +199,23 @@ export function PromiseDialog({ orderId, onClose, onFail }: PromiseDialogProps) 
         <FormRow label={say('pickupVehicle')} blank={!view.vehicleRowVisible}>
           <ChoiceRow options={view.vehicles} label={say('pickupVehicle')} onPress={(key) => change(withVehicle(params, key))} />
         </FormRow>
-        <div className="sn-summary">
+        </section> : null}
+        </div>
+        <div className="sn-summary pos-detail-summary">
           {alert ? (
             <p className="sn-summary-row is-alert" role="alert"><b>{say('summaryChanged')}</b><RichLine runs={[{ text: alert, strong: true }]} /></p>
           ) : (
             <p className="sn-summary-row"><b>{say('summaryChanged')}</b><RichLine runs={view.summary.changed} /></p>
           )}
-          <p className="sn-summary-row"><b>{say('summaryKept')}</b><RichLine runs={view.summary.kept} /></p>
+          {/* 옮기는 줄이 끊긴 · 전송 대기 · 조용한 차량의 열린 수거에 있으면 `유지` 줄 자리에 그 사실(창 높이 그대로, work/impl-offline/plan.md §8-2). */}
+          {view.linkWarning ? (
+            <p className="sn-summary-row pos-summary-link" role="status">
+              <b>{t('vehicle')}</b>
+              <TextFit input={{ mode: 'parts', parts: view.linkWarning }} />
+            </p>
+          ) : (
+            <p className="sn-summary-row"><b>{say('summaryKept')}</b><RichLine runs={view.summary.kept} /></p>
+          )}
         </div>
       </DialogFrame>
       {calendar ? (

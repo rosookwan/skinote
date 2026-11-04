@@ -126,9 +126,9 @@ export function codeOf(out) {
 /**
  * 시험 매장 하나: 서버를 한 번 띄워 파일을 마이그레이션하고 닫은 뒤, 명령줄로 견본 명세 + 시험 직원을 만든다. test: false면 시험 매장이
  * 아닌 매장(provision에 --test 없음).
- * @param {string} dataDir @param {Record<string, string>} [extraEnv] @param {{ test?: boolean }} [options]
+ * @param {string} dataDir @param {Record<string, string>} [extraEnv] @param {{ test?: boolean, staff?: readonly string[] }} [options]
  */
-export async function provisionedShop(dataDir, extraEnv = {}, { test = true } = {}) {
+export async function provisionedShop(dataDir, extraEnv = {}, { test = true, staff = STAFF } = {}) {
   const { startServer } = await import('../src/server.js');
   const env = {
     SKINOTE_DATA_DIR: dataDir, SKINOTE_SHOP_IDS: SHOP, SKINOTE_RELEASE: 'test', SKINOTE_BACKUP_RESERVE_MB: '0', SKINOTE_ADMIN_SOCKET: 'off',
@@ -136,7 +136,7 @@ export async function provisionedShop(dataDir, extraEnv = {}, { test = true } = 
   };
   const first = await startServer(testConfig(dataDir, env), { log: () => {} });
   await first.close();
-  const made = await cli(['provision', '--shop', SHOP, '--code', 'test-shop', '--name', '시험 매장', '--sample', ...(test ? ['--test'] : []), ...STAFF.flatMap(s => ['--staff', s])], env);
+  const made = await cli(['provision', '--shop', SHOP, '--code', 'test-shop', '--name', '시험 매장', '--sample', ...(test ? ['--test'] : []), ...staff.flatMap(s => ['--staff', s])], env);
   if (made.code !== 0) throw new Error('provision 실패: ' + made.err);
   return { env, pins: pinsOf(made.out) };
 }
@@ -246,6 +246,30 @@ export function device(port, { origin = ORIGIN, forwardedFor } = {}) {
     },
   };
   return self;
+}
+
+/** 기사 기기의 알림(심장 박동 · 묶음 본문). @param {Partial<import('@skinote/contract').DeviceReport>} [over] @returns {import('@skinote/contract').DeviceReport} */
+export const deviceReport = (over = {}) => ({
+  pendingCount: 0, unconfirmedCount: 0, lastSeq: 0, clockOffsetMs: 0, appVersion: 'test', offlineCapable: true, localFirst: true, visibility: 'visible', unreadable: 0, ...over,
+});
+
+/**
+ * 기기 열쇠로 서명한 보냄 대기 항목(skinote-cmd-v1).
+ * @param {ReturnType<typeof device>} dev @param {{ staffId: string, sessionId: string }} by
+ * @param {{ type: string, payload: unknown, seq: number, basis: { epoch: string, rev: number }, now: number, ageMs?: number }} x
+ */
+export async function signedItem(dev, by, x) {
+  const { canonicalJson, commandMessage, newRequestId, unsignedItem } = await import('@skinote/contract');
+  const { createHash } = await import('node:crypto');
+  const ageMs = x.ageMs ?? 1_000;
+  const item = {
+    type: x.type, commandVersion: 1, requestId: newRequestId(x.now + x.seq), deviceSeq: x.seq, ageMs, clockAnchor: 'mono-abcdefgh',
+    madeAt: new Date(x.now - ageMs).toISOString(), basis: x.basis, dependsOn: [], recordedBy: { staffId: by.staffId, sessionId: by.sessionId, signature: 'A'.repeat(86) },
+    payload: x.payload,
+  };
+  const hash = createHash('sha256').update(canonicalJson(unsignedItem(/** @type {any} */ (item))), 'utf8').digest('base64url');
+  item.recordedBy.signature = await /** @type {NonNullable<typeof dev.state.key>} */ (dev.state.key).sign(commandMessage(ORIGIN, dev.state.deviceId, x.seq, hash));
+  return item;
 }
 
 /**

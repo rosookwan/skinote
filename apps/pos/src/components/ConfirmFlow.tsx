@@ -13,12 +13,12 @@ import {
   type StampCell, type StampStepRow,
 } from '@skinote/contract';
 import { ConfirmDialog, Pager, ReturnPieces, formatTime, useCommandDraft, useUi } from '@skinote/ui';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { useClient } from '../app/client.tsx';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useClient, useConnection } from '../app/client.tsx';
 import { actionLabel } from '../app/labels.ts';
 import { say } from '../app/strings.ts';
 import { NoticeDialog, type NoticeAction } from './NoticeDialog.tsx';
-import { ReturnDialog } from './ReturnDialog.tsx';
+const ReturnDialog = lazy(() => import('./SlipEditDialogs.ts').then(m => ({default:m.ReturnDialog})));
 
 export interface ConfirmRequest extends ConfirmDraftParams {
   /** 창 맨 위에 붙일 한 문장(막힌 칸을 눌러 앞 단계 창이 열렸을 때). */
@@ -171,6 +171,12 @@ export function useConfirmFlow(): ConfirmFlow {
    */
   const [attempt, setAttempt] = useState(0);
   const [spent, setSpent] = useState(false);
+  /**
+   * 보낸 뒤 답을 잃은 온라인 명령(기사 기기, work/impl-offline/plan.md O18): 창에 `연결 끊김 · 결과 확인 중`, 끊긴 동안은 주 버튼을 막는다(다시 누르면
+   * 같은 요청번호로 보내고, 기기는 다음 연결에서 스스로 보낸다).
+   */
+  const [unknown, setUnknown] = useState(false);
+  const connection = useConnection();
   // 틀이 따로인 창(반납 확인 창)은 요청번호를 스스로 만든다: 여기서는 요약 창의 초안만.
   const separate = view?.template === 'return';
   const command = separate ? null : view?.command ?? null;
@@ -190,6 +196,7 @@ export function useConfirmFlow(): ConfirmFlow {
     setError(null);
     setBusy(false);
     setSpent(false);
+    setUnknown(false);
   }, []);
 
   /** 수량 칸 하나를 바꾼다: 고른 수로 초안을 다시 묻고(늦게 온 옛 답은 버림) 요약 · 주 버튼 · 명령만 바꾼다. */
@@ -206,6 +213,8 @@ export function useConfirmFlow(): ConfirmFlow {
   }, [client, request, view, picked, busy]);
 
   const open = useCallback((next: ConfirmRequest) => {
+    // 다음 확인 창을 열면 띠의 `전송 대기 0`(다시 붙어 보낸 뒤의 결과)을 걷는다(plan §7-4).
+    client.dismissResults?.();
     client.query('confirmDraft', draftParams(next)).then((draftView) => {
       if (!draftView.command) {
         setNotice({ title: draftView.title, lines: [...(next.lead ? [next.lead] : []), draftView.notice ?? ''] });
@@ -220,6 +229,7 @@ export function useConfirmFlow(): ConfirmFlow {
       setError(null);
       setBusy(false);
       setSpent(false);
+      setUnknown(false);
     }, () => {
       setNotice({ title: actionLabel(next.actionKey), lines: [say('openFailed')] });
     });
@@ -257,6 +267,7 @@ export function useConfirmFlow(): ConfirmFlow {
       } else {
         setBusy(false);
         setError(outcome.error?.message ?? say('commandFailed'));
+        setUnknown(outcome.outcome === 'unknown');
       }
     })().catch(() => {
       // 보내지 못했다(연결 끊김): '처리 중'을 풀고, 같은 창에서 다시 누르면 같은 요청번호로 다시 보낸다.
@@ -268,12 +279,12 @@ export function useConfirmFlow(): ConfirmFlow {
   const element = (
     <>
       {view && separate && request?.orderId ? (
-        <ReturnDialog
+        <Suspense fallback={null}><ReturnDialog
           orderId={request.orderId}
           {...(request.lineIds?.length ? { lineIds: request.lineIds } : {})}
           onClose={close}
           onNotice={(title, line) => { close(); setNotice({ title, lines: [line] }); }}
-        />
+        /></Suspense>
       ) : null}
       {view && draft && command ? (
         <ConfirmDialog
@@ -285,7 +296,7 @@ export function useConfirmFlow(): ConfirmFlow {
           onConfirm={confirm}
           onClose={close}
           busy={busy}
-          disabled={spent}
+          disabled={spent || (unknown && !connection.online)}
           requestId={draft.requestId}
         >
           {view.counts?.length ? <CountCells counts={view.counts} onChange={changeCount} /> : null}

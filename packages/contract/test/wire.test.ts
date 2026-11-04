@@ -33,6 +33,7 @@ const PAYLOADS: { [T in CommandType]: CommandPayloads[T] } = {
   'payment_promise.set': { orderId: 'o21', payerOrderId: null, lineIds: ['o21-l1'] },
   'promise.change': { orderId: 'o21', kind: 'return', lines: [{ lineId: 'o21-l1', quantity: 1 }], promise: { mode: 'store', slot: { day: '2026-12-28', slotKey: 'night' } } },
   'order.create': { draft: structuredClone(draft), choices: [{ sectionKey: 'gear', methodKey: 'card', discountKey: 'ten_percent' }, { sectionKey: 'lift', methodKey: 'later', payerOrderId: 'o22' }], payerOrderId: null },
+  'order.customer_pickup': { orderId: 'o21', enabled: true, expected: false },
   'deposit.take': { orderId: 'o21', ruleKey: 'lift_ticket_card', lines, amount: 10_000, methodKey: 'cash' },
   'deposit.return': { orderId: 'o21', ruleKey: 'lift_ticket_card', lines, amount: 10_000, refundMethodKey: 'offset_due' },
   'field.collect': { taskId: 'collect:o21', orderId: 'o21', amount: 35_000, methodKey: 'cash' },

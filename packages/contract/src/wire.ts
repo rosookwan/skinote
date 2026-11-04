@@ -10,6 +10,10 @@ import { ACTION_KEYS, DEVICE_CLASS_KEYS } from './vocab.ts';
 import { COMMAND_TYPES, type AnyCommandEnvelope, type CommandType, type QueryName, type QueryParams, type ViewParams } from './client.ts';
 import type { ChallengeRequest, DeviceBlockRequest, EnrollRequest, LoginRequest, OpenEnrollRequest, StaffListRequest, StaffPinRequest } from './auth.ts';
 import { SETTINGS_TAB_KEYS, TICKET_TAB_KEYS } from './sheets.ts';
+import {
+  BATCH_LIMITS, CLOCK_ANCHOR_PATTERN, OVERRIDE_REASON_MAX, SNAPSHOT_LIMITS, offlineCommandTypes, type BatchRequest, type ClosingApproveRequest,
+  type DeliverRequest, type DeviceReport, type HeartbeatRequest, type QueuedEnvelope, type SnapshotRequest,
+} from './offline.ts';
 
 // ── 작은 검사 말(DSL) ──────────────────────────────────────────────────
 
@@ -225,6 +229,7 @@ function shapes(maxQuantity: number) {
   });
   const draft = obj({
     channel: lit('walk_in', 'phone'),
+    customerPickup: opt(bool),
     leader: obj({ name, phone: str({ max: 15, pattern: /^\d*$/ }), party: int(0, WIRE_LIMITS.party) }),
     items: arr(obj({ productKey: key, variantKey: opt(key), quantity }), { max: WIRE_LIMITS.lines }),
     pickup: promise,
@@ -326,6 +331,7 @@ function commandRules(maxQuantity: number): Record<CommandType, Rule> {
       orderId: id, kind: lit('pickup', 'return'), lines: arr(obj({ lineId: id, quantity: s.quantity }), { max: WIRE_LIMITS.lines }), promise: s.promise,
     }),
     'order.create': obj({ draft: s.draft, choices: arr(s.choice, { max: 10 }), payerOrderId: nullable(id) }),
+    'order.customer_pickup': obj({ orderId: id, enabled: bool(), expected: bool() }),
     'deposit.take': obj({ orderId: id, ruleKey: key, lines: s.lines, amount: money, methodKey: key }),
     'deposit.return': obj({ orderId: id, ruleKey: key, lines: s.lines, amount: money, refundMethodKey: key }),
     'field.collect': obj({ taskId: id, orderId: id, amount: money, methodKey: key }),
@@ -336,8 +342,10 @@ function commandRules(maxQuantity: number): Record<CommandType, Rule> {
     'field.deposit_return': obj({ taskId: id, orderId: id, ruleKey: key, lines: s.lines, amount: money }),
     'cash.transfer': obj({ vehicleId: id, amount: money }),
     'cash.transfer_confirm': obj({ transferId: id, countedAmount: money, reasonKey: opt(key), reasonNote: opt(note) }),
+    // 마감: 기기는 전송 대기 차량을 넘기는 승인(unsynced)만 보낸다. links · override는 서버가 적는 칸이라 받지 않는다(work/impl-offline/plan.md O12).
     'closing.close': obj({
       date, drawerCounts: arr(s.closingCount, { max: 20 }), deferredTransferIds: arr(id, { max: 50 }), overrideReason: opt(note),
+      unsynced: opt(obj({ approvalId: str({ min: 22, max: 22, pattern: B64URL }), reason: str({ min: 1, max: OVERRIDE_REASON_MAX, text: true }) })),
     }),
     'setting.set': obj({ changes: arr(s.ruleChange, { max: WIRE_LIMITS.ruleChanges }) }),
     'registry.update': obj({ changes: arr(s.registryOp, { min: 1, max: WIRE_LIMITS.registryOps }) }),
@@ -386,8 +394,8 @@ function expectRule(): Rule {
   });
 }
 
-/** 보냄 대기 명령만의 칸(서버 모드는 온라인만, plan §0 · §5-2). */
-export const QUEUE_FIELDS = ['deviceSeq', 'ageMs', 'clockAnchor', 'recordedBy', 'replay'] as const;
+/** 보냄 대기 명령만의 칸(온라인 명령 길 api/v2/command는 받지 않는다: 묶음 길 commands:batch만, work/impl-offline/plan.md §4-3). */
+export const QUEUE_FIELDS = ['deviceSeq', 'ageMs', 'clockAnchor', 'madeAt', 'recordedBy', 'replay'] as const;
 
 const ENVELOPE_KEYS = new Set(['type', 'commandVersion', 'requestId', 'basis', 'expect', 'dependsOn', 'payload']);
 
@@ -414,17 +422,112 @@ export function parseEnvelope(value: unknown, options: EnvelopeOptions = {}):
   if (typeof type !== 'string' || !(COMMAND_TYPES as readonly string[]).includes(type)) {
     return { ok: false, code: 'UNKNOWN_COMMAND', problems: ['type: 모르는 명령'] };
   }
+  checkEnvelopeCore(value, type as CommandType, options, out);
+  if (out.length) return { ok: false, code: 'BAD_INPUT', problems: out };
+  return { ok: true, envelope: value as unknown as AnyCommandEnvelope };
+}
+
+/** 봉투의 공통 칸(type · commandVersion · requestId · basis · expect · dependsOn · payload) 검사. */
+function checkEnvelopeCore(value: Record<string, unknown>, type: CommandType, options: EnvelopeOptions, out: string[]): void {
   const { requestId } = common();
   if (value.commandVersion !== 1) add(out, 'commandVersion', '1이어야 한다');
   requestId.check(value.requestId, 'requestId', out);
   obj({ epoch: str({ max: 64, pattern: EPOCH }), rev: int(0, Number.MAX_SAFE_INTEGER) }).check(value.basis, 'basis', out);
   if (value.expect !== undefined) expectRule().check(value.expect, 'expect', out);
   if (value.dependsOn !== undefined) arr(requestId, { max: WIRE_LIMITS.dependsOn }).check(value.dependsOn, 'dependsOn', out);
-  const payload = commandRules(options.maxQuantity ?? WIRE_LIMITS.quantity)[type as CommandType];
+  const payload = commandRules(options.maxQuantity ?? WIRE_LIMITS.quantity)[type];
   if (value.payload === undefined) add(out, 'payload', '빠진 칸');
   else payload.check(value.payload, 'payload', out);
+}
+
+// ── 보냄 대기 봉투 · 기사 기기의 길(work/impl-offline/plan.md §4) ─────────────────────
+
+const QUEUED_ENVELOPE_KEYS = new Set([...ENVELOPE_KEYS, ...QUEUE_FIELDS]);
+const SEQ_MAX = 2 ** 31 - 1;
+
+export interface QueuedEnvelopeOptions extends EnvelopeOptions {
+  /** 보낸 기기의 종류: 끊긴 채 넣을 수 있는 명령(sys_offline_commands ∩ 명령)이 아니면 OFFLINE_NOT_ALLOWED. */
+  deviceKind: 'pos' | 'driver_tablet' | 'driver_phone';
+}
+
+/**
+ * 보냄 대기 봉투 검사(§4-3): 온라인 봉투의 칸 + deviceSeq(1 ~ 2³¹−1) · ageMs(0 ~ 366일) · clockAnchor(`mono|wall|jump-…`) · madeAt(ISO 시각) ·
+ * recordedBy(직원 · 세션 id · 서명 86자). replay는 시즌 1에 없다(없거나 null). 통과하면 같은 값(복사 없음).
+ * 실패: UNKNOWN_COMMAND(모르는 명령), OFFLINE_NOT_ALLOWED(이 기기 종류가 끊긴 채 넣지 못하는 명령), BAD_INPUT(그 밖의 모양). 서버는 이 검사 전에
+ * 받은 그대로의 항목을 해시해 서명을 본다(O5): 검사는 값을 고치지 않는다.
+ */
+export function parseQueuedEnvelope(value: unknown, options: QueuedEnvelopeOptions):
+  | { ok: true; envelope: QueuedEnvelope }
+  | WireFailure<'UNKNOWN_COMMAND' | 'OFFLINE_NOT_ALLOWED' | 'BAD_INPUT'> {
+  if (!isObject(value)) return { ok: false, code: 'BAD_INPUT', problems: ['본문: 객체여야 한다'] };
+  const out: string[] = [];
+  for (const k of Object.keys(value)) if (!QUEUED_ENVELOPE_KEYS.has(k)) add(out, k, '모르는 칸');
+  const type = value.type;
+  if (typeof type !== 'string' || !(COMMAND_TYPES as readonly string[]).includes(type)) {
+    return { ok: false, code: 'UNKNOWN_COMMAND', problems: ['type: 모르는 명령'] };
+  }
+  if (!(offlineCommandTypes(options.deviceKind) as readonly string[]).includes(type)) {
+    return { ok: false, code: 'OFFLINE_NOT_ALLOWED', problems: ['type: 연결 끊김 중 불가'] };
+  }
+  checkEnvelopeCore(value, type as CommandType, options, out);
+  const { id, isoTime } = common();
+  int(1, SEQ_MAX).check(value.deviceSeq, 'deviceSeq', out);
+  int(0, BATCH_LIMITS.ageMsMax).check(value.ageMs, 'ageMs', out);
+  str({ max: 40, pattern: CLOCK_ANCHOR_PATTERN }).check(value.clockAnchor, 'clockAnchor', out);
+  isoTime.check(value.madeAt, 'madeAt', out);
+  obj({ staffId: id, sessionId: id, signature: str({ min: 86, max: 86, pattern: B64URL }) }).check(value.recordedBy, 'recordedBy', out);
+  if (value.replay !== undefined && value.replay !== null) add(out, 'replay', '시즌 1에는 없다');
   if (out.length) return { ok: false, code: 'BAD_INPUT', problems: out };
-  return { ok: true, envelope: value as unknown as AnyCommandEnvelope };
+  return { ok: true, envelope: value as unknown as QueuedEnvelope };
+}
+
+/** 기사 기기가 알리는 것(DeviceReport). */
+function reportRule(): Rule {
+  const { isoTime, flag } = common();
+  const count = int(0, 1_000_000);
+  return obj({
+    pendingCount: count, unconfirmedCount: count, oldestPendingAt: opt(isoTime), lastSeq: int(0, SEQ_MAX),
+    clockOffsetMs: int(-BATCH_LIMITS.ageMsMax, BATCH_LIMITS.ageMsMax), appVersion: str({ max: 40, pattern: /^[A-Za-z0-9._-]*$/ }), offlineCapable: flag,
+    localFirst: flag, visibility: lit('visible', 'hidden'), unreadable: count, stuckSeq: opt(int(1, SEQ_MAX)),
+    copy: opt(obj({ epoch: str({ max: 64, pattern: EPOCH }), rev: int(0, Number.MAX_SAFE_INTEGER) })),
+  });
+}
+
+function offlineRules() {
+  const { id, requestId, date } = common();
+  const report = reportRule();
+  const items = arr(rule((v, p, out) => { if (!isObject(v)) add(out, p, '객체여야 한다'); }), { min: 1, max: BATCH_LIMITS.commands });
+  return {
+    snapshot: obj({
+      known: opt(obj({ epoch: str({ max: 64, pattern: EPOCH }), rev: int(0, Number.MAX_SAFE_INTEGER), hash: b64url(43), configRev: int(0, Number.MAX_SAFE_INTEGER) })),
+      fromSeq: int(1, SEQ_MAX), pendingTaskIds: arr(id, { max: SNAPSHOT_LIMITS.pendingTaskIds }), onlinePending: arr(requestId, { max: SNAPSHOT_LIMITS.onlinePending }), report,
+    }),
+    batch: obj({ report, commands: items }),
+    heartbeat: obj({ report }),
+    deliver: obj({ deviceId: requestId, nonce: b64url(43), signature: b64url(86), report, commands: items }),
+    closingApprove: obj({ date, ownPin: str({ min: 4, max: 6, pattern: /^\d{4,6}$/ }) }),
+  };
+}
+let offlineRuleCache: ReturnType<typeof offlineRules> | undefined;
+
+export interface OfflineBodies {
+  snapshot: SnapshotRequest;
+  batch: BatchRequest;
+  heartbeat: HeartbeatRequest;
+  deliver: DeliverRequest;
+  closingApprove: ClosingApproveRequest;
+}
+
+/** 기사 기기의 길(사본 · 묶음 · 심장 박동 · 전달 · 마감 승인)의 겉모양 검사. 묶음의 항목은 여기서 보지 않는다(항목마다 결과, O6). */
+export function parseOfflineBody<K extends keyof OfflineBodies>(kind: K, value: unknown): { ok: true; body: OfflineBodies[K] } | WireFailure<'BAD_INPUT'> {
+  const out = problemsOf((offlineRuleCache ??= offlineRules())[kind], value);
+  return out.length ? { ok: false, code: 'BAD_INPUT', problems: out } : { ok: true, body: value as OfflineBodies[K] };
+}
+
+/** 기기가 알리는 것만(시험 · 서버의 기록). */
+export function parseDeviceReport(value: unknown): { ok: true; report: DeviceReport } | WireFailure<'BAD_INPUT'> {
+  const out = problemsOf(reportRule(), value);
+  return out.length ? { ok: false, code: 'BAD_INPUT', problems: out } : { ok: true, report: value as DeviceReport };
 }
 
 // ── 조회 ────────────────────────────────────────────────────────────────

@@ -92,7 +92,8 @@ test('a command in one session reaches the other session\'s stream within a seco
   try {
     const stream = await openStream(b);
     const first = await stream.waitFor(e => e.event === 'head');
-    assert.deepEqual(Object.keys(first.data).sort(), ['configRev', 'epoch', 'rev']);
+    // 머리는 판 번호뿐(차량 연결 판 linkRev 포함, work/impl-offline/plan.md O11).
+    assert.deepEqual(Object.keys(first.data).sort(), ['configRev', 'epoch', 'linkRev', 'rev']);
     const started = Date.now();
     const out = await (await a.command({
       type: 'setting.set', commandVersion: 1, requestId: newRequestId(), basis: { epoch: first.data.epoch, rev: first.data.rev },

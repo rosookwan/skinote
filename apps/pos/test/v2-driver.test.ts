@@ -115,12 +115,12 @@ describe('배달 목록(ledgerView delivery_list)', () => {
 });
 
 describe('V7 업무 판(taskSheet) — 16:55 최하은 팀', () => {
-  it('시안의 글: 제목 · 팀 · 품목 표(적재 16:40 · 배달 미처리) · 돈 줄 · 큰 버튼 넷 · 반납 일정 · 완료 0 · 잔여 1 · 배달 처리 · 6개', async () => {
+  it('시안의 글: 제목 · 팀 · 품목 표(적재 16:40 · 배달 미처리) · 돈 줄 · 큰 버튼 넷 · 반납 일정 · 완료 0 · 전송 대기 0 · 잔여 1(목록 바닥줄과 같은 모양, §18 R4-11) · 배달 처리 · 6개', async () => {
     const { client } = at(75);
     const view = await client.query('taskSheet', { taskId: 'deliver:o26', deviceClass: 'driver_tablet' });
     expect(view).toMatchObject({
       taskId: 'deliver:o26', orderId: 'o26', kind: 'deliver', title: '배달 · 17:00 만선 광장', team: '최하은 · 0026', teamName: '최하은', last4: '0026',
-      contact: '010-****-0026 · 3명', phone: '010-****-0026', progress: '완료 0 · 잔여 1', vehicle: { id: 'v1', label: '1호 차량' },
+      contact: '010-****-0026 · 3명', phone: '010-****-0026', progress: '완료 0 · 전송 대기 0 · 잔여 1', vehicle: { id: 'v1', label: '1호 차량' },
       returnPlan: ['오늘 22:10 · 만선 티롤 앞 · 1호 차량'],
       primary: { label: '배달 처리 · 6개', alts: ['배달 처리 · 6개', '배달 처리'], enabled: true, actionKey: 'stamp.issue' },
     });
@@ -394,7 +394,7 @@ describe('수거 업무 판 · 수거 현장의 권 보증금 반환(field.depos
   it('첫 매장 16:10 박준호 팀 수거 업무: 돈 줄은 미수 한 줄(보증금 없음), 수거 확인 창은 보증금 줄 · 이어진 명령 없이 `수거 처리 · 6개 · 3매`', async () => {
     const { client } = at(30);
     const view = await client.query('taskSheet', { taskId: 'collect:o22' });
-    expect(view).toMatchObject({ kind: 'collect', title: '수거 · 22:00 설천 주차장', progress: '완료 0 · 잔여 12' });
+    expect(view).toMatchObject({ kind: 'collect', title: '수거 · 22:00 설천 주차장', progress: '완료 0 · 전송 대기 0 · 잔여 12' });
     expect(view.lines.map((l) => [l.label, l.qtyText])).toEqual([['스키', '2대'], ['보드', '1대'], ['헬멧', '3개'], ['야간권 성인', '3매']]);
     expect(view.money?.map(text)).toEqual(['미수 120,000원 · 12/24 계좌이체 수납']);
     expect(view.primary).toMatchObject({ label: '수거 처리 · 6개 · 3매', actionKey: 'stamp.collect' });
@@ -408,7 +408,7 @@ describe('수거 업무 판 · 수거 현장의 권 보증금 반환(field.depos
     const { client } = at(30, true, 'numbered');
     const view = await client.query('taskSheet', { taskId: 'collect:o22' });
     // 바닥줄 가운데는 1호 차량 수거 목록의 완료 · 잔여(16:30 · 21:50 · 22:00 · 22:10 업무 중 내준 것이 있는 12).
-    expect(view).toMatchObject({ kind: 'collect', title: '수거 · 22:00 설천 주차장', progress: '완료 0 · 잔여 12' });
+    expect(view).toMatchObject({ kind: 'collect', title: '수거 · 22:00 설천 주차장', progress: '완료 0 · 전송 대기 0 · 잔여 12' });
     expect(view.returnPlan).toBeUndefined();
     expect(view.columns.map((c) => c.label)).toEqual(['품목', '수량', '수거']);
     expect(view.lines.map((l) => [l.label, l.qtyText])).toEqual([['스키', '2대'], ['보드', '1대'], ['헬멧', '3개'], ['야간권 성인', '3매']]);
@@ -471,7 +471,8 @@ describe('끊긴 기사 기기(보냄 대기, sync 8-2)', () => {
     expect(client.connection()).toMatchObject({ online: false, pendingCount: 1, lastSyncAt: iso(16, 55) });
     expect((await client.pending()).map((p) => p.summary)).toEqual(['최하은 · 0026 배달 16:55']);
     const view = await client.query('taskSheet', { taskId: 'deliver:o26' });
-    expect(lineStamps(view, 'deliver')[0]).toEqual({ stepKey: 'issue', state: 'done', label: '배달', at: iso(16, 55), pending: true });
+    // 업무 판의 점선 도장도 목록과 같은 누름 메모(work/impl-offline/plan.md §8-1).
+    expect(lineStamps(view, 'deliver')[0]).toEqual({ stepKey: 'issue', state: 'done', label: '배달', at: iso(16, 55), pending: true, pressNote: { lines: ['16:55 처리 · 전송 대기'] } });
     const list = await client.ledgerView('delivery_list', {});
     expect(stampOf(list.rows[0]!.cells['stamp:deliver'])).toMatchObject({ state: 'done', pending: true, pressNote: { lines: ['16:55 처리 · 전송 대기'] } });
     expect(list.metrics.map((m) => (m.unit === 'count' ? m.value : null))).toEqual([0, 1, 0]);

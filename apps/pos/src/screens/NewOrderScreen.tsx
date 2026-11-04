@@ -26,6 +26,7 @@ import { CheckoutDialog } from '../components/CheckoutDialog.tsx';
 import { ChoiceSheet, NoticeDialog } from '../components/NoticeDialog.tsx';
 import { usePosHeader } from '../components/PosHeader.tsx';
 import { TextSheet } from '../components/TextSheet.tsx';
+import { useCounterLayout } from '../components/CounterWorkspace.tsx';
 
 /** 종류 격자의 칸 수(pos 3 × 3, ui 3-10). 줄 수는 잰 높이로 센다. */
 export const TILE_COLUMNS = 3;
@@ -33,6 +34,11 @@ export const TILE_COLUMNS = 3;
 const NAME_MAX = 20;
 /** 서버 시각이 바꾸는 것(지난 반납 타임)을 다시 읽는 간격. */
 const REFRESH_MS = 60_000;
+
+/** 이름·품목이 갖춰진 뒤 유효한 기본 일정이면 결제로 바로 간다. 일정이 미완성이면 일정 화면을 연다. */
+export function nextIntakeStep(ready: OrderDraftView['ready']): 'pay' | 'schedule' | null {
+  return !ready.items ? null : ready.schedule ? 'pay' : 'schedule';
+}
 
 type Sheet =
   | { kind: 'name' }
@@ -48,10 +54,10 @@ type Sheet =
 // ── 쪽 · 맞춤(잰 크기로 세는 모양 계산, 업무 규칙이 아님) ─────────────────────────
 
 /** 한 쪽의 종류 타일 수: 잰 높이에 들어가는 타일 줄 수 × 칸 수. 재기 전에는 모두. */
-export function tilesPerPage(heightPx: number | undefined, tilePx: number, gapPx: number, count: number): number {
+export function tilesPerPage(heightPx: number | undefined, tilePx: number, gapPx: number, count: number, columns = TILE_COLUMNS): number {
   if (!heightPx) return Math.max(1, count);
   const rows = Math.max(1, Math.floor((heightPx + gapPx) / (tilePx + gapPx)));
-  return rows * TILE_COLUMNS;
+  return rows * columns;
 }
 
 /**
@@ -122,10 +128,12 @@ function useOrderDraftView(params: OrderDraftParams): OrderDraftView | null {
  * `품목 추가 · 박준호 팀`, 바닥줄 `‹ 접수증`, 주 버튼 `다음 · 결제`(품목 추가의 확정 창). 품목 추가의 초안은 이 화면에만 있다(새 접수 초안을 건드리지 않는다).
  */
 export function NewOrderScreen({ step, addTo }: { step: NewOrderStep; addTo?: string }) {
-  const header = usePosHeader('other');
+  const header = usePosHeader('other', undefined, undefined, { compact: true });
+  const layout = useCounterLayout();
   const adding = addTo !== undefined;
   const [order, setOrder] = useState<NewOrderState>(() => (adding ? EMPTY_NEW_ORDER : loadNewOrder()));
   const [sheet, setSheet] = useState<Sheet | null>(null);
+  const [review, setReview] = useState(false);
   const view = useOrderDraftView({ ...draftParams(order), ...(adding ? { addTo } : {}) });
   // 종류 격자의 쪽: 한 쪽의 타일 수는 격자가 잰 높이로 센다(ItemsBody가 알린다), 쪽 넘김은 바닥줄.
   const [tilePage, setTilePage] = useState(0);
@@ -136,6 +144,7 @@ export function NewOrderScreen({ step, addTo }: { step: NewOrderStep; addTo?: st
   const showKind = (kindKey: string) => {
     const index = view?.tiles.findIndex((tile) => tile.key === kindKey) ?? -1;
     if (index >= 0) setTilePage(Math.floor(index / perPage));
+    setReview(false);
   };
 
   // 초안은 화면을 떠나도 남는다(‹ 장부 · 머리줄 장부 · 끝 4자리로 연 접수증 · 브라우저 뒤로): 손님 응대로 끊겨도 `새 접수`를 다시 누르면
@@ -156,7 +165,7 @@ export function NewOrderScreen({ step, addTo }: { step: NewOrderStep; addTo?: st
     setOrder(EMPTY_NEW_ORDER);
     go({ name: 'ledger', date: null });
   };
-  const toStep = (next: NewOrderStep) => go({ name: 'newOrder', step: next }, { replace: true });
+  const toStep = (next: NewOrderStep) => { setReview(false); go({ name: 'newOrder', step: next }, { replace: true }); };
 
   const ready = view?.ready ?? { items: false, schedule: false };
   const stepTab = (text: string) => {
@@ -165,10 +174,10 @@ export function NewOrderScreen({ step, addTo }: { step: NewOrderStep; addTo?: st
   };
 
   return (
-    <div className="sn-screen">
+    <div className={'sn-screen pos-counter pos-counter-new' + (layout.compact ? ' is-compact' : '')}>
       {header.element}
       <div className="sn-desk pos-slip-desk">
-        <article className="sn-slip pos-new" aria-label={step === 'items' ? say('newOrderItemsAria') : say('newOrderScheduleAria')}>
+        {(!layout.compact || !review) ? <article className="sn-slip pos-new" aria-label={step === 'items' ? say('newOrderItemsAria') : say('newOrderScheduleAria')}>
           <header className="sn-slip-head">
             <div className="pos-new-head">
               <h1 className="sn-slip-title">{adding ? <TextFit input={{ mode: 'words', text: view?.add?.title ?? '' }} /> : say('newOrder')}</h1>
@@ -184,15 +193,23 @@ export function NewOrderScreen({ step, addTo }: { step: NewOrderStep; addTo?: st
           </header>
           {view && step === 'items' ? <ItemsBody view={view} order={order} change={change} setSheet={setSheet} tiles={tiles} onPerPage={setPerPage} adding={adding} /> : null}
           {view && step === 'schedule' && !adding ? <ScheduleBody view={view} order={order} change={change} setSheet={setSheet} /> : null}
-        </article>
-        {view ? (
+          {layout.compact && view ? <>
+            {step === 'schedule' ? <PickupChoice order={order} change={change} /> : null}
+            <PrimaryButton className="pos-new-go" label={step === 'items' ? say('selectedItems') : say('nextToPay')}
+              disabled={step === 'items' ? !view.ready.items : !view.ready.schedule}
+              onPress={() => step === 'items' ? setReview(true) : setSheet({ kind: 'pay' })} />
+          </> : null}
+        </article> : null}
+        {view && (!layout.compact || review) ? (
           step === 'items'
-            ? <ItemsSide view={view} order={order} change={change} onKind={showKind} onNext={() => (adding ? setSheet({ kind: 'pay' }) : toStep('schedule'))} adding={adding} />
-            : <ScheduleSide view={view} onNext={() => setSheet({ kind: 'pay' })} />
-        ) : <aside className="pos-side" />}
+            ? <ItemsSide view={view} order={order} change={change} onKind={showKind} onNext={() => { const next = nextIntakeStep(view.ready); if (next === 'pay') setSheet({ kind: 'pay' }); else if (next === 'schedule') toStep('schedule'); }} onSchedule={() => toStep('schedule')} adding={adding} />
+            : <ScheduleSide view={view} order={order} change={change} onNext={() => setSheet({ kind: 'pay' })} />
+        ) : null}
       </div>
       <NewOrderFooter
-        view={view} tiles={step === 'items' ? tiles : null} onTilePage={setTilePage} onBack={toLedger} adding={adding}
+        view={view} tiles={step === 'items' && !review ? tiles : null} onTilePage={setTilePage} onBack={review ? () => setReview(false) : toLedger} adding={adding}
+        compact={layout.compact}
+        {...(review ? { backLabel: say('stepItems') } : {})}
         {...(hasDraft(order) && !adding ? { onDiscard: () => setDiscarding(true) } : {})}
       />
       {view && sheet ? <Sheets key={sheetKey(sheet)} sheet={sheet} view={view} order={order} change={change} setSheet={setSheet} {...(adding ? { addTo } : {})} /> : null}
@@ -227,14 +244,16 @@ interface TilePaging {
 function ItemsBody({ view, order, change, setSheet, tiles, onPerPage, adding }: PartProps & { tiles: TilePaging; onPerPage: (perPage: number) => void; adding: boolean }) {
   const { viewport } = useUi();
   const profile = useDeviceProfile();
+  const columns = useCounterLayout().compact ? 2 : TILE_COLUMNS;
   const fonts = useFontsVersion();
   const bodyRef = useRef<HTMLDivElement>(null);
   const repRef = useRef<HTMLDivElement>(null);
   const body = useElementSize(bodyRef);
+  const rep = useElementSize(repRef);
   // 격자에 남는 높이 = 종이 본문 − 위아래 여백 − 대표자 줄 − 고르는 줄 둘(52 + 8 + 52) − 사이 둘. 격자는 위에 붙고 남는 자리는 맨 아래(큰 화면).
   // 품목 추가는 대표자 줄(과 그 사이)이 없다(그 접수의 대표자).
-  const fixed = profile.space.s * 2 + (adding ? 0 : profile.minTargetPx + profile.space.s) + (profile.minTargetPx * 2 + profile.space.s) + profile.space.s;
-  const perPage = tilesPerPage(body ? body.height - fixed : undefined, profile.minTargetPx + profile.space.xs, profile.space.s, view.tiles.length);
+  const fixed = profile.space.s * 2 + (adding ? 0 : (rep?.height ?? profile.minTargetPx) + profile.space.s) + (profile.minTargetPx * 2 + profile.space.s) + profile.space.s;
+  const perPage = tilesPerPage(body ? body.height - fixed : undefined, profile.minTargetPx + profile.space.xs, profile.space.s, view.tiles.length, columns);
   useIsoLayoutEffect(() => { if (perPage !== tiles.perPage) onPerPage(perPage); }, [perPage, tiles.perPage]);
   const name = order.draft.leader.name.trim();
   const phone = view.leader.phone;
@@ -245,7 +264,7 @@ function ItemsBody({ view, order, change, setSheet, tiles, onPerPage, adding }: 
   const openTile = view.tiles.find((tile) => tile.open);
   const shown = view.tiles.slice(tiles.page * perPage, (tiles.page + 1) * perPage);
   // 격자의 줄 자리는 쪽마다 같다(마지막 쪽의 타일이 적어도 고르는 줄이 올라오지 않게).
-  const gridRows = Math.max(1, Math.ceil(Math.min(perPage, view.tiles.length) / TILE_COLUMNS));
+  const gridRows = Math.max(1, Math.ceil(Math.min(perPage, view.tiles.length) / columns));
 
   const openKind = (key: string) => change(withOpenKind(order, key));
   const quantity = picker?.quantity;
@@ -277,7 +296,7 @@ function ItemsBody({ view, order, change, setSheet, tiles, onPerPage, adding }: 
       </div>
       )}
 
-      <div className="pos-new-kinds" role="group" aria-label={say('kindGroup')} style={{ gridTemplateRows: 'repeat(' + gridRows + ', calc(var(--sn-target) + var(--sn-space-xs)))' }}>
+      <div className="pos-new-kinds" role="group" aria-label={say('kindGroup')} style={{ gridTemplateColumns: 'repeat(' + columns + ', minmax(0, 1fr))', gridTemplateRows: 'repeat(' + gridRows + ', calc(var(--sn-target) + var(--sn-space-xs)))' }}>
         {shown.map((tile) => <KindTile key={tile.key} tile={tile} onPress={openKind} />)}
       </div>
 
@@ -341,7 +360,7 @@ function PanelRows({ rows, extra, render, onShort }: { rows: DraftLineView[]; ex
   );
 }
 
-function ItemsSide({ view, order, change, onKind, onNext, adding }: Omit<PartProps, 'setSheet'> & { onKind: (kindKey: string) => void; onNext: () => void; adding: boolean }) {
+function ItemsSide({ view, order, change, onKind, onNext, onSchedule, adding }: Omit<PartProps, 'setSheet'> & { onKind: (kindKey: string) => void; onNext: () => void; onSchedule: () => void; adding: boolean }) {
   const { viewport } = useUi();
   // 선택 품목 줄이 다 들어가지 않으면(1024×569 · 529) 합계의 장비 · 리프트권 줄을 빼고 합계 · 보증금만 둔다(창 크기 · 줄 수가 바뀌면 다시).
   const signature = [viewport.width, viewport.height, view.selected.length].join('|');
@@ -372,8 +391,12 @@ function ItemsSide({ view, order, change, onKind, onNext, adding }: Omit<PartPro
           </span>
         ))}
       </div>
+      {!adding ? <button type="button" className="sn-button pos-new-defaults" aria-label={say('counterSchedule')} onClick={onSchedule}>
+        {view.summary.filter((row) => row.key === 'pickup' || row.key === 'return').map((row) => <TextFit key={row.key} input={{ mode: 'alts', alts: [row.title + ' · ' + row.note] }} lines={2} />)}
+        {order.draft.customerPickup ? <span>{say('customerPickup')}</span> : null}
+      </button> : null}
       {view.ready.itemsReason ? <p className="pos-new-reason">{view.ready.itemsReason}</p> : null}
-      <PrimaryButton className="pos-new-go" label={adding ? say('nextToPay') : say('nextToSchedule')} disabled={!view.ready.items} onPress={onNext} />
+      <PrimaryButton className="pos-new-go" label={adding || view.ready.schedule ? say('nextToPay') : say('nextToSchedule')} disabled={!view.ready.items} onPress={onNext} />
     </aside>
   );
 }
@@ -435,7 +458,14 @@ function ScheduleBody({ view, order, change, setSheet }: PartProps) {
   );
 }
 
-function ScheduleSide({ view, onNext }: { view: OrderDraftView; onNext: () => void }) {
+function PickupChoice({ order, change }: Pick<PartProps, 'order' | 'change'>) {
+  return <button type="button" className="sn-button" role="checkbox" aria-checked={order.draft.customerPickup === true}
+    onClick={() => change({ ...order, draft: { ...order.draft, customerPickup: order.draft.customerPickup !== true } })}>
+    <span aria-hidden="true">{order.draft.customerPickup ? '☑' : '□'}</span><span>{say('customerPickup')}</span>
+  </button>;
+}
+
+function ScheduleSide({ view, order, change, onNext }: Pick<PartProps, 'view' | 'order' | 'change'> & { onNext: () => void }) {
   return (
     <aside className="pos-side pos-new-side" aria-label={say('orderSummary')}>
       <h2 className="pos-new-panel-title">{say('orderSummary')}</h2>
@@ -444,6 +474,7 @@ function ScheduleSide({ view, onNext }: { view: OrderDraftView; onNext: () => vo
         extra={<p className="pos-new-note">{say('perItemSchedule')}</p>}
         render={(row) => <ListRow2 key={row.key} title={row.title} note={row.note} {...(row.items ? { items: row.items } : {})} />}
       />
+      <PickupChoice order={order} change={change} />
       <PrimaryButton className="pos-new-go" label={say('nextToPay')} disabled={!view.ready.schedule} onPress={onNext} />
     </aside>
   );
@@ -451,21 +482,21 @@ function ScheduleSide({ view, onNext }: { view: OrderDraftView; onNext: () => vo
 
 // ── 바닥줄: ‹ 장부 · 팀 한 줄 · 종류 격자의 쪽 ────────────────────────────────
 
-function NewOrderFooter({ view, tiles, onTilePage, onBack, onDiscard, adding }: {
-  view: OrderDraftView | null; tiles: TilePaging | null; onTilePage: (page: number) => void; onBack: () => void; onDiscard?: () => void; adding: boolean;
+function NewOrderFooter({ view, tiles, onTilePage, onBack, onDiscard, adding, backLabel, compact }: {
+  view: OrderDraftView | null; tiles: TilePaging | null; onTilePage: (page: number) => void; onBack: () => void; onDiscard?: () => void; adding: boolean; backLabel?: string; compact: boolean;
 }) {
   return (
     <FooterBar
       metrics={[]}
-      {...(tiles && tiles.pages > 1 ? { pager: <Pager label={say('kindGroup')} page={tiles.page} pageCount={tiles.pages} onChange={onTilePage} /> } : {})}
+      {...(tiles && tiles.pages > 1 ? { pager: <Pager {...(!compact ? { label: say('kindGroup') } : {})} page={tiles.page} pageCount={tiles.pages} onChange={onTilePage} /> } : {})}
     >
       <div className="pos-footer-back">
         <button type="button" className="sn-button" onClick={onBack}>
           <Icon name="left" />
-          <span>{adding ? say('toSlip') : t('home')}</span>
+          <span>{backLabel ?? (adding ? say('toSlip') : t('home'))}</span>
         </button>
         {onDiscard ? <button type="button" className="sn-button" onClick={onDiscard}>{ACTION_LABELS.cancel}</button> : null}
-        {view ? <TextFit input={{ mode: 'alts', alts: footerAlts(view.footer) }} /> : null}
+        {view && !compact ? <TextFit input={{ mode: 'alts', alts: footerAlts(view.footer) }} /> : null}
       </div>
     </FooterBar>
   );

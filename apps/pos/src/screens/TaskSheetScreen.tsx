@@ -340,7 +340,7 @@ export function TaskSheetScreen({ taskId, device }: { taskId: string; device: De
   return (
     <div className="sn-screen">
       {header}
-      <ConnectionStrip online={connection.online} pendingCount={connection.pendingCount} {...(connection.lastSyncAt ? { lastSyncAt: connection.lastSyncAt } : {})} />
+      <ConnectionStrip {...connection} />
       {oneColumn ? (
         <div className="sn-desk">
           <section className="sn-sheet pos-task-sheet is-one" aria-label={say('taskOfTeam')}>

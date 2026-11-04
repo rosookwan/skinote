@@ -371,3 +371,60 @@ describe('서버 모드의 매장 설정 길(features-1 E15 · E13c): 비밀번�
     await expect(refused.client.blockDevice('d1')).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 });
+
+describe('기사 기기의 길(work/impl-offline/plan.md §7-7): postJson · 심장 박동 · linkRev', () => {
+  const REPORT = { pendingCount: 0, unconfirmedCount: 0, lastSeq: 0, clockOffsetMs: 0, appVersion: 'v1', offlineCapable: false, localFirst: true, visibility: 'visible' as const, unreadable: 0 };
+  const HB = { ...HEAD, linkRev: 1, heartbeatMs: 20_000, restoredUpToRev: null, policy: {} };
+
+  it('postJson: 됨(머리를 센다) · 거절(코드 · retry-after) · 보내지 못함(오프라인 여부) · 401은 세션 끝, keepalive를 넘긴다', async () => {
+    const tooMany = new Response(JSON.stringify({ ok: false, service: 'skinote', code: 'RATE_LIMITED' }), { status: 429, headers: { 'content-type': 'application/json', 'retry-after': '7' } });
+    const { client, calls, lost } = setup([json(200, HB), tooMany, apiError(409, 'BUSY'), new TypeError('network'), apiError(401, 'SESSION_EXPIRED')]);
+    expect(await client.postJson('api/v2/heartbeat', { report: REPORT }, { keepalive: true })).toMatchObject({ kind: 'ok', body: { rev: 3 } });
+    expect(await client.postJson('api/v2/heartbeat', { report: REPORT })).toEqual({ kind: 'status', status: 429, code: 'RATE_LIMITED', body: { ok: false, service: 'skinote', code: 'RATE_LIMITED' }, retryAfterMs: 7_000 });
+    expect(await client.postJson('api/v2/commands:batch', {})).toMatchObject({ kind: 'status', status: 409, code: 'BUSY' });
+    expect(await client.postJson('api/v2/commands:batch', {})).toEqual({ kind: 'failed', offline: false });
+    expect(await client.postJson('api/v2/snapshot', {})).toMatchObject({ kind: 'status', status: 401 });
+    expect(lost).toEqual(['SESSION_EXPIRED']);
+    expect(calls[0]!.headers['x-skinote-csrf']).toBe(SESSION.csrf);
+  });
+
+  it('심장 박동 모드: 알림 연결이 살아 있어도 간격마다 POST heartbeat(기기의 알림), 답은 onHeartbeat로, 가려진 동안은 쉰다', async () => {
+    vi.useFakeTimers();
+    let visible = true;
+    const answers: unknown[] = [];
+    const { client, streams, calls } = setup([json(200, HB)], {
+      pollMs: 20_000, heartbeat: async () => REPORT, onHeartbeat: (answer) => answers.push(answer), visible: () => visible,
+    });
+    client.start();
+    streams[0]!.open();
+    streams[0]!.send('head', { epoch: 'e1', rev: 3, configRev: 1 });
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(calls.map((c) => [c.url, JSON.parse(c.body!).report.pendingCount])).toEqual([['https://pos.example/app/api/v2/heartbeat', 0]]);
+    expect(answers).toHaveLength(1);
+    visible = false;
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(calls).toHaveLength(1);
+    // 다시 보일 때 곧바로(poke).
+    visible = true;
+    client.poke();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toHaveLength(2);
+    client.close();
+    vi.useRealTimers();
+  });
+
+  it('linkRev만 바뀌어도 알린다(카운터의 차량 표시가 다시 읽는다)', async () => {
+    vi.useFakeTimers();
+    const { client, streams } = setup([json(200, HEAD)]);
+    const heads: number[] = [];
+    client.subscribe((h) => heads.push(h.linkRev ?? -1));
+    client.start();
+    streams[0]!.open();
+    streams[0]!.send('head', { epoch: 'e1', rev: 3, configRev: 1, linkRev: 1 });
+    streams[0]!.send('head', { epoch: 'e1', rev: 3, configRev: 1, linkRev: 1 });
+    streams[0]!.send('head', { epoch: 'e1', rev: 3, configRev: 1, linkRev: 2 });
+    expect(heads).toEqual([2]);
+    client.close();
+    vi.useRealTimers();
+  });
+});

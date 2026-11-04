@@ -119,7 +119,8 @@ export function writeState(ctx: WriteContext): void {
     writeProjections(ctx, o, prevById.get(id) === undefined ? blankOrder(o) : prevById.get(id)!);
     ctx.touched.push({ scope: 'store', entityType: 'orders', entityId: id, aggregateType: 'order', aggregateId: id });
   }
-  for (const p of after.pins.slice(before.pins.length)) ctx.touched.push({ scope: 'store', entityType: 'task_pins', entityId: p.id });
+  for (const p of after.pins) if (canonicalJson(before.pins.find((x) => x.id === p.id) ?? null) !== canonicalJson(p))
+    ctx.touched.push({ scope: 'store', entityType: 'task_pins', entityId: p.id });
   if (canonicalJson(before.routeRanks) !== canonicalJson(after.routeRanks)) ctx.touched.push({ scope: 'store', entityType: 'route_positions', entityId: '*' });
   for (const c of after.closings.slice(before.closings.length)) ctx.touched.push({ scope: 'store', entityType: 'closings', entityId: c.date });
   for (const t of after.cashTransfers) {
@@ -144,9 +145,9 @@ function writeProjections(ctx: WriteContext, o: FxOrder, prev: FxOrder): void {
   const cancelled = isCancelledOrder(o) && !o.lines.some((l) => back(l) < l.issued);
   const payState = chargedAmount === 0 ? 'none' : due === 0 ? 'paid' : o.payerOrderId ? 'promised' : paid > 0 ? 'partial' : 'unpaid';
   run(ctx.db, `UPDATE orders SET status_key = ?, is_open = ?, charged_amount = ?, net_paid_amount = ?, due_amount = ?, credit_amount = ?, deposit_held_amount = ?,
-    pay_state_key = ?, updated_at = ?, updated_rev = ?, version = version + 1 WHERE shop_id = ? AND id = ?`,
+    pay_state_key = ?, customer_pickup = ?, updated_at = ?, updated_rev = ?, version = version + 1 WHERE shop_id = ? AND id = ?`,
   cancelled ? 'cancelled' : !open ? 'completed' : anyIssued ? 'in_use' : 'booked', open && !cancelled, chargedAmount, paid, due, Math.max(0, paid - chargedAmount), held,
-  payState, isoOf(ctx.now), ctx.rev, ctx.shopId, o.id);
+  payState, o.customerPickup === true ? 1 : 0, isoOf(ctx.now), ctx.rev, ctx.shopId, o.id);
   for (const l of o.lines) {
     const p = prev.lines.find((x) => x.id === l.id);
     if (p && canonicalJson(p) === canonicalJson(l)) continue;

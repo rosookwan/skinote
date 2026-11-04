@@ -35,10 +35,13 @@ export function execute(state: ShopState, envelope: AnyCommandEnvelope, ctx: Exe
     orderIds: ctx.orderIds ?? 'sequence',
     actor: { ...(staffId ? { staffId } : {}), name: ctx.actor.name, ...(ctx.actor.deviceId ? { deviceId: ctx.actor.deviceId } : {}) },
     ...(ctx.viewer ? { viewer: ctx.viewer } : {}),
+    ...(ctx.recordedAt !== undefined ? { recordedAt: ctx.recordedAt } : {}),
+    ...(ctx.prevalidate ? { prevalidate: true } : {}),
   });
   next.outcomes = {};
   // 적은 것이 확인 필요뿐인 명령(이미 매장에 반납된 보냄 대기 수거: 결과는 superseded)도 새 상태를 돌려준다(features-1 E18).
-  const applied = outcome.outcome === 'applied' || outcome.outcome === 'partially_applied' || (next.reviews?.length ?? 0) > (state.reviews?.length ?? 0);
+  const applied = outcome.outcome === 'applied' || outcome.outcome === 'partially_applied' || (next.reviews?.length ?? 0) > (state.reviews?.length ?? 0)
+    || (outcome.outcome === 'needs_review' && JSON.stringify(next.orders) !== JSON.stringify(state.orders));
   if (!applied) return { outcome, changes: EMPTY, state };
   const before = new Map(state.orders.map((o) => [o.id, o]));
   const touchedOrders = next.orders.filter((o) => before.get(o.id) !== undefined ? JSON.stringify(before.get(o.id)) !== JSON.stringify(o) : true).map((o) => o.id);
@@ -92,7 +95,8 @@ export function commandScope(state: ShopState, envelope: AnyCommandEnvelope): Co
     case 'notification.ack': {
       const pin = state.pins.find((p) => p.id === envelope.payload.notificationId);
       const task = pin ? pinTask(state, pin) : undefined;
-      return vehicleScope(task?.promise.vehicleId ? [task.promise.vehicleId] : [], pin?.orderId);
+      const vehicleId = pin?.vehicleId ?? task?.promise.vehicleId;
+      return vehicleScope(vehicleId ? [vehicleId] : [], pin?.orderId);
     }
     case 'payment_promise.set': {
       const o = findOrder(state, envelope.payload.orderId);
@@ -201,6 +205,8 @@ export function conflictKeys(state: ShopState, envelope: AnyCommandEnvelope): Co
         reads: [moneyKey(envelope.payload.orderId), ...ids.map((id) => 'line:' + id + ':price')],
       };
     }
+    case 'order.customer_pickup':
+      return { writes: ['order:' + envelope.payload.orderId + ':customer_pickup'], reads: [] };
     case 'order.add': {
       // 품목 추가(E19): 새 줄과 돈을 쓴다. 칸의 비율 할인을 이어받으므로 있는 줄의 값(할인 적용이 바꿈)을 읽는다.
       const o = findOrder(state, envelope.payload.orderId);

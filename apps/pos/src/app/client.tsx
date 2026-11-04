@@ -37,7 +37,22 @@ export interface ServerControls {
   blockDevice(deviceId: string): Promise<void>;
 }
 
-export type AppClient = DomainClient & Partial<DemoControls> & Partial<ServerControls>;
+/**
+ * 기사 기기(DriverClient) · 체험판의 연결 끊김 기록 조작(work/impl-offline/plan.md §7-4 · O19). 다음 확인 창을 열 때 띠의 `전송 대기 0`을 걷는다.
+ */
+export interface OfflineControls {
+  dismissResults(): void;
+}
+
+/**
+ * 막힌 마감을 넘기는 관리자 승인(work/impl-offline/plan.md O12 · §4-7): 본인 비밀번호를 서버가 보고 5분짜리 승인 id를 준다. 실패는 코드로 던진다
+ * (PIN_MISMATCH · LOCKED · FORBIDDEN · NETWORK …). 체험판은 넘길 권한이 있는 보는 사람이면 4 ~ 6자리 아무 숫자.
+ */
+export interface ClosingControls {
+  closingApprove(date: string, ownPin: string): Promise<{ approvalId: string }>;
+}
+
+export type AppClient = DomainClient & Partial<DemoControls> & Partial<ServerControls> & Partial<OfflineControls> & Partial<ClosingControls>;
 
 /** 실패한 읽기를 다시 해 보기까지(연결이 돌아오면 곧 다시 그린다). */
 const RETRY_AFTER_MS = 5_000;
@@ -149,6 +164,18 @@ export function useLive<T>(key: string, load: (client: AppClient) => Promise<T>,
   return sameKey ? { data: state.data, error: state.error } : { data: null, error: null };
 }
 
+/**
+ * 두 연결 상태가 화면에 같은지(띠 · 바닥줄이 쓰는 칸 모두). 칸을 빼면 그 칸만 바뀐 알림이 화면에 닿지 않는다: 다시 보낸 온라인 명령의 거절
+ * (`전송 실패 · 재전송 필요`, refusedCount)은 결과 확인 중이 풀린 다음 알림에서 따로 켜지므로 꼭 견준다(검토 1회 data-loss 4).
+ */
+export function sameConnection(a: ConnectionState, b: ConnectionState): boolean {
+  return a.online === b.online && a.pendingCount === b.pendingCount && a.sendQueue === b.sendQueue && a.lastSyncAt === b.lastSyncAt
+    && a.sending?.remaining === b.sending?.remaining && a.flushing === b.flushing && a.unconfirmedCount === b.unconfirmedCount && a.settled === b.settled
+    && a.recordingOff === b.recordingOff && a.refusedCount === b.refusedCount
+    && (a.refused ?? []).map((r) => r.what + ':' + (r.money ?? '')).join('|') === (b.refused ?? []).map((r) => r.what + ':' + (r.money ?? '')).join('|')
+    && (a.settledNotes ?? []).map((n) => n.note + ':' + n.count).join('|') === (b.settledNotes ?? []).map((n) => n.note + ':' + n.count).join('|');
+}
+
 /** 이 기기의 연결 상태(연결 띠 · 매장 입고의 연결 확인). 바뀌면 subscribe로 다시 읽는다. */
 export function useConnection(): ConnectionState {
   const client = useClient();
@@ -156,7 +183,7 @@ export function useConnection(): ConnectionState {
   useEffect(() => {
     const read = () => setState((prev) => {
       const next = client.connection();
-      return prev.online === next.online && prev.pendingCount === next.pendingCount && prev.sendQueue === next.sendQueue && prev.lastSyncAt === next.lastSyncAt ? prev : next;
+      return sameConnection(prev, next) ? prev : next;
     });
     read();
     return client.subscribe(read);

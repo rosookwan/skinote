@@ -10,7 +10,7 @@ import {
 } from '@skinote/contract';
 import { confirmWindow } from '@skinote/layout';
 import {
-  ChoiceRow, DialogFrame, FormRow, Pager, PrimaryButton, ReturnPieces, RichLine, piecePages, t, useCommandDraft, useUi,
+  ChoiceRow, DialogFrame, FormRow, Pager, PrimaryButton, ReturnPieces, RichLine, t, useCommandDraft, useUi,
 } from '@skinote/ui';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useClient } from '../app/client.tsx';
@@ -85,6 +85,8 @@ export interface CancelDialogProps {
 export function CancelDialog({ orderId, scope, onClose, onFail }: CancelDialogProps) {
   const client = useClient();
   const { profile, viewport } = useUi();
+  const compact = viewport.width < profile.counter.compactBelowPx;
+  const [section, setSection] = useState(0);
   const [params, setParams] = useState<CancelSheetParams>({ orderId, scope });
   const [loaded, setLoaded] = useState<{ key: string; view: CancelSheetView } | null>(null);
   const [page, setPage] = useState(0);
@@ -144,7 +146,8 @@ export function CancelDialog({ orderId, scope, onClose, onFail }: CancelDialogPr
   // 품목 취소의 수량 칸: 잰 창 높이로 센 줄 수만큼 한 쪽, 넘치면 바닥줄 쪽 넘김.
   const box = confirmWindow(viewport, profile.confirm, 1, 0);
   const rowsPerPage = cancelPieceRows(box.heightPx, profile);
-  const pages = scope === 'lines' ? piecePages(view.lines, rowsPerPage) : [[]];
+  const perPage = compact ? 1 : rowsPerPage;
+  const pages = scope === 'lines' ? Array.from({length: Math.max(1, Math.ceil(view.lines.length / perPage))}, (_, i) => view.lines.slice(i * perPage, (i + 1) * perPage).map(line => [line])) : [[]];
   const rowCount = scope === 'lines' ? Math.max(1, ...pages.map((p) => p.length)) : 0;
   const current = Math.min(page, pages.length - 1);
   const alert = error ?? view.notice ?? null;
@@ -156,22 +159,27 @@ export function CancelDialog({ orderId, scope, onClose, onFail }: CancelDialogPr
     <DialogFrame
       title={view.title}
       onClose={onClose}
-      className={'pos-cancel is-' + scope}
+      wide
+      className={'pos-cancel pos-detail is-' + scope + (compact ? ' is-compact' : '')}
       {...(draft ? { requestId: draft.requestId } : {})}
-      pager={pages.length > 1 ? <Pager page={current} pageCount={pages.length} onChange={setPage} /> : null}
+      pager={pages.length > 1 && (!compact || section === 0) ? <Pager page={current} pageCount={pages.length} onChange={setPage} /> : null}
       primary={(
         <PrimaryButton
-          label={busy ? t('processing') : view.primary.label}
-          {...(busy ? {} : { alts: view.primary.alts.length ? view.primary.alts : [view.primary.label] })}
-          disabled={!ready}
+          label={compact && section === 0 ? say('detailMoneyNext') : busy ? t('processing') : view.primary.label}
+          {...(busy || (compact && section === 0) ? {} : { alts: view.primary.alts.length ? view.primary.alts : [view.primary.label] })}
+          disabled={compact && section === 0 ? false : !ready}
           busy={busy}
-          onPress={confirm}
+          onPress={compact && section === 0 ? () => setSection(1) : confirm}
         />
       )}
     >
+      {compact ? <ChoiceRow options={[{key:'0',label:say(scope === 'order' ? 'cancelReason' : 'cancelPieces'),selected:section===0,enabled:true},{key:'1',label:say('counterMoney'),selected:section===1,enabled:true}]} label={say('counterMoney')} onPress={key=>setSection(Number(key))}/> : null}
+      <div className="pos-detail-columns">
+      {!compact || section === 0 ? <section className="pos-detail-section">
       {scope === 'lines' ? (
         <div className="pos-cancel-pieces" role="group" aria-label={say('cancelPieces')}>
           <ReturnPieces
+            singleColumn stacked={compact}
             rows={pages[current] ?? []}
             rowCount={rowCount}
             groupLabel={(line) => say('qtyOf', { item: line.ariaLabel ?? line.label })}
@@ -185,15 +193,20 @@ export function CancelDialog({ orderId, scope, onClose, onFail }: CancelDialogPr
           <ChoiceRow options={view.reasons ?? []} label={say('cancelReason')} onPress={(key) => change(withReason(params, key))} />
         </FormRow>
       )}
+      </section> : null}
+      {!compact || section === 1 ? <section className="pos-detail-section">
       <FormRow label={say('cancelMoney')} blank={!view.decisions}>
         <ChoiceRow options={view.decisions ?? []} label={say('cancelMoney')} onPress={(key) => change(withDecision(params, key))} />
       </FormRow>
-      <RefundRows lines={view.refunds} onMethod={(paymentId, key) => change(withMethod(params, paymentId, key))} />
-      <div className={'pos-cancel-summary' + (alert ? ' is-alert' : '')} {...(alert ? { role: 'alert' } : {})}>
+      <RefundRows narrow lines={view.refunds} onMethod={(paymentId, key) => change(withMethod(params, paymentId, key))} />
+      </section> : null}
+      </div>
+      <div className={'pos-cancel-summary pos-detail-summary' + (alert ? ' is-alert' : '')} {...(alert ? { role: 'alert' } : {})}>
         {Array.from({ length: summaryRows }, (_, i) => (
           <p key={i} className="pos-cancel-summary-line">{summary[i] ? <RichLine runs={summary[i]!} /> : null}</p>
         ))}
       </div>
+      <p className={'pos-detail-note' + (view.refunds.length ? '' : ' is-blank')} aria-hidden={!view.refunds.length}>{say('detailRefundRecord')}</p>
     </DialogFrame>
   );
 }

@@ -56,7 +56,8 @@ export interface ExchangeDialogProps {
 
 export function ExchangeDialog({ orderId, onClose, onFail }: ExchangeDialogProps) {
   const client = useClient();
-  const { profile } = useUi();
+  const { profile, viewport } = useUi();
+  const compact = viewport.width < profile.counter.compactBelowPx;
   const [params, setParams] = useState<ExchangeSheetParams>({ orderId });
   const [loaded, setLoaded] = useState<{ key: string; view: ExchangeSheetView } | null>(null);
   const [page, setPage] = useState(0);
@@ -124,7 +125,8 @@ export function ExchangeDialog({ orderId, onClose, onFail }: ExchangeDialogProps
     <DialogFrame
       title={view.title}
       onClose={onClose}
-      className="pos-exchange"
+      wide
+      className={'pos-exchange pos-detail' + (compact ? ' is-compact' : '')}
       {...(draft ? { requestId: draft.requestId } : {})}
       pager={pageCount > 1 ? <Pager page={current} pageCount={pageCount} onChange={setPage} /> : null}
       primary={(
@@ -140,6 +142,11 @@ export function ExchangeDialog({ orderId, onClose, onFail }: ExchangeDialogProps
       <FormRow label={say('exchangeItem')} blank={view.items.length === 0}>
         <ChoiceRow options={view.items} label={say('exchangeItem')} onPress={(key) => { setPage(0); change(withItem(params, view, key)); }} />
       </FormRow>
+      <FormRow label={say('exchangeSize')} top blank={view.sizes.length === 0}>
+        <div ref={gridRef} className="pos-exchange-grid" role="group" aria-label={say('exchangeSize')} style={{ gridTemplateColumns: 'repeat(' + columns + ', minmax(0, 1fr))' }}>
+          {shown.map((c) => <ChoiceButton key={c.key} option={c} onPress={(key) => change(withSize(params, view, key))} />)}
+        </div>
+      </FormRow>
       <FormRow label={say('exchangeQty')} blank={!quantity} className="pos-exchange-qty">
         {quantity ? (
           <QtyStepper
@@ -151,12 +158,7 @@ export function ExchangeDialog({ orderId, onClose, onFail }: ExchangeDialogProps
           />
         ) : null}
       </FormRow>
-      <FormRow label={say('exchangeSize')} top blank={view.sizes.length === 0}>
-        <div ref={gridRef} className="pos-exchange-grid" role="group" aria-label={say('exchangeSize')} style={{ gridTemplateColumns: 'repeat(' + columns + ', minmax(0, 1fr))' }}>
-          {shown.map((c) => <ChoiceButton key={c.key} option={c} onPress={(key) => change(withSize(params, view, key))} />)}
-        </div>
-      </FormRow>
-      <p className={'pos-exchange-summary' + (alert ? ' is-alert' : '')} {...(alert ? { role: 'alert' } : {})}>
+      <p className={'pos-exchange-summary pos-detail-summary' + (alert ? ' is-alert' : '')} {...(alert ? { role: 'alert' } : {})}>
         <RichLine runs={alert ? [{ text: alert, strong: true }] : view.summary} />
       </p>
     </DialogFrame>

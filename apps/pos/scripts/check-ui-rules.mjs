@@ -88,6 +88,9 @@ async function startPreview() {
 
 // ── 한 크기의 걸음(화면 · 창을 재고 찍는다) ──────────────────────────────
 
+/** 기사 연결 끊김 기록의 장면(work/impl-offline/plan.md §8-3): 창도 늘 찍는다(같은 제목의 창을 앞에서 찍었어도, work/screens/offline에 모은다). */
+const OFFLINE_SHOTS = /^(offline-|van-|lock|preview-(unconfirmed|drain|elsewhere)|v6-blocked)/;
+
 class Walk {
   constructor({ browser, context, page, sizeClass, size, report }) {
     Object.assign(this, { browser, context, page, sizeClass, size, report });
@@ -115,6 +118,8 @@ class Walk {
     this.keyboardWalked = new Set();
     /** 견본 매장(번호 · 보증금) 걸음에서 닿은 보증금 변형(numberedCounter · numberedDriver가 모두 닿았는지 본다). */
     this.seen = new Set();
+    /** 체험 주소에 붙일 뜻(기사 연결 끊김 기록의 모양: flush=hold · lost=1 · van=stuck · asleep · viewer=counter). 걸음이 끝나면 비운다. */
+    this.flags = [];
   }
 
   /** 화면이 가라앉을 때까지(글꼴을 읽고, DOM이 60ms 동안 바뀌지 않을 때까지, 길어도 2.5초). */
@@ -141,8 +146,11 @@ class Walk {
     this.allowed = [...new Set([pickDeviceClass(this.size, role), ...extraAllowed])];
   }
 
-  /** 이 모양의 주소 앞부분(첫 매장은 BASE, 번호 · 보증금 매장은 BASE?shop=numbered). */
-  base() { return BASE + (this.shop === 'numbered' ? '?shop=numbered' : ''); }
+  /** 이 모양의 주소 앞부분(첫 매장은 BASE, 번호 · 보증금 매장은 BASE?shop=numbered, 체험 뜻 flags를 잇는다). */
+  base() {
+    const query = [...(this.shop === 'numbered' ? ['shop=numbered'] : []), ...this.flags];
+    return BASE + (query.length ? '?' + query.join('&') : '');
+  }
 
   async visit(hash, selector, role = this.role, extraAllowed = []) {
     this.route(role, extraAllowed);
@@ -170,6 +178,26 @@ class Walk {
 
   /** 지금 화면(창이 열려 있으면 그 창)을 재고 기록한다. 화면은 늘 찍고, 창은 제목마다 첫 장과 어긋난 장만 찍는다. */
   async scene(name, kind = 'screen') {
+    // 실제 그려진 글꼴을 Chromium에서 확인한다. CSS 선언만으로 fallback 부재를 단정하지 않는다.
+    let fonts;
+    if (!this.fontsChecked && await this.page.locator('.pos-counter-team-title').count()) {
+      const cdp = await this.context.newCDPSession(this.page);
+      try {
+        await cdp.send('DOM.enable'); await cdp.send('CSS.enable');
+        const {root: doc} = await cdp.send('DOM.getDocument');
+        fonts = [];
+        for (const selector of ['.pos-counter-team-title h1 .pos-counter-name', '.sn-dialog-title .sn-fit', '.pos-counter-money-card > strong', '[data-primary="true"] .sn-fit']) {
+          const {nodeId} = await cdp.send('DOM.querySelector',{nodeId:doc.nodeId,selector});
+          if (!nodeId) continue;
+          const data = await cdp.send('CSS.getPlatformFontsForNode',{nodeId});
+          const used = data.fonts.filter(font=>font.glyphCount > 0);
+          if (used.length) fonts.push({selector,fonts:used});
+          for (const font of used) if (!/Pretendard/i.test(font.familyName) || !font.isCustomFont) this.fail(name + '-font','예상 밖 실제 글꼴: ' + selector + ' / ' + font.familyName);
+        }
+        if (!fonts.length) this.fail(name + '-font','실제 렌더 글꼴을 확인할 수 없음');
+        this.fontsChecked = true;
+      } finally { await cdp.detach(); }
+    }
     const result = await this.page.evaluate(measureRules, {
       profiles: PROFILES, sizeClass: this.sizeClass, allowedDevices: this.allowed, lateTokens: LATE_TOKENS, lateSelector: LATE_SELECTOR,
     });
@@ -177,7 +205,7 @@ class Walk {
     const bad = Object.keys(result.problems).length > 0;
     const titleKey = kind + ':' + (result.dialogTitle || name);
     let file;
-    if (kind === 'screen' || bad || !this.shotTitles.has(titleKey)) {
+    if (kind === 'screen' || bad || !this.shotTitles.has(titleKey) || OFFLINE_SHOTS.test(name)) {
       this.shotTitles.add(titleKey);
       file = this.tag + '-' + String(this.seq).padStart(3, '0') + '-' + name.replace(/[^a-z0-9-]+/gi, '-') + '.png';
       await this.page.screenshot({ path: join(OUT, file) });
@@ -185,7 +213,7 @@ class Walk {
     this.report.push({
       size: this.tag, sizeClass: this.sizeClass, scene: name, kind, route: await this.hash(), device: result.device,
       title: result.dialogTitle || undefined, min: { font: result.minFont, target: result.minTarget }, primaries: result.primaries,
-      ...(file ? { file } : {}), problems: result.problems,
+      ...(file ? { file } : {}), ...(fonts ? {fonts} : {}), problems: result.problems,
     });
   }
 
@@ -231,6 +259,11 @@ class Walk {
     const beforeCount = await this.dialogCount();
     const beforeKey = await this.topKey();
     await this.click(locator);
+    // 고르기/경고 창이 닫힌 뒤 상세 편집 묶음과 읽기 모델을 비동기로 받는다. 그 사이를 '창 없음'으로 오인해 뒤쪽 품목 페이지를 누르지 않는다.
+    if (beforeCount > 0 && await this.dialogCount() === 0 && await this.hash() === beforeHash) {
+      await this.page.waitForFunction(hash => location.hash !== hash || [...document.querySelectorAll('[role="dialog"]')].some(el => el.getClientRects().length), beforeHash, { timeout: 3000 }).catch(() => {});
+      await this.settle();
+    }
     const afterCount = await this.dialogCount();
     const afterKey = await this.topKey();
     if (afterCount > beforeCount || (afterCount > 0 && afterKey !== beforeKey)) {
@@ -343,16 +376,13 @@ class Walk {
       await this.scene(name + '-none', 'dialog');
       return;
     }
-    // 고르기 판(더 보기 · 여러 팀 · 빨리 확인 목록): 선택지마다 다시 열고 눌러 본다.
-    const choices = top.locator('.pos-choice-button');
-    const choiceCount = await choices.count();
-    if (choiceCount && opener) {
-      for (let i = 0; i < choiceCount; i += 1) {
-        if (i > 0) {
-          await this.closeTo(0);
-          await this.click(opener);
-        }
-        await this.probe(this.top().locator('.pos-choice-button').nth(i), name + '-c' + (i + 1), { depth: depth + 1 });
+    // 고르기 판은 모든 쪽의 선택지를 수집한 뒤 하나씩 다시 열어 걷는다.
+    if (await top.locator('.pos-choice-button').count() && opener) {
+      const labels = await choiceLabels(this);
+      for (const [i,label] of labels.entries()) {
+        await this.closeTo(0); await this.click(opener);
+        const choice = await choiceLocator(this, label);
+        await this.probe(choice, name + '-c' + (i + 1), {depth:depth + 1});
         await this.closeTo(0);
       }
       return;
@@ -1106,13 +1136,13 @@ class Walk {
   }
 
   /** 바닥줄 쪽 넘김 '1 / 3쪽'의 [지금, 모두]. */
-  async pageInfo(scope = this.page.locator('.sn-footer')) {
+  async pageInfo(scope = this.page.locator('.pos-counter-list:not(.is-rail) > .pos-counter-paging, .pos-counter-detail .pos-counter-paging, .sn-footer').first()) {
     const text = await scope.locator('.sn-pager-text').first().textContent({ timeout: 500 }).catch(() => '');
     const m = /(\d+)\s*\/\s*(\d+)/.exec(text ?? '');
     return m ? [Number(m[1]), Number(m[2])] : [1, 1];
   }
 
-  async toPage(target, scope = this.page.locator('.sn-footer')) {
+  async toPage(target, scope = this.page.locator('.pos-counter-list:not(.is-rail) > .pos-counter-paging, .pos-counter-detail .pos-counter-paging, .sn-footer').first()) {
     for (let guard = 0; guard < 20; guard += 1) {
       const [now] = await this.pageInfo(scope);
       if (now === target) return;
@@ -1133,6 +1163,21 @@ class Walk {
 
   /** 색인 탭마다 쪽마다(넘친 탭은 더 보기 판에서 고른다). 끝나면 첫 탭. */
   async tabs(name) {
+    if (await this.page.locator('.pos-counter-stages').count()) {
+      const stages = this.page.locator('.pos-counter-stages button');
+      for (let i = 0; i < await stages.count(); i += 1) { await this.click(stages.nth(i)); await this.pages(name + '-stage' + i, () => ledgerTimes(this, name)); }
+      const filter = this.page.getByRole('button', {name:/^필터/});
+      await this.click(filter);
+      const labels = await choiceLabels(this);
+      await this.closeTo(0);
+      for (const label of labels) {
+        await this.click(filter); await chooseLabel(this, label);
+        for (let i = 0; i < await stages.count(); i += 1) { await this.click(stages.nth(i)); await this.pages(name + '-filter-' + label + '-stage' + i); }
+      }
+      await this.click(filter); await chooseLabel(this, labels[0]);
+      await this.click(stages.first());
+      return;
+    }
     const tabs = this.page.locator('.sn-tabs [role="tab"]');
     const n = await tabs.count();
     for (let i = 0; i < n; i += 1) {
@@ -1157,17 +1202,18 @@ class Walk {
 
   /** 머리줄: 끝 4자리 · 메뉴 · 더 보기 · 알림(장부 · 나가기는 경로라 따로 걷는다). */
   async header(name) {
-    const header = this.page.locator('.sn-header');
-    const find = header.getByRole('button', { name: '끝 4자리' });
+    const header = this.page.locator('.sn-header, .pos-counter-header');
+    const find = this.page.locator('.pos-counter-search').or(header.getByRole('button', { name: '끝 4자리' }));
     if (await find.count()) await this.probe(find, name + '-find');
-    const buttons = header.locator('.sn-header-right button');
+    const right = await this.page.locator('.pos-counter-header').count() ? '.pos-counter-header > button:not(.pos-counter-brand)' : '.sn-header-right button';
+    const buttons = this.page.locator(right);
     const labels = [];
     for (let i = 0, n = await buttons.count(); i < n; i += 1) {
       labels.push(((await buttons.nth(i).getAttribute('aria-label')) ?? (await buttons.nth(i).textContent()) ?? '').trim());
     }
     for (const [i, label] of labels.entries()) {
       if (label === '끝 4자리' || label === '나가기') continue;
-      const button = header.locator('.sn-header-right button').nth(i);
+      const button = this.page.locator(right).nth(i);
       await this.probe(button, name + '-head' + (i + 1));
       await this.closeTo(0);
     }
@@ -1198,8 +1244,8 @@ class Walk {
 
 /** 장부의 끝나지 않은 줄마다 정렬 기준인 시각이 보이는지(시각 칸이든 팀 칸 앞에 합쳐졌든). 좁은 포스에서 시각이 사라지지 않게. */
 async function ledgerTimes(w, name) {
-  const missing = await w.page.evaluate(() => [...document.querySelectorAll('.sn-ledger.is-ledger tr.sn-row:not(.is-finished)')]
-    .filter((row) => !/\d{2}:\d{2}/.test((row.querySelector('.is-time')?.textContent ?? '') + ' ' + (row.querySelector('.is-team')?.textContent ?? '')))
+  const missing = await w.page.evaluate(() => [...document.querySelectorAll('.pos-counter-row:not(.is-finished), .sn-ledger.is-ledger tr.sn-row:not(.is-finished)')]
+    .filter((row) => !/\d{2}:\d{2}/.test(row.matches('.pos-counter-row') ? row.textContent ?? '' : (row.querySelector('.is-time')?.textContent ?? '') + ' ' + (row.querySelector('.is-team')?.textContent ?? '')))
     .map((row) => row.innerText.replace(/\s+/g, ' ').trim().slice(0, 40)));
   if (missing.length) w.fail(name, '시각이 안 보이는 장부 줄 ' + missing.length + '개: ' + missing.slice(0, 3).join(' / '));
 }
@@ -1216,88 +1262,96 @@ async function placeTags(w, name) {
 
 async function slipWalk(w, name) {
   await w.scene(name);
-  const footer = w.page.locator('.sn-footer');
+  const footer = w.page.locator('.pos-counter-detail .pos-counter-paging');
   const [, itemPages] = await w.pageInfo(footer);
   for (let p = 1; p <= itemPages; p += 1) {
     await w.toPage(p, footer);
-    if (p > 1) await w.scene(name + '-items-p' + p);
-    const stamps = w.page.locator('.sn-slip-items button.sn-stamp-cell');
-    for (let j = 0, m = await stamps.count(); j < m; j += 1) {
-      await w.probe(w.page.locator('.sn-slip-items button.sn-stamp-cell').nth(j), name + '-i' + p + 's' + (j + 1));
+    await w.scene(name + '-items-p' + p);
+    const items = w.page.locator('button.pos-counter-item');
+    for (let j = 0, n = await items.count(); j < n; j += 1) {
+      await w.probe(items.nth(j), name + '-item' + p + '-' + j);
       await w.closeTo(0);
     }
   }
   await w.toPage(1, footer);
-  const primary = w.page.locator('.pos-side [data-primary="true"]');
+  const primary = w.page.locator('.pos-counter-detail-actions [data-primary="true"]');
   if (await primary.count()) { await w.probe(primary, name + '-next'); await w.closeTo(0); }
-  // 처리 현황의 누르는 줄(그 단계를 접수 전체로: 반납 줄은 모든 줄의 반납 창, 차량 담당이면 알림 → 매장 반납 처리).
-  const checks = w.page.locator('.pos-side .sn-check-press');
-  for (let j = 0, m = await checks.count(); j < m; j += 1) {
-    await w.probe(w.page.locator('.pos-side .sn-check-press').nth(j), name + '-check' + (j + 1));
-    await w.closeTo(0);
-  }
-  const side = w.page.locator('.pos-side-actions button');
-  for (let j = 0, m = await side.count(); j < m; j += 1) {
-    await w.probe(w.page.locator('.pos-side-actions button').nth(j), name + '-side' + (j + 1));
-    await w.closeTo(0);
-  }
+  await w.probe(w.page.locator('.pos-counter-money-card'), name + '-money');
+  await w.closeTo(0);
+  const schedule = w.page.locator('.pos-counter-schedule');
+  if (await schedule.isEnabled()) { await w.probe(schedule, name + '-schedule'); await w.closeTo(0); }
+  await w.probe(w.page.locator('.pos-counter-detail-actions').getByRole('button', {name:'추가 처리',exact:true}), name + '-extra');
+  await w.closeTo(0);
 }
 
 /** 오늘 장부의 쪽을 넘기며 끝 4자리가 last4인 줄의 접수증을 연다. 찾으면 true. */
 async function openSlipOf(w, last4) {
-  await w.visit('#/ledger/' + w.date, '.sn-ledger tr.sn-row');
-  const [, total] = await w.pageInfo();
-  for (let p = 1; p <= total; p += 1) {
-    await w.toPage(p);
-    const open = w.page.locator('.sn-ledger tr.sn-row .sn-cell-open', { hasText: last4 });
-    if (await open.count()) {
-      await open.first().click();
-      await w.page.waitForSelector('.sn-slip');
-      await w.settle();
-      return true;
-    }
-  }
+  await w.visit('#/ledger/' + w.date, '.pos-counter-list');
+  await w.click(w.page.locator('.pos-counter-search'));
+  for (const digit of last4) await w.click(w.top().getByRole('button', {name:digit, exact:true}));
+  await w.click(w.top().getByRole('button', {name:'찾기', exact:true}));
+  if (await w.page.locator('.pos-counter-detail').count()) return true;
+  const choice = w.top().locator('.pos-choice-button', {hasText:last4});
+  if (await choice.count()) { await w.click(choice.first()); return !!(await w.page.locator('.pos-counter-detail').count()); }
   return false;
 }
 
 /** 장부 → 줄마다 접수증 → '‹ 장부'(온 쪽으로 돌아온다). */
 async function everySlip(w) {
-  const [, total] = await w.pageInfo();
-  for (let p = 1; p <= total; p += 1) {
-    await w.toPage(p);
-    const count = await w.page.locator('.sn-ledger tr.sn-row .sn-cell-open').count();
-    for (let i = 0; i < count; i += 1) {
-      const open = w.page.locator('.sn-ledger tr.sn-row .sn-cell-open').nth(i);
-      const last4 = /\b(\d{4})\b/.exec((await open.textContent()) ?? '')?.[1] ?? 'p' + p + 'r' + (i + 1);
-      await open.click();
-      await w.page.waitForSelector('.sn-slip');
-      await w.settle();
-      await slipWalk(w, 'slip-' + last4);
-      await w.click(w.page.locator('.pos-footer-back').getByRole('button', { name: '장부' }));
-      await w.page.waitForSelector('.sn-ledger tr.sn-row');
-      await w.settle();
-      const [now] = await w.pageInfo();
-      if (now !== p) { w.fail('slip-' + last4, '‹ 장부가 ' + p + '쪽이 아니라 ' + now + '쪽으로 돌아옴'); await w.toPage(p); }
+  const stages = w.page.locator('.pos-counter-stages button');
+  const stageCount = await stages.count();
+  if (stageCount !== 3) w.fail('ledger-stages', '큰 단계가 세 개가 아님: ' + stageCount);
+  for (let phase = 0; phase < stageCount + 1; phase += 1) {
+    if (phase < stageCount) await w.click(stages.nth(phase));
+    else await w.click(w.page.getByRole('button', {name:'완료 내역',exact:true}));
+    const [, total] = await w.pageInfo();
+    for (let p = 1; p <= total; p += 1) {
+      await w.toPage(p);
+      const ids = await w.page.locator('.pos-counter-list:not(.is-rail) .pos-counter-row').evaluateAll(rows => rows.map(row => row.dataset.orderId));
+      for (const id of ids) {
+        await w.click(w.page.locator('.pos-counter-list:not(.is-rail) .pos-counter-row[data-order-id="' + id + '"]'));
+        await w.page.waitForSelector('.pos-counter-detail'); await w.settle();
+        await slipWalk(w, 'slip-' + id);
+        await w.click(w.page.locator('.pos-counter-team-head').getByRole('button', {name:'장부',exact:true}));
+        await w.page.waitForSelector('.pos-counter-list'); await w.settle();
+        const [now] = await w.pageInfo();
+        if (now !== p) w.fail('slip-' + id, '장부가 원래 쪽으로 돌아오지 않음: ' + p + ' → ' + now);
+        if (phase === stageCount && !(await w.page.getByRole('button', {name:'진행 중',exact:true}).count())) w.fail('slip-' + id, '완료 내역으로 돌아오지 않음');
+      }
     }
   }
-  await w.toPage(1);
+  await w.click(stages.first());
+}
+
+/** 긴급의 모든 쪽을 실제로 읽고 재며 미확인 우선과 확인 후 남는 상태를 보존한다. */
+async function urgentListRows(w, name) {
+  const dialog = w.page.locator('.pos-urgent-list');
+  await dialog.waitFor();
+  const previous = dialog.locator('.sn-dialog-foot').getByRole('button',{name:'이전 쪽',exact:true});
+  while (await previous.count() && await previous.isEnabled()) await w.click(previous);
+  const rows=[];
+  for (let page=1;page<=30;page+=1) {
+    await w.scene(name+'-p'+page,'dialog');
+    rows.push(...await dialog.locator('.pos-urgent-row').evaluateAll(els=>els.map(el=>({team:el.querySelector('.pos-urgent-team')?.textContent,place:el.querySelector('.pos-urgent-place')?.textContent,state:el.querySelector('.pos-urgent-state > span')?.textContent}))));
+    const next=dialog.locator('.sn-dialog-foot').getByRole('button',{name:'다음 쪽',exact:true});
+    if (!(await next.count()) || !(await next.isEnabled())) break;
+    await w.click(next);
+  }
+  let confirmed=false;
+  for (const row of rows) { if (row.state?.includes('확인함')) confirmed=true; else if (confirmed) w.fail(name,'확인한 요청 뒤에 미확인 요청이 있음'); }
+  while (await previous.count() && await previous.isEnabled()) await w.click(previous);
+  return rows;
 }
 
 async function collectionWalk(w, name) {
   await w.tabs(name);
   await w.pages(name + '-tags', () => placeTags(w, name + '-tags'), { measure: false });
-  // 빨리 확인 줄: 전화 · 줄 열기(둘 이상이면 목록 판)
-  const pin = w.page.locator('.sn-pin');
-  if (await pin.count()) {
-    const call = pin.getByRole('button', { name: '전화' });
-    if (await call.count()) { await w.probe(call, name + '-pin-call'); await w.closeTo(0); }
-    const open = pin.locator('button.sn-pin-open');
-    if (await open.count()) {
-      const res = await w.probe(open, name + '-pin-open');
-      await w.closeTo(0);
-      if (res === 'none') await w.scene(name + '-pin-selected');
-      await deselect(w);
-    }
+  // 긴급은 한 상단바 → 개별 목록의 모든 쪽. 전화는 아래 행/업무 판의 기존 검사에서 확인한다.
+  const urgent = w.page.locator('.pos-urgent-bar');
+  if (await urgent.count()) {
+    await w.click(urgent);
+    await urgentListRows(w, name + '-urgent');
+    await w.closeTo(0);
   }
   // 쪽마다: 도장 · 전화 칸, 줄 하나 고르기 → 동작 줄
   await w.pages(name + '-rows', async (p) => {
@@ -1367,15 +1421,16 @@ async function rowBarWalk(w, name) {
 
 /** SKINOTE_RULES_FLOW(고치는 동안만): 카운터 크기에서 이 흐름들만 걷는다(끝의 전체 검사에는 쓰지 않는다). */
 const COUNTER_FLOWS = {
+  finalTail: async (w) => { await resetTo(w, 0); await counterFlow(w); await counterNight(w); await vanOfflineWalk(w); await numberedCounter(w); },
   discount: (w) => discountFlow(w), orderEdit: (w) => orderEditFlow(w), exchange: (w) => exchangeFlow(w), tickets: (w) => ticketsFlow(w), print: (w) => printWalk(w),
-  review: (w) => reviewFlow(w), closing: (w) => closingDay(w),
+  rules: (w) => rulesWalk(w), settings: (w) => settingsWalk(w), intake: (w) => newOrderWalk(w), ledger: (w) => w.tabs('ledger-focused'), review: (w) => reviewFlow(w), closing: (w) => closingDay(w), conflict: (w) => conflictWalks(w), itemDetails: async (w) => { await w.visit('#/orders/o21', '.pos-counter-detail'); await slipWalk(w, 'item-detail'); },
 };
 const FLOWS = (process.env.SKINOTE_RULES_FLOW ?? '').split(',').map((s) => s.trim()).filter((s) => s in COUNTER_FLOWS);
 
 async function counterWalk(w) {
   w.route('counter');
   if (FLOWS.length) {
-    await w.visit('#/ledger', '.sn-ledger tr.sn-row', 'counter');
+    await w.visit('#/ledger', '.pos-counter-list', 'counter');
     w.date = /^#\/ledger\/(\d{4}-\d{2}-\d{2})$/.exec(await w.hash())?.[1] ?? '2026-12-26';
     for (const flow of FLOWS) await COUNTER_FLOWS[flow](w);
     return;
@@ -1386,7 +1441,7 @@ async function counterWalk(w) {
   await w.scene('slip-missing');
 
   // 장부(날짜 없는 주소 → 오늘 주소)
-  await w.visit('#/ledger', '.sn-ledger tr.sn-row');
+  await w.visit('#/ledger', '.pos-counter-list');
   const date = /^#\/ledger\/(\d{4}-\d{2}-\d{2})$/.exec(await w.hash())?.[1];
   if (!date) w.fail('ledger', '#/ledger가 오늘 장부 주소로 바뀌지 않음: ' + (await w.hash()));
   w.date = date ?? '2026-12-26';
@@ -1394,7 +1449,7 @@ async function counterWalk(w) {
   await w.pages('ledger-times', () => ledgerTimes(w, 'ledger-times'), { measure: false });
   await w.header('ledger');
   await w.pages('ledger-stamps', (p) => w.rowButtons('ledger-p' + p), { measure: false });
-  const primary = w.page.locator('.sn-footer [data-primary="true"]');
+  const primary = w.page.locator('.pos-counter-title-row [data-primary="true"]');
   await w.probe(primary, 'ledger-primary');
   await w.closeTo(0);
   await everySlip(w);
@@ -1413,6 +1468,7 @@ async function counterWalk(w) {
   await v2CounterRoutes(w);
   await counterFlow(w);
   await counterNight(w);
+  await vanOfflineWalk(w);
   if (numberedPass(w)) await numberedCounter(w);
 }
 
@@ -1546,6 +1602,8 @@ async function ticketsFlow(w) {
   await w.tabs('tickets');
   await w.visit('#/tickets', '.pos-tickets-table');
   await ticketVans(w, 'tickets-van');
+  // 모든 차량 쪽을 본 뒤 1호 차량이 있는 첫 쪽으로 실제 돌아간다.
+  await w.toPage(1,page.locator('.pos-tickets-right'));
   // 예비권 적재 2매 → 1호 차량 `야간권 8매`.
   await w.click(page.locator('.pos-tickets-van', { hasText: '1호 차량' }).locator('button.pos-tickets-van-button').first());
   if (await piecesCommit(w, 'tickets-load-commit', { label: '야간권', plus: 2 })) {
@@ -1574,7 +1632,7 @@ async function ticketsFlow(w) {
     }
   } else w.fail('tickets-unreturned', '16:10 미반납 탭에 박준호 팀이 없음');
   // 접수증 옆 동작 `분실 처리`(박준호).
-  await w.visit('#/orders/o22', '.sn-slip');
+  await w.visit('#/orders/o22', '.pos-counter-detail');
   if (await openSlipAction(w, '분실 처리', 'tickets-slip-loss', '.pos-pieces-sheet')) {
     await w.piecesWalk('tickets-slip-loss');
     await w.closeTo(0);
@@ -1636,9 +1694,10 @@ async function reviewPages(w, name) {
 
 /** 머리줄 `확인 필요`의 수(좁으면 `더 보기`에 합친 수)가 n인지. */
 async function reviewBadge(w, name, n) {
-  const header = w.page.locator('.sn-header-right');
+  const compact = await w.page.locator('.pos-counter-header').count();
+  const header = w.page.locator(compact ? '.pos-counter-header' : '.sn-header-right');
   const menu = header.locator('button', { hasText: '확인 필요' });
-  const holder = (await menu.count()) ? menu : header.locator('button[aria-label^="더 보기"]');
+  const holder = compact ? header.getByRole('button', { name: /^메뉴/ }) : (await menu.count()) ? menu : header.locator('button[aria-label^="더 보기"]');
   const shown = ((await holder.locator('.sn-count, .sn-badge').first().textContent().catch(() => '')) ?? '').trim();
   if (shown !== String(n)) w.fail(name, '머리줄 `확인 필요`의 수가 ' + n + '이 아님(' + ((await menu.count()) ? '메뉴' : '더 보기') + ': `' + shown + '`)');
   if (!(await menu.count())) await w.scene(name + '-more');
@@ -1656,7 +1715,7 @@ async function reviewFlow(w) {
   const rows = () => page.locator('.pos-review-line');
   const count = async () => Number(/(\d+)/.exec((await page.locator('.sn-index-tab, [role="tab"]', { hasText: '미처리' }).first().textContent().catch(() => '')) ?? '')?.[1] ?? -1);
   await resetTo(w, 0);
-  await w.visit('#/ledger/' + w.date, '.sn-ledger tr.sn-row');
+  await w.visit('#/ledger/' + w.date, '.pos-counter-list');
   await reviewBadge(w, 'review-badge', 1);
   await w.visit('#/review', '.pos-review-rows');
   await w.scene('review-open');
@@ -1692,8 +1751,8 @@ async function reviewFlow(w) {
   await w.closeTo(0);
   // 다른 카운터: 김민재 · 이수진 매장 반납, 박준호 수납, 1호 차량 예비권 입고 6매.
   for (const id of ['o21', 'o23']) {
-    await otherCounter(w, '#/orders/' + id, '.sn-slip', async (other) => {
-      await other.locator('.pos-side .sn-check-press', { hasText: '반납' }).first().click();
+    await otherCounter(w, '#/orders/' + id, '.pos-counter-detail', async (other) => {
+      await openCounterAction(other, '반납');
       const store = other.locator('[role="dialog"]').getByRole('button', { name: '매장 반납 처리', exact: true });
       if (await store.count()) await store.click();
       await other.waitForSelector('.pos-return [data-primary="true"]:enabled');
@@ -1702,8 +1761,8 @@ async function reviewFlow(w) {
       await other.waitForSelector('.pos-return', { state: 'detached', timeout: 10_000 });
     });
   }
-  await otherCounter(w, '#/orders/o22', '.sn-slip', async (other) => {
-    await other.locator('.pos-side [data-primary="true"]').click();
+  await otherCounter(w, '#/orders/o22', '.pos-counter-detail', async (other) => {
+    await other.locator('.pos-counter-detail-actions [data-primary="true"]').click();
     await other.waitForSelector('[role="dialog"] [data-primary="true"]');
     await other.waitForTimeout(300);
     await other.locator('[role="dialog"] [data-primary="true"]').last().click();
@@ -1833,12 +1892,12 @@ async function printWalk(w) {
   if (await page.locator('.pos-print-host').count()) w.fail('print-collection', '인쇄 창 뒤에도 인쇄 문서가 남음');
   await w.scene('print-collection-after');
   // 접수증 옆 동작 `인쇄`(김민수 팀).
-  await w.visit('#/orders/o25', '.sn-slip');
+  await w.visit('#/orders/o25', '.pos-counter-detail');
   const slipBefore = (await printed(page)).n;
-  const direct = page.locator('.pos-side-actions button', { hasText: '인쇄' });
+  const direct = page.locator('.pos-counter-detail-actions button', { hasText: '인쇄' });
   if (await direct.count()) await w.click(direct.first());
   else {
-    await w.click(page.locator('.pos-side-actions button', { hasText: '더 보기' }));
+    await w.click(page.locator('.pos-counter-detail-actions button', { hasText: '추가 처리' }));
     const choice = () => w.top().locator('.pos-choice-button', { hasText: '인쇄' });
     const next = w.top().getByRole('button', { name: '다음 쪽' });
     while (!(await choice().count()) && await next.count() && await next.isEnabled()) await w.click(next);
@@ -1915,7 +1974,7 @@ async function exchangeFlow(w) {
   const page = w.page;
   await resetTo(w, 0);
   const open = async (orderId, name) => {
-    await w.visit('#/orders/' + orderId, '.sn-slip');
+    await w.visit('#/orders/' + orderId, '.pos-counter-detail');
     return openSlipAction(w, '즉시 교환', name, '.pos-exchange');
   };
   // ① 김민재 의류: 모두 걸은 뒤 닫고, 새로 열어 110으로.
@@ -1925,7 +1984,7 @@ async function exchangeFlow(w) {
   }
   if (await open('o21', 'exchange-0021') && await exchangeCommit(w, 'exchange-0021-commit', { item: '의류', size: '110' })) {
     await slipAdjustment(w, 'exchange-slip-0021', '즉시 교환');
-    if (!(await page.locator('.sn-slip', { hasText: '의류 사이즈 110' }).count())) w.fail('exchange-slip-0021', '접수증 품목 표에 지금 사이즈 `의류 사이즈 110`이 없음');
+    if (!(await slipText(w, '의류 사이즈 110'))) w.fail('exchange-slip-0021', '접수증 품목 표에 지금 사이즈 `의류 사이즈 110`이 없음');
   }
   // ② 박준호 헬멧(지급 전): 수량 줄 `지급 예정 사이즈`, 2개.
   if (await open('o22', 'exchange-0022')) {
@@ -1946,9 +2005,9 @@ async function exchangeFlow(w) {
     const cash = w.top().locator('.sn-method-buttons').getByRole('button', { name: '현금', exact: true });
     if (await cash.count()) await w.click(cash.first());
     await w.click(w.top().locator('[data-primary="true"]'));
-    await page.waitForSelector('.sn-slip', { timeout: 10_000 }).catch(() => {});
+    await page.waitForSelector('.pos-counter-detail', { timeout: 10_000 }).catch(() => {});
     await w.settle();
-    const issue = page.locator('.pos-side [data-primary="true"]');
+    const issue = page.locator('.pos-counter-detail-actions [data-primary="true"]');
     if (await issue.count()) {
       await w.click(issue);
       const ok = w.top().locator('[data-primary="true"]');
@@ -1971,8 +2030,8 @@ async function exchangeFlow(w) {
   if (await open('o23', 'exchange-0023')) {
     const size = page.locator('.pos-exchange').getByRole('group', { name: '지급 사이즈', exact: true }).locator('button.sn-choice[aria-pressed="false"]');
     await w.click(size.first());
-    await otherCounter(w, '#/orders/o23', '.sn-slip', async (other) => {
-      await other.locator('.pos-side .sn-check-press', { hasText: '반납' }).first().click();
+    await otherCounter(w, '#/orders/o23', '.pos-counter-detail', async (other) => {
+      await openCounterAction(other, '반납');
       const store = other.locator('[role="dialog"]').getByRole('button', { name: '매장 반납 처리', exact: true });
       if (await store.count()) await store.click();
       await other.waitForSelector('.pos-return [data-primary="true"]:enabled');
@@ -1990,10 +2049,10 @@ async function exchangeFlow(w) {
   w.shop = 'numbered';
   try {
     await resetTo(w, 0);
-    await w.visit('#/orders/o21', '.sn-slip');
+    await w.visit('#/orders/o21', '.pos-counter-detail');
     await w.scene('exchange-numbered-slip');
-    let found = await page.locator('.pos-side-actions button', { hasText: '즉시 교환' }).count();
-    const more = page.locator('.pos-side-actions button', { hasText: '더 보기' });
+    let found = await page.locator('.pos-counter-detail-actions button', { hasText: '즉시 교환' }).count();
+    const more = page.locator('.pos-counter-detail-actions button', { hasText: '추가 처리' });
     if (await more.count()) {
       await w.click(more);
       const next = w.top().getByRole('button', { name: '다음 쪽' });
@@ -2024,7 +2083,10 @@ async function cancelCommit(w, name, { reason = null, decision = null, method = 
     await w.click(piece().first());
   }
   const press = async (group, label) => {
-    const button = dialog.getByRole('group', { name: group, exact: true }).first().getByRole('button', { name: label, exact: true });
+    const row = dialog.getByRole('group', { name: group, exact: true }).first();
+    const button = row.getByRole('button', { name: label, exact: true });
+    const more = row.getByRole('button', {name:'더 보기',exact:true});
+    for(let i=0;i<6 && !(await button.count()) && await more.count();i+=1) await w.click(more);
     if (!(await button.count())) { w.fail(name, '`' + group + '` 줄에 `' + label + '`이 없음'); return false; }
     await w.click(button.first());
     return true;
@@ -2055,11 +2117,15 @@ async function cancelCommit(w, name, { reason = null, decision = null, method = 
 
 /** 오늘 장부의 쪽을 넘기며 그 끝 4자리의 줄을 찾아(보이는 쪽에서) 재고, 그 줄의 시각 칸 글에 word가 있는지 본다. */
 async function ledgerRowWord(w, name, last4, word) {
-  await w.visit('#/ledger/' + w.date, '.sn-ledger tr.sn-row');
+  const orderId = /^#\/orders\/([^/]+)$/.exec(await w.hash())?.[1];
+  if (!orderId) { w.fail(name, '확인할 접수증 주소가 없음'); return; }
+  await w.visit('#/ledger/' + w.date, '.pos-counter-list');
+  const completed = w.page.getByRole('button', {name:'완료 내역',exact:true});
+  if (await completed.count()) await w.click(completed);
   const [, total] = await w.pageInfo();
   for (let p = 1; p <= total; p += 1) {
     await w.toPage(p);
-    const row = w.page.locator('.sn-ledger tr.sn-row', { hasText: last4 });
+    const row = w.page.locator('.pos-counter-row[data-order-id="' + orderId + '"]');
     if (!(await row.count())) continue;
     await w.scene(name);
     if (!(await row.first().getByText(word, { exact: true }).count())) w.fail(name, last4 + ' 줄에 `' + word + '`이 없음');
@@ -2098,7 +2164,7 @@ async function orderEditFlow(w) {
       const primary = w.top().locator('[data-primary="true"]');
       if (!(await primary.isEnabled())) { w.fail(name + '-add', '품목 추가 확정이 막힘'); await w.closeTo(0); return false; }
       await w.click(primary);
-      await page.waitForSelector('.sn-slip', { timeout: 10_000 }).catch(() => {});
+      await page.waitForSelector('.pos-counter-detail', { timeout: 10_000 }).catch(() => {});
       await w.settle();
       if ((await w.hash()) !== '#/orders/' + orderId) { w.fail(name + '-add', '품목 추가 뒤 접수증이 아님: ' + (await w.hash())); return false; }
     }
@@ -2120,7 +2186,7 @@ async function orderEditFlow(w) {
 
   // 최하은: 수납 셋(계좌이체 선입금 + 현금 + 카드) → 접수 취소(환불 셋: 두 줄 자리 + 쪽 넘김, 연락 없음, 현금) → 출처 줄 · 장부 · 마감.
   if (await addFlow('o26', 'edit-0026', ['현금', '카드'])) {
-    await w.visit('#/orders/o26', '.sn-slip');
+    await w.visit('#/orders/o26', '.pos-counter-detail');
     // 창을 한 번 다 걸어 잰 뒤(구분 · 결정을 모두 누름) 닫고, 새로 열어 처음 결정(환불)의 줄을 보고 확정한다.
     if (await openSlipAction(w, '접수 취소', 'edit-0026-cancel', '.pos-cancel')) {
       await w.cancelWalk('edit-0026-cancel', { full: true });
@@ -2144,7 +2210,7 @@ async function orderEditFlow(w) {
     }
   }
   // 박준호 리프트권 품목 취소: 미수 결제 · 환불 없음 · 환불을 모두 재고 미수 결제로 확정 → 출처 줄.
-  await w.visit('#/orders/o22', '.sn-slip');
+  await w.visit('#/orders/o22', '.pos-counter-detail');
   if (await openSlipAction(w, '품목 취소', 'edit-0022-remove', '.pos-cancel')) {
     await w.cancelWalk('edit-0022-remove', { full: true });
     await w.closeTo(0);
@@ -2157,7 +2223,7 @@ async function orderEditFlow(w) {
   }
   // 16:40 적재 뒤(이야기) 최하은 팀 접수 취소 → 차량 재고의 `접수 취소` 줄 · 마감 `확인 필요`(미입고).
   await resetTo(w, 60);
-  await w.visit('#/orders/o26', '.sn-slip');
+  await w.visit('#/orders/o26', '.pos-counter-detail');
   if (await openSlipAction(w, '접수 취소', 'edit-0026-loaded', '.pos-cancel') && await cancelCommit(w, 'edit-0026-loaded-commit', { decision: '환불 없음' })) {
     await w.visit('#/closing/' + w.date, '.pos-closing-table');
     await w.scene('edit-closing-leftover');
@@ -2180,11 +2246,66 @@ async function orderEditFlow(w) {
 }
 
 /** 접수증 옆 동작을 연다(바로 보이거나 `더 보기` 판 안: 쪽을 넘겨 찾는다). opens(창의 선택자, 기본 할인 적용 창)가 열리면 true. */
+async function choiceLabels(w) {
+  const prev = w.top().getByRole('button',{name:'이전 쪽',exact:true});
+  while (await prev.count() && await prev.isEnabled()) await w.click(prev);
+  const labels = [];
+  for (let guard = 0; guard < 20; guard += 1) {
+    labels.push(...await w.top().locator('.pos-choice-button').allTextContents());
+    const next = w.top().getByRole('button',{name:'다음 쪽',exact:true});
+    if (!(await next.count()) || !(await next.isEnabled())) break;
+    await w.click(next);
+  }
+  return labels.map(x=>x.trim());
+}
+async function choiceLocator(w, label) {
+  for (let guard = 0; guard < 20; guard += 1) {
+    const choice = w.top().getByRole('button',{name:label,exact:true});
+    if (await choice.count()) return choice;
+    const next = w.top().getByRole('button',{name:'다음 쪽',exact:true});
+    if (!(await next.count()) || !(await next.isEnabled())) break;
+    await w.click(next);
+  }
+  throw new Error('선택지 없음: ' + label);
+}
+async function chooseLabel(w,label) { await w.click(await choiceLocator(w,label)); }
+
+async function openCounterAction(page, label) {
+  const primary = page.locator('.pos-counter-detail-actions [data-primary="true"]', {hasText: label});
+  if (await primary.count()) { await primary.click(); return true; }
+  await page.locator('.pos-counter-detail-actions').getByRole('button', {name: '추가 처리', exact: true}).click();
+  const top = page.locator('[role="dialog"]').last();
+  for (let guard = 0; guard < 12; guard += 1) {
+    const choice = top.locator('.pos-choice-button', {hasText: label});
+    if (await choice.count()) { await choice.first().click(); return true; }
+    const next = top.getByRole('button', {name:'다음 쪽', exact:true});
+    if (!(await next.count()) || !(await next.isEnabled())) break;
+    await next.click();
+  }
+  throw new Error('추가 처리에 필요한 동작이 없음: ' + label);
+}
+
+async function openCounterItem(page, item, action) {
+  const pager = page.locator('.pos-counter-detail .pos-counter-paging');
+  for (let guard = 0; guard < 30; guard += 1) {
+    const row = page.locator('button.pos-counter-item', {hasText:item});
+    if (await row.count()) {
+      await row.first().click();
+      await page.locator('[role="dialog"]').last().locator('.pos-choice-button', {hasText:action}).first().click();
+      return;
+    }
+    const next = pager.getByRole('button', {name:'다음 쪽', exact:true});
+    if (!(await next.count()) || !(await next.isEnabled())) break;
+    await next.click();
+  }
+  throw new Error('처리할 품목이 없음: ' + item + ' / ' + action);
+}
+
 async function openSlipAction(w, label, name, opens = '.pos-discount') {
-  const direct = w.page.locator('.pos-side-actions button', { hasText: label });
+  const direct = w.page.locator('.pos-counter-detail-actions button', { hasText: label });
   if (await direct.count()) await w.click(direct.first());
   else {
-    const more = w.page.locator('.pos-side-actions button', { hasText: '더 보기' });
+    const more = w.page.locator('.pos-counter-detail-actions button', { hasText: '추가 처리' });
     if (!(await more.count())) { w.fail(name, '접수증 옆 동작에 `' + label + '`이 없음'); return false; }
     await w.click(more);
     const choice = () => w.top().locator('.pos-choice-button', { hasText: label });
@@ -2229,13 +2350,13 @@ async function discountCommit(w, name, choice, refundMethod = null, section = '�
  */
 async function cancelledSlip(w, name) {
   const page = w.page;
-  if (!(await page.locator('.sn-slip-status', { hasText: '취소' }).count())) w.fail(name, '모두 취소한 접수증 머리에 `취소`가 없음');
+  if (!(await page.locator('.pos-counter-cancelled', { hasText: '취소' }).count())) w.fail(name, '모두 취소한 접수증 머리에 `취소`가 없음');
   await w.scene(name);
   const banned = ['일정 변경', '긴급 요청'];
   for (const label of banned) {
-    if (await page.locator('.pos-side-actions button', { hasText: label }).count()) w.fail(name, '모두 취소한 접수증 옆 동작에 `' + label + '`이 있음');
+    if (await page.locator('.pos-counter-detail-actions button', { hasText: label }).count()) w.fail(name, '모두 취소한 접수증 옆 동작에 `' + label + '`이 있음');
   }
-  const more = page.locator('.pos-side-actions button', { hasText: '더 보기' });
+  const more = page.locator('.pos-counter-detail-actions button', { hasText: '추가 처리' });
   if (await more.count()) {
     await w.click(more);
     const next = w.top().getByRole('button', { name: '다음 쪽' });
@@ -2250,13 +2371,22 @@ async function cancelledSlip(w, name) {
   }
 }
 
+async function slipText(w, text) {
+  const pager = w.page.locator('.pos-counter-detail .pos-counter-paging');
+  const [, total] = await w.pageInfo(pager);
+  let found = false;
+  for (let p=1; p<=total; p+=1) { await w.toPage(p,pager); found ||= !!(await w.page.locator('.pos-counter-item',{hasText:text}).count()); }
+  await w.toPage(1,pager);
+  return found;
+}
+
 async function slipAdjustment(w, name, text) {
-  const footer = w.page.locator('.sn-footer');
+  const footer = w.page.locator('.pos-counter-detail .pos-counter-paging');
   const [, total] = await w.pageInfo(footer);
   let found = false;
-  for (let p = 1; p <= Math.max(1, total) && !found; p += 1) {
+  for (let p = 1; p <= total && !found; p += 1) {
     await w.toPage(p, footer);
-    if (await w.page.locator('.sn-slip-adjust', { hasText: text }).count()) { found = true; await w.scene(name); }
+    if (await w.page.locator('.pos-counter-item[data-adjustment]', {hasText: text}).count()) { found = true; await w.scene(name); }
   }
   await w.toPage(1, footer);
   if (!found) w.fail(name, '접수증에 출처 줄 `' + text + '`이 없음');
@@ -2271,7 +2401,7 @@ async function discountFlow(w) {
   const page = w.page;
   await resetTo(w, 0);
   const open = async (orderId, name) => {
-    await w.visit('#/orders/' + orderId, '.sn-slip');
+    await w.visit('#/orders/' + orderId, '.pos-counter-detail');
     return openSlipAction(w, '할인 적용', name);
   };
   if (await open('o22', 'discount-0022')) {
@@ -2290,7 +2420,7 @@ async function discountFlow(w) {
   // 카운터(?viewer=counter, 직접 입력 한도 10,000원): 한도 밖 값의 숫자판.
   w.route('counter');
   await page.goto(BASE + '?viewer=counter#/orders/o22');
-  await page.waitForSelector('.sn-slip', { timeout: 10_000 });
+  await page.waitForSelector('.pos-counter-detail', { timeout: 10_000 });
   await w.settle();
   if (await openSlipAction(w, '할인 적용', 'discount-viewer')) {
     const manual = page.locator('.pos-discount').getByRole('group', { name: '할인', exact: true }).locator('button.sn-choice', { hasText: '직접 입력' });
@@ -2368,12 +2498,12 @@ async function conflictWalks(w) {
   // ② 15:40 박준호 지급(보증금 입금이 이어짐): 다른 카운터가 권 줄만 지급 · 보증금 입금.
   w.shop = 'numbered';
   await resetTo(w, 0);
-  await w.visit('#/orders/o22', '.sn-slip');
-  await w.click(page.locator('.pos-side [data-primary="true"]'));
+  await w.visit('#/orders/o22', '.pos-counter-detail');
+  await w.click(page.locator('.pos-counter-detail-actions [data-primary="true"]'));
   await page.waitForSelector('[role="dialog"]');
   await w.settle();
-  await otherCounter(w, '#/orders/o22', '.sn-slip', async (other) => {
-    await other.locator('.sn-slip tr.sn-row', { hasText: '야간권' }).locator('.sn-stamp-cell[aria-label^="지급"]').click();
+  await otherCounter(w, '#/orders/o22', '.pos-counter-detail', async (other) => {
+    await openCounterItem(other, '야간권', '지급');
     await other.waitForSelector('[role="dialog"] [data-primary="true"]');
     await other.locator('[role="dialog"] [data-primary="true"]').click();
     await other.waitForSelector('[role="dialog"]', { state: 'detached', timeout: 10_000 });
@@ -2386,16 +2516,16 @@ async function conflictWalks(w) {
 
   // ③ 21:30 박준호 반납(모든 줄) · 다른 카운터가 권 줄만 반납 · 보증금 반환.
   await resetTo(w, 350);
-  await w.visit('#/orders/o22', '.sn-slip');
+  await w.visit('#/orders/o22', '.pos-counter-detail');
   const openReturn = async (target) => {
-    await target.locator('.pos-side .sn-check-press', { hasText: '반납' }).first().click();
+    await openCounterAction(target, '반납');
     await target.locator('[role="dialog"]').getByRole('button', { name: '매장 반납 처리', exact: true }).click();
     await target.waitForSelector('.pos-return');
   };
   await openReturn(page);
   await w.settle();
-  await otherCounter(w, '#/orders/o22', '.sn-slip', async (other) => {
-    await other.locator('.sn-slip tr.sn-row', { hasText: '야간권' }).locator('.sn-stamp-cell[aria-label^="반납"]').click();
+  await otherCounter(w, '#/orders/o22', '.pos-counter-detail', async (other) => {
+    await openCounterItem(other, '야간권', '반납');
     await other.locator('[role="dialog"]').getByRole('button', { name: '매장 반납 처리', exact: true }).click();
     await other.waitForSelector('.pos-return [data-primary="true"]:enabled');
     await other.waitForTimeout(300);
@@ -2409,26 +2539,38 @@ async function conflictWalks(w) {
   await w.closeTo(0);
   // 보증금 줄 · 번호 버튼이 있는 반납 창(V1): 21:10 박준호 팀(16:05 지급 · 보증금 15,000원, 19:41 일정 나뉨) 접수증의 도장 · 처리 현황 · 옆 동작.
   await resetTo(w, 330);
-  await w.visit('#/orders/o22', '.sn-slip');
+  await w.visit('#/orders/o22', '.pos-counter-detail');
   await slipWalk(w, 'numbered-slip-0022');
   if (!w.returnWalked.deposit) w.fail('numbered-slip-0022', '번호 · 보증금 매장의 박준호 팀에서 보증금 줄이 있는 반납 창을 걷지 못함');
   w.shop = 'first';
 
   // ④ 19:40 박준호 일정 변경(보드 1 → 두솔동) · 그사이 다른 카운터가 보드를 매장에서 받음.
   await resetTo(w, 240);
-  await w.visit('#/orders/o22', '.sn-slip');
-  const side = page.locator('.pos-side-actions').getByRole('button', { name: '일정 변경', exact: true });
+  await w.visit('#/orders/o22', '.pos-counter-detail');
+  const side = page.locator('.pos-counter-detail-actions').getByRole('button', { name: '일정 변경', exact: true });
   if (await side.count()) await w.click(side);
   else {
-    await w.click(page.locator('.pos-side-actions').getByRole('button', { name: '더 보기' }));
+    await w.click(page.locator('.pos-counter-detail-actions').getByRole('button', { name: '추가 처리' }));
     await w.click(w.top().getByRole('button', { name: '일정 변경', exact: true }));
   }
   await page.waitForSelector('.pos-promise');
   await w.click(page.locator('.pos-promise [role="group"][aria-label="보드 수량"] button[aria-label="수량 증가"]'));
-  await w.click(page.locator('.pos-promise').getByRole('button', { name: /^솔마을/ }));
-  await w.click(page.locator('.pos-promise').getByRole('button', { name: '두솔동', exact: true }));
-  await otherCounter(w, '#/orders/o22', '.sn-slip', async (other) => {
-    await other.locator('.sn-slip tr.sn-row', { hasText: '보드' }).locator('.sn-stamp-cell[aria-label^="반납"]').click();
+  // 좁아진 일정 패널에서도 같은 장소를 고른다. ChoiceRow의 더 보기 페이지를 실제로 누른다.
+  const places = page.locator('.pos-promise').getByRole('group', { name: '반납 장소', exact: true });
+  const pickPlace = async (name) => {
+    for (let i = 0; i < 12; i += 1) {
+      const target = places.getByRole('button', { name, exact: typeof name === 'string' });
+      if (await target.count()) { await w.click(target); return; }
+      const more = places.getByRole('button', { name: '더 보기', exact: true });
+      if (!(await more.count())) break;
+      await w.click(more);
+    }
+    throw new Error('일정 변경 장소 선택 실패: ' + String(name));
+  };
+  await pickPlace(/^솔마을/);
+  await pickPlace('두솔동');
+  await otherCounter(w, '#/orders/o22', '.pos-counter-detail', async (other) => {
+    await openCounterItem(other, '보드', '반납');
     await other.locator('[role="dialog"]').getByRole('button', { name: '매장 반납 처리', exact: true }).click();
     await other.waitForSelector('.pos-return [data-primary="true"]:enabled');
     await other.waitForTimeout(300);
@@ -2727,7 +2869,9 @@ async function settingsWalk(w) {
   await padKeys(w, ['0', '1', '0']);
   if (await w.top().getByRole('button', { name: '입력', exact: true }).isEnabled()) w.fail('set-info-phone', '세 자리 전화인데 입력을 누를 수 있음');
   await w.closeTo(0);
-  await w.click(page.locator('.sn-rule-card[aria-label="영업일 기준 시각"] .sn-rule-value'));
+  const cutoff = await settingsCell(w, (pg) => pg.locator('.sn-rule-card[aria-label="영업일 기준 시각"] .sn-rule-value'));
+  if (!cutoff) throw new Error('매장 정보에 영업일 기준 시각 연결이 없음');
+  await w.click(cutoff);
   const unsavedFromInfo = await w.dialogCount();
   if (unsavedFromInfo) { await w.scene('set-info-leave', 'dialog'); await w.click(w.top().getByRole('button', { name: '저장 안 함', exact: true })); }
   if (!/#\/manage\/settings\/rules$/.test(await w.hash())) w.fail('set-info-link', '`운영 규칙 ›`이 운영 규칙 탭으로 가지 않음: ' + (await w.hash()));
@@ -2931,16 +3075,8 @@ async function groupPayWalk(w) {
   const page = w.page;
   const click = async (locator) => { if (await locator.count() && await locator.first().isEnabled()) { await w.click(locator.first()); return true; } return false; };
   const open = async (name) => {
-    await w.visit('#/orders/o32', '.sn-slip');
-    // 처리 현황의 `수납` 줄(낮은 화면에서는 `외 N건`으로 접힘) → 옆 동작 `수납` → 더 보기 안의 `수납`.
-    const row = page.locator('.pos-side .sn-check-press', { hasText: '수납' });
-    const side = page.locator('.pos-side-actions').getByRole('button', { name: '수납', exact: true });
-    if (await row.count()) await w.click(row.first());
-    else if (await side.count()) await w.click(side);
-    else {
-      await w.click(page.locator('.pos-side-actions').getByRole('button', { name: '더 보기' }));
-      await w.click(w.top().getByRole('button', { name: '수납', exact: true }));
-    }
+    await w.visit('#/orders/o32', '.pos-counter-detail');
+    await openCounterAction(page, '수납');
     await page.waitForSelector('.pos-group-table', { timeout: 10_000 });
     await w.settle();
     if (!/^#\/orders\/o32\/pay$/.test(await w.hash())) w.fail(name, '이정호 팀 접수증의 수납이 일괄 수납을 열지 않음: ' + (await w.hash()));
@@ -3034,7 +3170,7 @@ async function groupPayWalk(w) {
   await w.closeTo(0);
   // 수납 확정 → 접수증.
   await w.click(page.locator('.pos-group-go'));
-  await page.waitForSelector('.sn-slip', { timeout: 10_000 });
+  await page.waitForSelector('.pos-counter-detail', { timeout: 10_000 });
   await w.settle();
   await w.scene('v5-done-slip');
   if ((await w.hash()) !== '#/orders/o32') w.fail('v5-done-slip', '수납 뒤 이정호 팀 접수증이 아님: ' + (await w.hash()));
@@ -3142,7 +3278,10 @@ async function newOrderWalk(w) {
   // 전화 예약의 접수 확정 창(V4: 리프트권 선입금이라 `후불`을 누를 수 없고 보증금 칸이 없음)을 열어 잰다(검토 반영: 변형마다 따로).
   await checkoutVariant(w, 'v3r-next');
   // 차량 배달 창: 배달 시각 · 직접 입력 · 배달 장소
-  await w.click(group('수령 방법').locator('button.sn-choice').nth(2));
+  const deliveryChoice = group('수령 방법').getByRole('button', {name:/^차량 배달(?:\s|$)/});
+  const pickupMore = group('수령 방법').getByRole('button', {name:'더 보기',exact:true});
+  for(let i=0;i<6 && !(await deliveryChoice.count()) && await pickupMore.count();i+=1) await w.click(pickupMore);
+  await w.click(deliveryChoice);
   await w.scene('v3-deliver', 'dialog');
   await click(win().getByRole('group', { name: '배달 시각' }).locator('button.sn-choice').nth(1));
   await click(win().getByRole('group', { name: '배달 시각' }).locator('button.sn-choice').last());
@@ -3172,10 +3311,21 @@ async function newOrderWalk(w) {
   for (let i = 0, n = await slots.count(); i < n; i += 1) await click(group('반납 시각').locator('button.sn-choice:enabled').nth(i));
   await w.scene('v3-slot');
   // 반납 장소: 구역마다 작은 창 → 첫 장소
-  const areas = await group('반납 장소').locator('button.sn-choice').count();
-  for (let i = 1; i < areas; i += 1) {
-    await click(group('반납 장소').locator('button.sn-choice').nth(i));
-    await w.scene('v3-area' + i, 'dialog');
+  const returnPlaces = group('반납 장소');
+  const areaNames = new Set(); const seenPlacePages = new Set();
+  for(let i=0;i<8;i+=1){
+    const labels = await returnPlaces.locator('button.sn-choice').evaluateAll(els=>els.map(el=>(el.getAttribute('aria-label')??el.textContent).trim().replace(/\s+/g,' ')));
+    const signature=labels.join('|');if(seenPlacePages.has(signature))break;seenPlacePages.add(signature);
+    labels.filter(label=>label!=='더 보기'&&label!=='매장 직접').forEach(label=>areaNames.add(label));
+    const more=returnPlaces.getByRole('button',{name:'더 보기',exact:true});if(!(await more.count()))break;await w.click(more);
+  }
+  let areaNumber=0;
+  for(const label of areaNames){
+    const button=returnPlaces.getByRole('button',{name:label,exact:true});
+    const more=returnPlaces.getByRole('button',{name:'더 보기',exact:true});
+    for(let i=0;i<8 && !(await button.count()) && await more.count();i+=1)await w.click(more);
+    await w.click(button);
+    await w.scene('v3-area'+(++areaNumber),'dialog');
     await w.click(w.top().locator('.pos-choice-button').first());
   }
   await w.scene('v3-place');
@@ -3193,10 +3343,10 @@ async function newOrderWalk(w) {
   await w.scene('v2-back');
   if (!(await page.locator('.pos-new-side .sn-list-row').count())) w.fail('v2-back', '① 탭으로 돌아오니 선택 품목이 비었음');
   await w.click(page.locator('.pos-footer-back').getByRole('button', { name: '장부' }));
-  await page.waitForSelector('.sn-ledger tr.sn-row');
+  await page.waitForSelector('.pos-counter-list');
   await w.settle();
   if (!(await page.evaluate(() => sessionStorage.getItem('sn-new-order')))) w.fail('v2-leave', '‹ 장부 뒤에 새 접수 초안이 사라짐');
-  await w.click(page.locator('.sn-footer [data-primary="true"]'));
+  await w.click(page.locator('.pos-counter-title-row [data-primary="true"]'));
   await page.waitForSelector('.pos-new-kinds');
   await w.settle();
   await w.scene('v2-reopened');
@@ -3205,7 +3355,7 @@ async function newOrderWalk(w) {
   await w.click(page.locator('.pos-footer-back').getByRole('button', { name: '접수 취소', exact: true }));
   await w.scene('v2-discard', 'dialog');
   await w.click(w.top().locator('.pos-notice-actions').getByRole('button', { name: '접수 취소', exact: true }));
-  await page.waitForSelector('.sn-ledger tr.sn-row');
+  await page.waitForSelector('.pos-counter-list');
   await w.settle();
   if (await page.evaluate(() => sessionStorage.getItem('sn-new-order'))) w.fail('v2-discard', '접수 취소 뒤에도 새 접수 초안이 남음');
   await newOrderConfirm(w);
@@ -3241,9 +3391,6 @@ async function newOrderConfirm(w) {
   await w.click(page.locator('.pos-new-kinds .sn-kind').first());
   await w.click(page.locator('.pos-new-open').getByRole('button', { name: '수량 증가' }));
   await w.click(page.locator('.pos-new-side [data-primary="true"]'));
-  await page.waitForSelector('.pos-new-schedule');
-  await w.settle();
-  await w.click(page.locator('.pos-new-side [data-primary="true"]'));
   await page.waitForSelector('.pos-checkout');
   await w.settle();
   const dialog = page.locator('.pos-checkout');
@@ -3259,47 +3406,37 @@ async function newOrderConfirm(w) {
   }
   await w.scene('v4-confirm', 'dialog');
   await w.click(dialog.locator('[data-primary="true"]'));
-  await page.waitForSelector('.sn-slip', { timeout: 10_000 });
+  await page.waitForSelector('.pos-counter-detail', { timeout: 10_000 });
   await w.settle();
   await w.scene('v4-done-slip');
   const hash = await w.hash();
   if (!/^#\/orders\/n\d+$/.test(hash)) w.fail('v4-done-slip', '접수 확정 뒤 새 접수증이 아님: ' + hash);
   if (await page.evaluate(() => sessionStorage.getItem('sn-new-order'))) w.fail('v4-done-slip', '접수 확정 뒤에도 새 접수 초안이 남음');
-  if (!(await page.locator('.sn-slip', { hasText: '이정호 팀 결제 예정' }).count())) w.fail('v4-done-slip', '새 접수증 돈 줄에 결제 팀이 없음');
+  await w.click(page.locator('.pos-counter-money-card'));
+  if (!(await w.top().getByText(/이정호 팀 결제 예정/).count())) w.fail('v4-done-slip', '새 접수증 돈 내역에 결제 팀이 없음');
+  await w.closeTo(0);
 }
 
 /** 도장을 찍은 뒤의 모양: 지급 → 수납 → 빨리 확인 → 순서 바꿈. */
 async function counterFlow(w) {
-  await w.visit('#/ledger/' + w.date, '.sn-ledger tr.sn-row');
-  const todoStamp = 'button.sn-stamp-cell[aria-label$="미처리"]';
-  const issue = w.page.locator('.sn-ledger tr.sn-row ' + todoStamp).first();
-  if (await issue.count()) {
-    const row = w.page.locator('.sn-ledger tr.sn-row', { has: w.page.locator(todoStamp) }).first();
-    const team = /\b(\d{4})\b/.exec((await row.locator('.sn-cell-open').textContent()) ?? '')?.[1] ?? '';
-    await w.click(issue);
-    const commit = w.top().locator('[data-primary="true"]');
-    if (await commit.count()) {
-      await w.click(commit);
-      await w.closeTo(0);
-      await w.scene('flow-ledger-after-stamp');
-      const again = w.page.locator('.sn-ledger tr.sn-row .sn-cell-open', { hasText: team }).first();
-      if (await again.count()) {
-        await w.click(again);
-        await w.page.waitForSelector('.sn-slip');
-        await w.settle();
-        await w.scene('flow-slip-after-stamp');
-        const next = w.page.locator('.pos-side [data-primary="true"]');
-        if (await next.count()) {
-          await w.click(next);
-          const methods = w.top().locator('.pos-method');
-          if (await methods.count() > 1) await w.click(methods.nth(1));
-          const ok = w.top().locator('[data-primary="true"]');
-          if (await ok.count()) { await w.click(ok); await w.closeTo(0); }
-          await w.scene('flow-slip-after-next');
-        }
-      }
-    } else {
-      await w.closeTo(0);
+  await w.visit('#/ledger/' + w.date, '.pos-counter-list');
+  if (!(await openSlipOf(w,'0022'))) { w.fail('flow-issue','지급 전 팀을 찾지 못함'); return; }
+  const issue = w.page.locator('.pos-counter-detail-actions [data-primary="true"]');
+  if (!(await issue.count()) || !/^지급 처리/.test((await issue.textContent())??'')) w.fail('flow-issue','지급 전 팀의 대표 동작이 지급이 아님');
+  else {
+    await w.click(issue); await w.click(w.top().locator('[data-primary="true"]')); await w.closeTo(0);
+    await w.scene('flow-slip-after-stamp');
+    await w.click(w.page.locator('.pos-counter-team-head').getByRole('button',{name:'장부',exact:true}));
+    await w.page.waitForSelector('.pos-counter-list'); await w.scene('flow-ledger-after-stamp');
+    if (!(await openSlipOf(w,'0022'))) w.fail('flow-reenter','지급한 팀 재진입 실패');
+    const next=w.page.locator('.pos-counter-detail-actions [data-primary="true"]');
+    if (await next.count()) {
+      await w.click(next);
+      const methods=w.top().locator('.pos-method');
+      if(await methods.count()>1) await w.click(methods.nth(1));
+      const ok=w.top().locator('[data-primary="true"]');
+      if(await ok.count()) {await w.click(ok);await w.closeTo(0);}
+      await w.scene('flow-slip-after-next');
     }
   }
   // 카운터 수거 목록에서 빨리 확인 · 순서
@@ -3316,7 +3453,7 @@ async function counterFlow(w) {
     await w.closeTo(0);
     await deselect(w);
     await w.pages('flow-collection-after-pin');
-    const open = w.page.locator('.sn-pin button.sn-pin-open');
+    const open = w.page.locator('.sn-sheet .pos-urgent-bar');
     if (await open.count()) { await w.probe(open, 'flow-collection-pins'); await w.closeTo(0); }
   }
 }
@@ -3332,12 +3469,12 @@ async function counterNight(w) {
     for (let i = 0; i < tens; i += 1) await w.click(w.page.getByRole('button', { name: '+10분', exact: true }));
   };
   await advance(5, 3);
-  await w.visit('#/ledger/' + w.date, '.sn-ledger tr.sn-row');
+  await w.visit('#/ledger/' + w.date, '.pos-counter-list');
   await w.pages('night-ledger');
   // 21:10 박준호 팀(16:05 지급 · 보증금 15,000원, 19:41 일정 나뉨): 처리 현황 반납 → 매장 반납 처리 → 보증금 줄이 있는 반납 창(V1).
-  await w.visit('#/orders/o22', '.sn-slip');
+  await w.visit('#/orders/o22', '.pos-counter-detail');
   await slipWalk(w, 'night-slip-0022');
-  await w.probe(w.page.locator('.sn-header').getByRole('button', { name: /^알림/ }), 'night-alerts');
+  await w.probe(w.page.locator('.sn-header, .pos-counter-header').getByRole('button', { name: /^알림/ }), 'night-alerts');
   await w.closeTo(0);
   // 21:10 이민호 팀(16:26 새 접수 · 16:27 지급, 품목 5줄 · 권 4매 보증금 20,000원, 매장 반납): 줄마다 반납 창, 처리 현황 반납(5줄 반납 창의
   // 쪽 넘김), 옆 동작 일정 변경(변경 품목 5줄 → 쪽 넘김, plan.md 6절 V9 'pager when > 4 lines').
@@ -3346,38 +3483,39 @@ async function counterNight(w) {
   await w.visit('#/collections/' + w.date, '.sn-ledger tr.sn-row');
   await w.pages('night-collection');
   await advance(1, 0);
-  await w.visit('#/ledger/' + w.date, '.sn-ledger tr.sn-row');
+  await w.visit('#/ledger/' + w.date, '.pos-counter-list');
   await w.tabs('late-ledger');
   await w.pages('late-ledger-times', () => ledgerTimes(w, 'late-ledger-times'), { measure: false });
   // 늦은 줄의 접수증(늦은 미수는 돈 칸만 빨강)
-  const late = w.page.locator('.sn-ledger tr.sn-row.is-late .sn-cell-open');
+  await w.click(w.page.locator('.pos-counter-stages button').nth(2));
+  const late = w.page.locator('.pos-counter-list .pos-counter-row.is-late');
   if (await late.count()) {
     await w.click(late.first());
-    await w.page.waitForSelector('.sn-slip');
+    await w.page.waitForSelector('.pos-counter-detail');
     await w.settle();
     await w.scene('late-slip');
-    await w.click(w.page.locator('.pos-footer-back').getByRole('button', { name: '장부' }));
-    await w.page.waitForSelector('.sn-ledger tr.sn-row');
+    await w.click(w.page.locator('.pos-counter-team-head').getByRole('button', { name: '장부', exact:true }));
+    await w.page.waitForSelector('.pos-counter-list');
     await w.settle();
   }
-  await w.probe(w.page.locator('.sn-footer [data-primary="true"]'), 'late-primary');
+  await w.probe(w.page.locator('.pos-counter-title-row [data-primary="true"]'), 'late-primary');
   await w.closeTo(0);
   // 심야 24:00(마지막 반납 타임) 뒤: 26일 영업일 장부(06:00 전)의 주 버튼이 마감.
   await advance(2, 0);
-  await w.visit('#/ledger/' + w.date, '.sn-ledger tr.sn-row');
+  await w.visit('#/ledger/' + w.date, '.pos-counter-list');
   await w.pages('after-midnight-ledger');
   // 늦은 반납(27일 00:10: 22:00 차량 수거가 남은 팀): 처리 현황 반납 → 매장 반납 처리 → 반납 창의 빨강 한 줄 `반납 지연 · 일정 22:00`.
-  const lateRow = w.page.locator('.sn-ledger tr.sn-row.is-late', { has: w.page.locator('.is-time', { hasText: '반납' }) }).locator('.sn-cell-open');
+  await w.click(w.page.locator('.pos-counter-stages button').nth(2));
+  const lateRow = w.page.locator('.pos-counter-list .pos-counter-row.is-late');
   if (!(await lateRow.count())) w.fail('late-return', '27일 00:10 장부 첫 쪽에 늦은 반납 줄이 없음');
   if (await lateRow.count()) {
     await w.click(lateRow.first());
-    await w.page.waitForSelector('.sn-slip');
+    await w.page.waitForSelector('.pos-counter-detail');
     await w.settle();
-    const back = w.page.locator('.pos-side .sn-check-press', { hasText: '반납' });
-    if (await back.count()) { await w.probe(back.first(), 'late-return'); await w.closeTo(0); }
-    await w.visit('#/ledger/' + w.date, '.sn-ledger tr.sn-row');
+    await openCounterAction(w.page, '반납 처리'); await w.dialogWalk('late-return'); await w.closeTo(0);
+    await w.visit('#/ledger/' + w.date, '.pos-counter-list');
   }
-  const close = w.page.locator('.sn-footer [data-primary="true"]');
+  const close = w.page.locator('.pos-counter-title-row [data-primary="true"]');
   if (!/마감/.test((await close.textContent()) ?? '')) w.fail('after-midnight-ledger', '24:00 뒤 장부 주 버튼이 마감이 아님: ' + ((await close.textContent()) ?? ''));
   await w.probe(close, 'close-primary');
   await w.closeTo(0);
@@ -3423,8 +3561,10 @@ async function closingDay(w) {
   else await w.click(page.getByRole('toolbar').getByRole('button', { name: '위로', exact: true }));
   await w.visit('#/closing/' + w.date, '.pos-closing-table', 'counter');
   await w.scene('v6-blocked');
-  if (!(await page.locator('.pos-closing-sum', { hasText: '전송 대기 있음' }).count())) w.fail('v6-blocked', '전송 대기가 있는데 마감 바닥줄에 막힘 한 줄이 없음');
-  // 막는 단계(features-1 §9-3): 주 버튼 `마감` → 창 안의 한 줄 `1호 차량 기록 1건 전송 대기 · 마감 전 전송 필요` · `재확인`(주 버튼) · `닫기`.
+  // 체험판의 카운터는 끊긴 기사 기기를 서버처럼 본다(대기 수 모름, work/impl-offline/plan.md O19): `1호 차량 연결 끊김 · 15:40부터`.
+  if (!(await page.locator('.pos-closing-sum', { hasText: /전송 대기 있음|연결 끊김/ }).count())) w.fail('v6-blocked', '전송 대기가 있는데 마감 바닥줄에 막힘 한 줄이 없음');
+  // 막는 단계(features-1 §9-3): 주 버튼 `마감` → 창 안의 한 줄 `1호 차량 연결 끊김 · 15:40부터 · 마감 전 전송 필요` · `재확인`(주 버튼) · `관리자 승인` ·
+  // `닫기`.
   const closePrimary = page.locator('.sn-footer [data-primary="true"]');
   if (await closePrimary.count() && await closePrimary.isEnabled()) {
     await w.click(closePrimary);
@@ -3432,7 +3572,7 @@ async function closingDay(w) {
     if (!(await step.count())) w.fail('v6-blocked-step', '막힌 마감의 주 버튼이 막는 단계 창을 열지 않음');
     else {
       await w.scene('v6-blocked-step', 'dialog');
-      if (!/전송 대기 · 마감 전 전송 필요$/.test((await step.getAttribute('aria-label')) ?? '')) w.fail('v6-blocked-step', '막는 단계 한 줄이 `… 전송 대기 · 마감 전 전송 필요`가 아님');
+      if (!/ · 마감 전 전송 필요$/.test((await step.getAttribute('aria-label')) ?? '')) w.fail('v6-blocked-step', '막는 단계 한 줄이 `… · 마감 전 전송 필요`가 아님');
       await w.click(w.top().locator('[data-primary="true"]'));
       await w.scene('v6-blocked-recheck', 'dialog');
       if (!(await w.top().locator('.sn-review-step').count())) w.fail('v6-blocked-recheck', '아직 막혔는데 `재확인` 뒤 막는 단계가 사라짐');
@@ -3520,7 +3660,7 @@ async function closingWalk(w) {
   await w.closeTo(0);
   await closingCarry(w, 'v6-closed');
   // 마감한 영업일의 장부: 제목 옆 `마감 완료`.
-  await w.visit('#/ledger/' + w.date, '.sn-ledger tr.sn-row');
+  await w.visit('#/ledger/' + w.date, '.pos-counter-list');
   await w.scene('ledger-closed');
   if (!(await page.locator('.sn-title-tag', { hasText: '마감 완료' }).count())) w.fail('ledger-closed', '마감한 장부 제목 옆에 `마감 완료`가 없음');
 }
@@ -3597,6 +3737,7 @@ async function driverWalk(w) {
 
   await deliveryWalk(w);
   await driverFlow(w, list);
+  await driverOfflineWalk(w);
   if (w.sizeClass === 'driver_tablet') {
     // 넓은 화면에서 휴대폰 모양으로 보기(틀이 들어가면 휴대폰 등급)
     await w.visit('#/driver/' + w.date + '?device=phone', '.sn-ledger tr.sn-row', 'driver', ['driver_phone']);
@@ -3753,10 +3894,546 @@ async function connectWalk(w) {
 
   await w.visit('#/preview/offline' + query(''), '.pos-card', role);
   await w.scene('offline');
+  // 기사 연결 끊김 기록(work/impl-offline/plan.md §8-1): 연결 끊김 화면의 이 기기 `전송 대기 3`, 되살린 서버가 모르는 기기(`기기 등록 없음 · 공급자 연락`),
+  // 저장할 곳이 없는 기기(`이 기기 저장 불가`, §17 R3-25). 기사 기기면 `수거 목록 · 연결 후 조회 가능`(§17 R3-30).
+  for (const [extra, line] of [['pending=3', '전송 대기 3'], ['pending=3&unknown=1', '기기 등록 없음 · 공급자 연락'], ['pending=1&off=1', '이 기기 저장 불가']]) {
+    const label = 'offline-' + extra.replace(/[=&]/g, '-');
+    await w.visit('#/preview/offline' + query(extra), '.pos-card', role);
+    await w.scene(label);
+    const waiting = (await page.locator('.pos-card-waiting').allTextContents()).map((t) => t.trim());
+    if (!waiting.includes(line)) w.fail(label, '연결 끊김 화면에 `' + line + '` 줄이 없음: ' + waiting.join(' | '));
+    if (!(await page.locator('.pos-card-line', { hasText: '수거 목록 · 연결 후 조회 가능' }).count())) w.fail(label, '기사 기기의 연결 끊김 화면에 `수거 목록 · 연결 후 조회 가능`이 없음');
+  }
+  // 앱 잠금(O15 d): 기억한 기사 타일 하나 + 곧바로 열린 비밀번호 판 → 틀림 한 줄, 다섯 번 틀림(?out=1)이면 `로그인 잠김 · {시각} 이후 가능`이고 숫자 키 ·
+  // 입력 불가(§17 R3-24), 기기에서 풀 수 없음(?login=1)이면 `로그인 잠김 · 연결 후 가능`, 판 위에 이 기기의 `전송 대기 {n}`(?pending=2).
+  await w.visit('#/preview/lock' + query(''), '.sn-numpad', role);
+  await w.scene('lock', 'dialog');
+  if ((await page.locator('.pos-login-tile').count()) !== 1) w.fail('lock', '앱 잠금에 기억한 기사 타일이 하나가 아님');
+  for (const d of '1357') await w.click(w.top().getByRole('button', { name: d, exact: true }));
+  await w.click(w.top().getByRole('button', { name: '입력', exact: true }));
+  await page.waitForFunction(() => /불일치/.test(document.querySelector('.sn-sheet-overlay .sn-keypad-note')?.textContent ?? ''), null, { timeout: 5_000 }).catch(() => {});
+  await w.scene('lock-wrong', 'dialog');
+  if (!(await w.top().locator('.sn-keypad-note', { hasText: '비밀번호 불일치 · 재입력 필요' }).count())) w.fail('lock-wrong', '틀린 비밀번호의 한 줄이 없음');
+  await w.visit('#/preview/lock' + query('out=1&pending=2'), '.sn-numpad', role);
+  await w.scene('lock-out', 'dialog');
+  if (!(await w.top().locator('.sn-keypad-note', { hasText: /^로그인 잠김 · \d\d:\d\d 이후 가능$/ }).count())) w.fail('lock-out', '잠김 한 줄 `로그인 잠김 · {시각} 이후 가능`이 없음');
+  if (await w.top().getByRole('button', { name: '입력', exact: true }).isEnabled()) w.fail('lock-out', '잠겼는데 입력을 누를 수 있음');
+  if (await w.top().getByRole('button', { name: '1', exact: true }).isEnabled()) w.fail('lock-out', '잠겼는데 숫자 키를 누를 수 있음');
+  if (!(await page.locator('.pos-login-note', { hasText: '전송 대기 2' }).count())) w.fail('lock-out', '잠금 판에 이 기기의 `전송 대기 2`가 없음');
+  await w.visit('#/preview/lock' + query('login=1'), '.sn-numpad', role);
+  await w.scene('lock-login', 'dialog');
+  if (!(await w.top().locator('.sn-keypad-note', { hasText: '로그인 잠김 · 연결 후 가능' }).count())) w.fail('lock-login', '기기에서 풀 수 없는 잠금의 한 줄 `로그인 잠김 · 연결 후 가능`이 없음');
+  await w.closeTo(0);
   await w.visit('#/preview/exit' + query(''), '.pos-card', role);
   await w.scene('exit-session');
   await w.probe(page.getByRole('button', { name: '로그아웃', exact: true }), 'exit-logout');
   await w.closeTo(0);
+}
+
+/**
+ * 기사 연결 끊김 기록(work/impl-offline/plan.md §8-1 · §8-3 v7 걸음, 체험판 O19): 처음 자료(15:40)에서 연결을 끊고 업무 판(김민수 팀)의 수거 → 점선 도장 ·
+ * 띠 · 누름 메모, 목록에서 하나 더(띠 `연결 끊김 · 전송 대기 2 · …`), 전화 창(끊겨도 번호), 매장 입고 → `입고 불가 · 연결 끊김`. 다시 붙기(?flush=hold ·
+ * lost=1): 띠 `전송 중 · 전송 대기 2`, 답을 잃은 첫 항목의 `… 결과 확인 중`, 붙잡은 동안 매장 입고 → `입고 불가 · 전송 대기 2`, 놓이면 띠 `전송 대기 0`
+ * (매장 반납된 팀이 있으면 `· 매장 반납 완료 1팀`), 다음 창을 열면 걷힘. 세 번째 검토(work/impl-offline/plan.md §17): 탭 `완료`는 보냄 대기로만 끝난 줄을
+ * 세지 않고(R3-15), 보내는 동안 `전체`가 줄지 않으며(R3-17), 끊긴 업무 판의 바닥줄은 `처리 · 전송 대기`(R3-16), 끊김 · 보낸 뒤의 띠 모양이 다르고(R3-21),
+ * 점선 도장은 끝난 도장과 색이 다르다(R3-29), 탭과 바닥줄의 `완료`가 같고(R3-15), 머리줄 · 더 보기의 `전송 대기 n`이 전송 대기 목록을 연다(끊김: 두 줄, 보내는 중:
+ * 답을 잃은 줄 `… 결과 확인 중`, R3-19). 로그인 알림은 그 기기의 이름 · 직원 · 수(R3-28). 다시 보낸 온라인 명령의 거절 띠 `전송 실패 · 재전송 필요`(?resend=refused, 검토 1회 data-loss 4). 그 뒤 미리 보기: 답을 잃은 매장 입고(`연결 끊김 · 결과 확인 중` · 주 버튼 막힘) · 보냄 대기가 비지 않은 매장 입고 · 로그인 때 다른
+ * 기기의 미전송 알림. 끝에 체험 자료를 처음으로.
+ */
+async function driverOfflineWalk(w) {
+  const page = w.page;
+  const phone = w.sizeClass === 'driver_phone';
+  const deviceQ = 'device=' + (phone ? 'phone' : 'tablet');
+  const list = () => w.visit('#/driver/' + w.date + (phone ? '?device=phone' : ''), '.sn-ledger tr.sn-row', 'driver');
+  const strip = async () => ((await page.locator('.sn-strip').first().textContent({ timeout: 500 }).catch(() => '')) ?? '').trim();
+  const todo = () => page.locator('.sn-ledger tr.sn-row button.sn-stamp-cell[aria-label$="미처리"]').first();
+  const reset = async () => {
+    await w.visit('#/exit', '.pos-card', 'counter');
+    await w.click(page.getByRole('button', { name: '체험 자료 초기화', exact: true }));
+    await w.click(w.top().getByRole('button', { name: '초기화', exact: true }));
+    await w.closeTo(0);
+  };
+  const confirmTop = async () => { const ok = w.top().locator('[data-primary="true"]'); if (await ok.count() && await ok.isEnabled()) await w.click(ok); await w.closeTo(0); };
+  /** 탭의 수(`완료 2` → 2). 없으면 null. */
+  const tabCount = async (label) => {
+    const text = ((await page.locator('.sn-tabs [role="tab"], .sn-tabs button', { hasText: new RegExp('^' + label + ' \\d+$') }).first().textContent({ timeout: 500 }).catch(() => '')) ?? '').trim();
+    const m = new RegExp('^' + label + ' (\\d+)$').exec(text);
+    return m ? Number(m[1]) : null;
+  };
+  /** 띠의 칠(바탕 · 테두리 그림자): 끊김과 보낸 뒤가 달라야 한다. */
+  const stripPaint = async () => page.locator('.sn-strip').first().evaluate((el) => { const cs = getComputedStyle(el); return cs.backgroundColor + '|' + cs.boxShadow; }).catch(() => '');
+  /** 전송 대기 목록 창을 연다(§17 R3-19): 머리줄의 `전송 대기 n` 버튼, 좁으면 `더 보기` 판의 `전송 대기 n`. 열리면 장면을 찍는다. */
+  const openPendingList = async (name) => {
+    const header = page.locator('.sn-header');
+    const direct = header.getByRole('button', { name: /^전송 대기 \d+건$/ });
+    if (await direct.count()) await w.click(direct.first());
+    else {
+      const more = header.getByRole('button', { name: /^더 보기/ });
+      if (!(await more.count())) return false;
+      await w.click(more.first());
+      const choice = w.top().locator('.pos-choice-button', { hasText: /^전송 대기 \d+$/ });
+      if (!(await choice.count())) { await w.closeTo(0); return false; }
+      await w.click(choice.first());
+    }
+    await page.waitForSelector('.pos-pending-rows', { timeout: 3_000 }).catch(() => {});
+    if (!(await page.locator('.pos-pending-rows').count())) return false;
+    await w.scene(name, 'dialog');
+    return true;
+  };
+  /** 쪽마다 줄의 팀(첫 칸 글)(§18 R4-12: 띠가 나고 들어도 같아야 한다). */
+  const pageRows = async () => {
+    const [, total] = await w.pageInfo();
+    const out = [];
+    for (let p = 1; p <= total; p += 1) {
+      await w.toPage(p);
+      out.push((await page.locator('.sn-ledger tr.sn-row .sn-cell-open').allTextContents()).map((x) => x.replace(/\s+/g, ' ').trim()).join(' | '));
+    }
+    await w.toPage(1);
+    return out;
+  };
+  await reset();
+  await list();
+  const doneBefore = await tabCount('완료');
+  const allBefore = await tabCount('전체');
+  const rowsOnline = await pageRows();
+  await w.visit('#/exit?from=driver', '.pos-card', 'driver');
+  await w.click(page.getByRole('button', { name: '연결 해제', exact: true }));
+  // 띠 자리는 늘 비워 둔다(ui 4-3, §18 R4-12): 끊겨 띠가 나타나도 쪽 수 · 쪽마다의 줄이 그대로다.
+  await list();
+  await w.scene('offline-band-pages');
+  const rowsOffline = await pageRows();
+  if (rowsOffline.length !== rowsOnline.length) w.fail('offline-band-pages', '띠가 나타나자 쪽 수가 바뀜: ' + rowsOnline.length + ' → ' + rowsOffline.length);
+  else rowsOnline.forEach((rows, i) => { if (rows !== rowsOffline[i]) w.fail('offline-band-pages', (i + 1) + '쪽의 줄이 바뀜: ' + rows + ' → ' + rowsOffline[i]); });
+  // 업무 판(김민수 팀 수거)을 끊긴 채: 주 버튼 → 확인 → 점선 도장, 누르면 `15:40 처리 · 전송 대기`.
+  await w.visit('#/driver/tasks/' + encodeURIComponent('collect:o25') + (phone ? '?device=phone' : ''), '.pos-task-sheet', 'driver');
+  const taskPrimary = page.locator('.sn-footer [data-primary="true"]');
+  if (await taskPrimary.count() && await taskPrimary.isEnabled()) { await w.click(taskPrimary); await confirmTop(); }
+  await w.scene('offline-task');
+  if (!/^연결 끊김/.test(await strip())) w.fail('offline-task', '끊긴 업무 판에 연결 띠가 없음: ' + (await strip()));
+  // 끊긴 채 끝낸 업무의 바닥줄은 `완료`가 아니다(§17 R3-16): 태블릿 바닥줄의 `15:40 처리 · 전송 대기`.
+  const taskProgress = ((await page.locator('.pos-task-footer .pos-footer-back').textContent({ timeout: 500 }).catch(() => '')) ?? '').trim();
+  if (w.sizeClass === 'driver_tablet' && /수거 완료/.test(taskProgress)) w.fail('offline-task', '보내지 않은 수거의 업무 판 바닥줄이 `수거 완료`: ' + taskProgress);
+  const dotted = page.locator('.pos-task-items button.sn-stamp-cell[aria-label*="전송 대기"]').first();
+  if (await dotted.count()) {
+    await w.click(dotted);
+    await w.scene('offline-task-pending', 'dialog');
+    if (!(await w.top().getByText(/처리 · 전송 대기$/).count())) w.fail('offline-task-pending', '업무 판 점선 도장의 누름 메모 `… 처리 · 전송 대기`가 없음');
+    await w.closeTo(0);
+  } else w.fail('offline-task', '끊긴 채 수거한 업무 판에 점선 도장이 없음');
+  await list();
+  // 목록에서 하나 더(첫 미처리 줄) — 그 팀은 그사이 카운터가 모두 반납받는다(다시 붙은 뒤 줄 메모 `매장 반납 완료`).
+  const firstTodoRow = page.locator('.sn-ledger tr.sn-row', { has: page.locator('button.sn-stamp-cell[aria-label$="미처리"]') }).first();
+  const returnedLast4 = /\b(\d{4})\b/.exec((await firstTodoRow.locator('.sn-cell-open').textContent().catch(() => '')) ?? '')?.[1] ?? '';
+  if (await todo().count()) { await w.click(todo()); await confirmTop(); }
+  await w.scene('offline-list');
+  if (!/^연결 끊김 · 전송 대기 2/.test(await strip())) w.fail('offline-list', '띠가 `연결 끊김 · 전송 대기 2 · …`이 아님: ' + (await strip()));
+  const offlinePaint = await stripPaint();
+  // 탭의 `완료`는 보냄 대기로만 끝난 줄을 세지 않는다(§17 R3-15): 끊기기 전과 같다. `전체`도 같다.
+  const doneOffline = await tabCount('완료');
+  if (doneBefore !== null && doneOffline !== doneBefore) w.fail('offline-list', '보냄 대기 두 줄이 탭 `완료`에 들어감: ' + doneBefore + ' → ' + doneOffline);
+  // 점선 도장은 끝난 도장과 한눈에 다르다(§17 R3-29): 색이 다르고 읽는 이름에 `완료`가 없다.
+  const pendingMark = page.locator('.sn-ledger button.sn-stamp-cell[aria-label*="전송 대기"] .sn-stamp').first();
+  const doneMark = page.locator('.sn-ledger .sn-stamp-cell:not(.is-pending) .sn-stamp.is-done').first();
+  if (await pendingMark.count()) {
+    const label = (await page.locator('.sn-ledger button.sn-stamp-cell[aria-label*="전송 대기"]').first().getAttribute('aria-label')) ?? '';
+    if (/완료/.test(label)) w.fail('offline-list', '점선 도장의 읽는 이름에 `완료`가 있음: ' + label);
+    if (await doneMark.count()) {
+      const color = (loc) => loc.evaluate((el) => getComputedStyle(el).color + '|' + getComputedStyle(el).backgroundColor);
+      if ((await color(pendingMark)) === (await color(doneMark))) w.fail('offline-list', '점선 도장과 끝난 도장의 색이 같음');
+    }
+  }
+  // 바닥줄의 수(`완료 0 · 전송 대기 2 · 잔여 …`)는 수를 그리는 판(태블릿)에서만 본다: 휴대폰 바닥줄은 쪽 넘김과 주 버튼뿐이다.
+  const footerCounts = await page.locator('.sn-footer', { hasText: '잔여' }).count();
+  if (footerCounts && !(await page.locator('.sn-footer', { hasText: '전송 대기 2' }).count())) w.fail('offline-list', '바닥줄에 `전송 대기 2`가 없음');
+  // 탭의 `완료`와 바닥줄의 `완료`는 같은 셈(§17 R3-15).
+  if (footerCounts) {
+    const footerDone = /완료 (\d+)/.exec((await page.locator('.sn-footer-metrics').first().textContent().catch(() => '')) ?? '')?.[1];
+    if (footerDone !== undefined && doneOffline !== null && Number(footerDone) !== doneOffline) w.fail('offline-list', '탭 `완료 ' + doneOffline + '`와 바닥줄 `완료 ' + footerDone + '`가 다름');
+  }
+  // 전송 대기 목록(§17 R3-19): 머리줄(좁으면 더 보기 안)의 `전송 대기 2` → 창의 줄 둘(점선 도장이 있는 수거 둘), 제목 `전송 대기 2`.
+  if (await openPendingList('offline-pending-list')) {
+    const rowsShown = await w.top().locator('.pos-pending-row').count();
+    if (rowsShown !== 2) w.fail('offline-pending-list', '전송 대기 목록의 줄이 둘이 아님: ' + rowsShown);
+    if (!(await w.top().getByText('전송 대기 2', { exact: true }).count())) w.fail('offline-pending-list', '창 제목이 `전송 대기 2`가 아님');
+    if (!(await w.top().locator('.pos-pending-name', { hasText: /^김민수 · 0025$/ }).count())) w.fail('offline-pending-list', '업무 판에서 수거한 김민수 · 0025 줄이 없음');
+    await w.closeTo(0);
+  } else w.fail('offline-pending-list', '머리줄 · 더 보기에 `전송 대기 2`가 없음');
+  // 전화(끊겨도 번호, O17): 줄을 골라 동작 줄의 `전화`.
+  const firstRow = page.locator('.sn-ledger tr.sn-row .sn-cell-open').first();
+  await w.click(firstRow);
+  const call = page.getByRole('toolbar').getByRole('button', { name: '전화', exact: true });
+  if (await call.count() && await call.isEnabled()) { await w.probe(call, 'offline-call'); await w.closeTo(0); }
+  await deselect(w);
+  const receive = page.locator('.sn-footer [data-primary="true"]');
+  if (await receive.count() && await receive.isEnabled()) {
+    await w.click(receive);
+    await w.scene('offline-receive', 'dialog');
+    if (!(await w.top().getByText('입고 불가 · 연결 끊김').count())) w.fail('offline-receive', '끊긴 매장 입고가 `입고 불가 · 연결 끊김`이 아님');
+    await w.closeTo(0);
+  }
+  // 그사이 카운터(다른 탭)가 그 팀의 모두를 매장에서 반납받는다.
+  let counterReturned = false;
+  if (returnedLast4) {
+    await w.counterTab(async (desk) => {
+      await desk.goto(BASE + '#/orders/o' + Number(returnedLast4));
+      await desk.waitForSelector('.pos-counter-detail');
+      await openCounterAction(desk, '반납 처리');
+      // 차량 수거 팀의 반납 도장은 먼저 알림(`1호 차량 수거 예정`)과 다른 동작(매장 반납 처리)이다: 그 동작 → 반납 창.
+      await desk.locator('[role="dialog"]').first().waitFor({ timeout: 5_000 }).catch(() => {});
+      const other = desk.locator('[role="dialog"] .pos-notice-actions button:not([data-primary="true"])').first();
+      if (!(await desk.locator('[role="dialog"] [data-primary="true"]').count()) && await other.count()) {
+        await other.click();
+        await desk.locator('[role="dialog"].pos-return, [role="dialog"] .pos-return').first().waitFor({ timeout: 5_000 }).catch(() => {});
+      }
+      const ok = desk.locator('[role="dialog"] [data-primary="true"]');
+      await ok.first().waitFor({ timeout: 5_000 }).catch(() => {});
+      if (await ok.count() && await ok.first().isEnabled()) {
+        await ok.first().click();
+        await desk.locator('[role="dialog"]').first().waitFor({ state: 'detached', timeout: 5_000 }).catch(() => {});
+        counterReturned = true;
+      } else {
+        await desk.screenshot({ path: join(OUT, w.tag + '-counter-tab-return.png') });
+      }
+    });
+  }
+  // 다시 붙기: 보내기를 붙잡은 동안(?flush=hold, 첫 항목은 답을 잃음 ?lost=1).
+  w.flags = ['flush=hold', 'lost=1'];
+  await w.visit('#/exit?from=driver', '.pos-card', 'driver');
+  await w.click(page.getByRole('button', { name: /^재연결/ }));
+  await list();
+  await w.scene('offline-sending');
+  if (!/^전송 중 · 전송 대기 2$/.test(await strip())) w.fail('offline-sending', '띠가 `전송 중 · 전송 대기 2`가 아님: ' + (await strip()));
+  // 보내는 동안 줄이 사라지지 않는다(§17 R3-17): 매장에 반납된 팀의 줄도 남아 `전체`가 그대로다.
+  const allSending = await tabCount('전체');
+  if (allBefore !== null && allSending !== allBefore) w.fail('offline-sending', '보내는 동안 `전체`가 바뀜: ' + allBefore + ' → ' + allSending);
+  // 답을 잃은 첫 항목(업무 판에서 수거한 김민수 팀)의 점선 도장: 쪽마다 찾는다(휴대폰은 여러 쪽).
+  const pendingCells = page.locator('.sn-ledger tr.sn-row button.sn-stamp-cell[aria-label*="전송 대기"]');
+  let lost = false;
+  let seenPending = 0;
+  const [, listPages] = await w.pageInfo();
+  for (let p = 1; p <= listPages && !lost; p += 1) {
+    await w.toPage(p);
+    for (let i = 0, n = await pendingCells.count(); i < n && !lost; i += 1) {
+      seenPending += 1;
+      await w.click(pendingCells.nth(i));
+      if (await w.top().getByText(/처리 · 결과 확인 중$/).count()) { lost = true; await w.scene('offline-unconfirmed', 'dialog'); }
+      await w.closeTo(0);
+    }
+  }
+  await w.toPage(1);
+  if (!lost && seenPending) w.fail('offline-unconfirmed', '답을 잃은 항목의 누름 메모 `… 결과 확인 중`이 없음');
+  // 보내는 동안의 전송 대기 목록: 답을 잃은 줄은 `· 결과 확인 중`(§17 R3-19).
+  if (await openPendingList('offline-sending-list')) {
+    if (!(await w.top().locator('.pos-pending-what', { hasText: /결과 확인 중$/ }).count())) w.fail('offline-sending-list', '전송 대기 목록에 답을 잃은 줄 `… 결과 확인 중`이 없음');
+    await w.closeTo(0);
+  } else w.fail('offline-sending-list', '보내는 동안 머리줄 · 더 보기에 `전송 대기 n`이 없음');
+  const receive2 = page.locator('.sn-footer [data-primary="true"]');
+  if (await receive2.count() && await receive2.isEnabled()) {
+    await w.click(receive2);
+    const ok = w.top().locator('[data-primary="true"]');
+    if (await ok.count() && await ok.isEnabled()) {
+      await w.click(ok);
+      await page.waitForSelector('.pos-dialog-error', { timeout: 3_000 }).catch(() => {});
+      await w.scene('offline-drain', 'dialog');
+      if (!(await w.top().locator('.pos-dialog-error', { hasText: /^입고 불가 · 전송 대기 \d+$/ }).count())) w.fail('offline-drain', '보내는 중의 매장 입고가 `입고 불가 · 전송 대기 n`이 아님');
+    }
+    await w.closeTo(0);
+  }
+  await page.waitForFunction(() => (document.querySelector('.sn-strip')?.textContent ?? '').trim().startsWith('전송 대기 0'), null, { timeout: 25_000 }).catch(() => {});
+  await w.settle();
+  await w.scene('offline-settled');
+  if (!/^전송 대기 0/.test(await strip())) w.fail('offline-settled', '보낸 뒤 띠가 `전송 대기 0`이 아님: ' + (await strip()));
+  // 보낸 뒤 띠는 끊김과 모양이 다르다(§17 R3-21).
+  if (offlinePaint && offlinePaint === (await stripPaint())) w.fail('offline-settled', '보낸 뒤 띠와 끊김 띠의 모양이 같음: ' + offlinePaint);
+  if (await page.locator('.sn-ledger button.sn-stamp-cell[aria-label*="전송 대기"]').count()) w.fail('offline-settled', '보낸 뒤에도 점선 도장이 남음');
+  // 그사이 매장에 반납된 팀: 기사 목록에 남고 줄 메모 `매장 반납 완료`(§5-9). 쪽마다 찾는다.
+  if (counterReturned) {
+    let noted = false;
+    const [, settledPages] = await w.pageInfo();
+    for (let p = 1; p <= settledPages && !noted; p += 1) {
+      await w.toPage(p);
+      if (await page.locator('.sn-ledger tr.sn-row', { hasText: '매장 반납 완료' }).count()) { noted = true; await w.scene('offline-row-note'); }
+    }
+    await w.toPage(1);
+    if (!noted) w.fail('offline-row-note', '그사이 매장 반납된 팀의 줄 메모 `매장 반납 완료`가 없음(' + returnedLast4 + ')');
+    // 메모가 붙은 기록은 띠에도(다른 쪽에 있어도 놓치지 않게, §17 R3-26). 좁은 폭은 뒤 조각부터 빠지므로 넓은 판에서만 본다.
+    if (w.sizeClass === 'driver_tablet' && !/매장 반납 완료 1팀/.test(await strip())) w.fail('offline-settled', '보낸 뒤 띠에 `매장 반납 완료 1팀`이 없음: ' + (await strip()));
+  }
+  w.flags = [];
+  // 다음 확인 창을 열면 띠가 걷힌다.
+  if (await todo().count()) {
+    await w.click(todo());
+    await w.closeTo(0);
+    if (await page.locator('.sn-strip').count()) w.fail('offline-dismiss', '확인 창을 연 뒤에도 띠 `전송 대기 0`이 남음');
+  }
+  // 연결되었지만 보내지 못함(?flush=stuck: 서버 오류 뒤 기다림 · 혼자도 못 보내는 항목) → 띠 `전송 대기 1`.
+  const toggle = async (name) => {
+    await w.visit('#/exit?from=driver', '.pos-card', 'driver');
+    await w.click(page.getByRole('button', { name, exact: name === '연결 해제' }));
+  };
+  w.flags = ['flush=stuck'];
+  await toggle('연결 해제');
+  await list();
+  if (await todo().count()) { await w.click(todo()); await confirmTop(); }
+  await toggle('재연결 · 전송 대기 1');
+  await list();
+  await w.scene('offline-waiting');
+  if ((await strip()) !== '전송 대기 1') w.fail('offline-waiting', '연결되었지만 보내지 못한 띠가 `전송 대기 1`이 아님: ' + (await strip()));
+  w.flags = [];
+  await list();
+  // 저장할 곳이 없는 기기(?recording=off): 연결됨 `이 기기 저장 불가`, 끊김 `연결 끊김 · 이 기기 저장 불가 · …`(§17 R3-25).
+  w.flags = ['recording=off'];
+  await list();
+  await w.scene('offline-recording-off');
+  if ((await strip()) !== '이 기기 저장 불가') w.fail('offline-recording-off', '저장할 곳 없는 기기의 띠가 아님: ' + (await strip()));
+  await toggle('연결 해제');
+  await list();
+  await w.scene('offline-recording-off-offline');
+  if (!/^연결 끊김 · 이 기기 저장 불가/.test(await strip())) w.fail('offline-recording-off-offline', '끊긴 저장할 곳 없는 기기의 띠가 아님: ' + (await strip()));
+  w.flags = [];
+  await toggle('재연결');
+  // 답을 잃었다가 다시 보낸 온라인 명령(현금 인계 · 매장 입고)이 받아들여지지 않음(?resend=refused): 띠가 무엇이 안 되었는지 말한다
+  // `처리 실패 · 현금 인계 350,000원 · 매장 확인`(좁으면 돈부터 빠짐, §18 R4-15). 다른 확인 창을 열어도 걷히지 않는다(같은 일을 다시 할 때까지).
+  w.flags = ['resend=refused'];
+  await list();
+  await w.scene('offline-refused');
+  const refusedWant = /^처리 실패 · 현금 인계( 350,000원)? · 매장 확인$/;
+  if (!refusedWant.test(await strip())) w.fail('offline-refused', '거절된 다시 보내기의 띠가 `처리 실패 · 현금 인계 … · 매장 확인`이 아님: ' + (await strip()));
+  if (await todo().count()) {
+    await w.click(todo());
+    await w.scene('offline-refused-dialog', 'dialog');
+    await w.closeTo(0);
+    if (!refusedWant.test(await strip())) w.fail('offline-refused-dismiss', '확인 창을 연 뒤 띠의 `처리 실패 · 현금 인계 …`가 걷힘: ' + (await strip()));
+  }
+  w.flags = [];
+  // 미리 보기: 답을 잃은 매장 입고(끊긴 동안 주 버튼 막힘) · 보냄 대기가 비지 않은 매장 입고.
+  for (const [view, extra, line] of [['unconfirmed', '', '연결 끊김 · 결과 확인 중'], ['drain', 'pending=2', '입고 불가 · 전송 대기 2']]) {
+    await w.visit('#/preview/' + view + '?' + [extra, deviceQ].filter(Boolean).join('&'), '[role="dialog"]', 'driver');
+    await w.scene('preview-' + view, 'dialog');
+    const ok = w.top().locator('[data-primary="true"]');
+    if (!(await ok.count())) { w.fail('preview-' + view, '매장 입고 창이 아님(차에 받은 것이 없음)'); continue; }
+    await w.click(ok);
+    await page.waitForSelector('.pos-dialog-error', { timeout: 3_000 }).catch(() => {});
+    await w.scene('preview-' + view + '-sent', 'dialog');
+    if (!(await w.top().locator('.pos-dialog-error', { hasText: line }).count())) w.fail('preview-' + view + '-sent', '창에 `' + line + '`이 없음');
+    const disabled = !(await w.top().locator('[data-primary="true"]').isEnabled());
+    if (view === 'unconfirmed' && !disabled) w.fail('preview-unconfirmed-sent', '답을 잃은 채 끊겼는데 주 버튼을 누를 수 있음');
+    if (view === 'drain' && disabled) w.fail('preview-drain-sent', '보냄 대기가 남은 매장 입고의 주 버튼이 막힘(다시 누를 수 있어야 함)');
+    await w.closeTo(0);
+  }
+  // 한 수(§18 R4-11): 끊긴 채 박준호 팀(16:10) 수거 + 현장 수납, 그 뒤 순서 변경 → 띠 · 머리줄(좁으면 더 보기)의 수 · 전송 대기 목록 제목 · 바닥줄
+  // (수를 그리는 판)이 모두 같은 기록 수 3이다. 순서 변경만 한 목록도 바닥줄이 0이 아니다.
+  await resetTo(w, 30);
+  await w.visit('#/exit?from=driver', '.pos-card', 'driver');
+  await w.click(page.getByRole('button', { name: '연결 해제', exact: true }));
+  await w.visit('#/driver/tasks/' + encodeURIComponent('collect:o22') + (phone ? '?device=phone' : ''), '.pos-task-sheet', 'driver');
+  const collect22 = page.locator('.sn-footer [data-primary="true"]');
+  if (await collect22.count() && await collect22.isEnabled()) { await w.click(collect22); await confirmTop(); }
+  const pay22 = page.locator('.pos-task-actions button', { hasText: '현장 수납' });
+  if (await pay22.count() && await pay22.isEnabled()) {
+    await w.click(pay22);
+    await w.click(page.locator('.pos-field-pay [data-primary="true"]'));
+    await w.closeTo(0);
+    await w.scene('offline-numbers-task');
+    // 보내지 않은 돈의 `미수 없음`은 초록(수납 완료의 색)이 아니다(§18 R4-18).
+    if (await page.locator('.pos-task-sheet .tone-green', { hasText: '미수 없음' }).count()) w.fail('offline-numbers-task', '보내지 않은 수납의 `미수 없음`이 초록');
+  } else w.fail('offline-numbers', '16:10 박준호 팀 업무 판에 `현장 수납`이 없음');
+  await list();
+  await w.click(page.locator('.sn-ledger tr.sn-row .sn-cell-open').first());
+  const down3 = page.getByRole('toolbar').getByRole('button', { name: '아래로', exact: true });
+  if (await down3.count() && await down3.isEnabled()) await w.click(down3);
+  else await w.click(page.getByRole('toolbar').getByRole('button', { name: '위로', exact: true }));
+  await deselect(w);
+  await w.scene('offline-numbers');
+  const bandN = /전송 대기 (\d+)/.exec(await strip())?.[1];
+  if (bandN !== '3') w.fail('offline-numbers', '띠의 전송 대기가 3이 아님(수거 · 현장 수납 · 순서 변경): ' + (await strip()));
+  const footerN = /전송 대기 (\d+)/.exec((await page.locator('.sn-footer-metrics').first().textContent({ timeout: 500 }).catch(() => '')) ?? '')?.[1];
+  if (footerN !== undefined && footerN !== bandN) w.fail('offline-numbers', '바닥줄 `전송 대기 ' + footerN + '`가 띠 `전송 대기 ' + bandN + '`와 다름');
+  // 머리줄의 메뉴 버튼(`전송 대기 3건`)이 있으면 같은 수(좁으면 더 보기 판의 `전송 대기 3`을 전송 대기 목록을 열며 본다).
+  const header = page.locator('.sn-header');
+  if (await header.getByRole('button', { name: /^전송 대기 \d+건$/ }).count() && !(await header.getByRole('button', { name: '전송 대기 ' + bandN + '건', exact: true }).count())) {
+    w.fail('offline-numbers', '머리줄의 `전송 대기 n건`이 띠의 수(' + bandN + ')와 다름');
+  }
+  if (await openPendingList('offline-numbers-list')) {
+    if (!(await w.top().getByText('전송 대기 ' + bandN, { exact: true }).count())) w.fail('offline-numbers-list', '전송 대기 목록 제목이 띠의 수(' + bandN + ')와 다름');
+    if ((await w.top().locator('.pos-pending-row').count()) !== Number(bandN)) w.fail('offline-numbers-list', '전송 대기 목록의 줄 수가 띠의 수와 다름');
+    await w.closeTo(0);
+  } else w.fail('offline-numbers-list', '머리줄 · 더 보기에 `전송 대기 n`이 없음');
+  await w.visit('#/exit?from=driver', '.pos-card', 'driver');
+  await w.click(page.getByRole('button', { name: /^재연결/ }));
+  // 로그인 때 같은 차량의 다른 기기(§17 R3-28): 서버가 그 기기의 등록 이름 · 마지막 로그인 직원 · 수를 주면 `1호 차량 휴대폰 · {직원} 기록 2건 전송 대기 ·
+  // 해당 기기 전송 필요`, 수를 모르면 `… 미전송 기록 가능 · …`, 옛 서버(?old=1)는 기기 종류의 줄.
+  for (const [kind, extra, want] of [
+    ['phone', '&pending=2', /^1호 차량 휴대폰 · \S+ 기록 2건 전송 대기 · 해당 기기 전송 필요$/],
+    ['tablet', '&kind=tablet', /^1호 차량 태블릿 · \S+ 미전송 기록 가능 · 해당 기기 전송 필요$/],
+    ['old', '&kind=tablet&old=1', /^1호 차량 태블릿 미전송 기록 가능 · 태블릿 전송 필요$/],
+  ]) {
+    await w.visit('#/preview/elsewhere?' + deviceQ + extra, '[role="dialog"]', 'driver');
+    await w.scene('preview-elsewhere-' + kind, 'dialog');
+    if (!(await w.top().getByText(want).count())) w.fail('preview-elsewhere-' + kind, '로그인 알림 `' + want.source + '`이 없음');
+    await w.closeTo(0);
+  }
+  await reset();
+  w.route('driver');
+}
+
+/**
+ * 카운터가 보는 끊긴 차량(work/impl-offline/plan.md §8-2 vanOfflineWalk, 체험판 O19): 처음 자료(15:40)에서 기사 기기를 끊고 하나를 수거(점선) →
+ * 카운터 수거 목록 제목 줄의 노랑 표시(끊김 `1호 차량 연결 끊김 · 15:40부터`, ?van=stuck `1호 차량 기록 1건 전송 대기 · 15:40부터`), 장부 제목 줄의 같은
+ * 표시와 차량 수거 팀(김민재)의 반납 알림 `… 수거 여부 미확인`(§17 R3-23), 넘긴 마감의 이월 항목(막은 차량 · 사유, R3-27), 접수증의 일정 변경
+ * (옮길 줄 · 매장 직접 → `유지` 줄 자리에 `… 수거 여부 미확인`, 창 높이 그대로; ?van=asleep `1호 차량 마지막 연결 15:40 · 수거 여부 미확인`), 긴급 요청
+ * 확인 창의 경고, 마감: 카운터 역할(?viewer=counter)은 막는 단계에 `권한 없음 · 관리자 확인 필요`만, 관리자는 `관리자 승인` → 본인 비밀번호 판 → 사유
+ * (화면 키보드) → `마감 · 12월 26일` → 마감 완료. 이 크기의 마지막 걸음이라 마감된 채 끝난다(끝에 처음으로 되돌린다).
+ */
+async function vanOfflineWalk(w) {
+  const page = w.page;
+  const reset = async () => {
+    await w.visit('#/exit', '.pos-card', 'counter');
+    await w.click(page.getByRole('button', { name: '체험 자료 초기화', exact: true }));
+    await w.click(w.top().getByRole('button', { name: '초기화', exact: true }));
+    await w.closeTo(0);
+  };
+  const chip = async () => await page.locator('.pos-counter-link').count() ? ((await page.locator('.pos-counter-link').textContent()) ?? '').trim() : ((await page.locator('.sn-title-chip').first().getAttribute('aria-label').catch(() => '')) ?? '').trim();
+  await reset();
+  await w.visit('#/exit?from=driver', '.pos-card', 'driver');
+  await w.click(page.getByRole('button', { name: '연결 해제', exact: true }));
+  await w.visit('#/driver/' + w.date, '.sn-ledger tr.sn-row', 'driver');
+  const todo = page.locator('.sn-ledger tr.sn-row button.sn-stamp-cell[aria-label$="미처리"]').first();
+  if (await todo.count()) {
+    await w.click(todo);
+    const ok = w.top().locator('[data-primary="true"]');
+    if (await ok.count()) await w.click(ok);
+    await w.closeTo(0);
+  }
+  const collections = () => w.visit('#/collections/' + w.date, '.sn-ledger tr.sn-row', 'counter');
+  await collections();
+  await w.scene('van-chip-offline');
+  if (!/^1호 차량 연결 끊김 · \d\d:\d\d부터$/.test(await chip())) w.fail('van-chip-offline', '수거 목록 제목 줄 표시가 `1호 차량 연결 끊김 · …부터`가 아님: ' + (await chip()));
+  // 카운터의 첫 화면(장부) 제목 줄에도 같은 표시, 차량 수거 팀의 반납 알림(접수증 → 반납)에 `… 수거 여부 미확인`(§17 R3-23: 매장 반납을 누르기 전에 본다).
+  await w.visit('#/ledger/' + w.date, '.pos-counter-list', 'counter');
+  await w.scene('van-ledger-chip');
+  if (!/^1호 차량 연결 끊김/.test(await chip())) w.fail('van-ledger-chip', '장부 제목 줄에 끊긴 차량 표시가 없음: ' + (await chip()));
+  // 두 차량이 함께 끊긴 밤(?van=two, §18 R4-16): 장부 제목 줄에 두 차량 모두(끊김이 먼저), 좁으면 시각 · 수부터 빠지고 차량마다 사실은 남는다.
+  w.flags = ['van=two'];
+  await w.visit('#/ledger/' + w.date, '.pos-counter-list', 'counter');
+  await w.scene('van-ledger-chip-two');
+  {
+    const two = await chip();
+    if (!/^2호 차량 연결 끊김/.test(two) || !/1호 차량 기록 \d+건 전송 대기/.test(two)) w.fail('van-ledger-chip-two', '장부 제목 줄에 두 차량(끊김 먼저)이 모두 있지 않음: ' + two);
+    const shown = ((await page.locator('.sn-title-chip, .pos-counter-link').first().textContent().catch(() => '')) ?? '').trim();
+    if (!/2호 차량 연결 끊김/.test(shown) || !/1호 차량 기록 \d+건 전송 대기/.test(shown)) w.fail('van-ledger-chip-two', '장부 제목 줄에 보이는 표시에서 차량 사실이 빠짐: ' + shown);
+  }
+  w.flags = [];
+  await w.visit('#/orders/o21', '.pos-counter-detail', 'counter');
+  const back = await openCounterAction(page, '반납 처리');
+  if (back) {
+    await page.locator('[role="dialog"]').first().waitFor({ timeout: 5_000 }).catch(() => {});
+    await w.scene('van-return-notice', 'dialog');
+    if (!(await w.top().getByText(/^1호 차량 연결 끊김 · \d\d:\d\d부터 · 수거 여부 미확인$/).count())) w.fail('van-return-notice', '차량 수거 팀의 반납 알림에 끊긴 차량 줄이 없음');
+    await w.closeTo(0);
+  } else w.fail('van-return-notice', '김민재 · 0021 접수증에 반납 도장이 없음');
+  await collections();
+  // 긴급 요청 확인 창: 1호 차량 수거 줄 → `긴급 요청` → 요약에 `… 수거 여부 미확인`.
+  const rows = page.locator('.sn-ledger tr.sn-row', { has: page.locator('button.sn-stamp-cell[aria-label$="미처리"]') }).locator('.sn-cell-open');
+  if (await rows.count()) {
+    await w.click(rows.first());
+    const pin = page.getByRole('toolbar').getByRole('button', { name: '긴급 요청', exact: true });
+    if (await pin.count() && await pin.isEnabled()) {
+      await w.click(pin);
+      await w.scene('van-pin-offline', 'dialog');
+      if (!(await w.top().getByText(/수거 여부 미확인/).count())) w.fail('van-pin-offline', '긴급 요청 확인 창에 끊긴 차량 경고가 없음');
+      await w.closeTo(0);
+    }
+    await deselect(w);
+  }
+  // 일정 변경(접수증 옆 동작): 옮길 줄 하나 · 매장 직접 → `유지` 줄 자리의 경고(창 높이 그대로).
+  const promise = async (name, want) => {
+    await w.visit('#/orders/o25', '.pos-counter-detail', 'counter');
+    let open = page.locator('.pos-counter-detail-actions').getByRole('button', { name: '일정 변경', exact: true });
+    if (!(await open.count())) {
+      // 좁은 포스는 옆 동작이 `더 보기` 판에 있다.
+      const more = page.locator('.pos-counter-detail-actions').getByRole('button', { name: '추가 처리' });
+      if (await more.count()) { await w.click(more); open = w.top().locator('.pos-choice-button', { hasText: '일정 변경' }); }
+    }
+    if (!(await open.count())) { w.fail(name, '접수증에 `일정 변경`이 없음'); return; }
+    await w.click(open);
+    const dialog = w.top();
+    const before = (await dialog.boundingBox())?.height ?? 0;
+    const plus = dialog.locator('.sn-step button[aria-label="수량 증가"]:enabled').first();
+    if (await plus.count()) await w.click(plus);
+    const store = dialog.getByRole('group', { name: '반납 장소' }).getByRole('button', { name: '매장 직접', exact: true });
+    if (await store.count() && await store.isEnabled()) await w.click(store);
+    await w.scene(name, 'dialog');
+    const warning = ((await dialog.locator('.pos-summary-link').textContent().catch(() => '')) ?? '').trim();
+    if (!want.test(warning)) w.fail(name, '일정 변경 창의 `유지` 줄 자리에 차량 경고가 없음: ' + warning);
+    const after = (await dialog.boundingBox())?.height ?? 0;
+    if (Math.abs(after - before) > 0.5) w.fail(name, '경고가 붙어 일정 변경 창 높이가 바뀜: ' + before + ' → ' + after);
+    await w.closeTo(0);
+  };
+  await promise('van-promise-offline', /1호 차량 연결 끊김.*수거 여부 미확인/);
+  w.flags = ['van=stuck'];
+  await collections();
+  await w.scene('van-chip-stuck');
+  if (!/^1호 차량 기록 1건 전송 대기 · \d\d:\d\d부터$/.test(await chip())) w.fail('van-chip-stuck', '보내지 못하는 차량 표시가 `1호 차량 기록 1건 전송 대기 · …부터`가 아님: ' + (await chip()));
+  w.flags = ['van=asleep'];
+  await collections();
+  if (await page.locator('.sn-title-chip').count()) w.fail('van-chip-asleep', '조용한(주머니 속) 차량에 수거 목록 표시가 있음');
+  await promise('van-promise-asleep', /1호 차량 마지막 연결 \d\d:\d\d.*수거 여부 미확인/);
+  // 마감: 돈통을 세고 주 버튼 → 막는 단계.
+  const closingStep = async (name) => {
+    await w.visit('#/closing/' + w.date, '.pos-closing-table', 'counter');
+    const primary = () => page.locator('.sn-footer [data-primary="true"]');
+    for (let guard = 0; guard < 3 && /돈통 점검|차량 현금 점검/.test((await primary().textContent()) ?? ''); guard += 1) {
+      await w.click(primary());
+      await page.waitForSelector('.pos-cash-check');
+      for (const key of ['3', '0', '0', '000']) await w.click(page.locator('.pos-cash-check').getByRole('button', { name: key, exact: true }));
+      await w.click(page.locator('.pos-cash-check [data-primary="true"]'));
+      await page.waitForSelector('.pos-cash-check', { state: 'detached' }).catch(() => {});
+      await w.settle();
+    }
+    await w.click(primary());
+    const step = w.top().locator('.sn-review-step');
+    if (!(await step.count())) { w.fail(name, '막힌 마감의 주 버튼이 막는 단계 창을 열지 않음'); return false; }
+    await w.scene(name, 'dialog');
+    if (!/연결 끊김 · \d\d:\d\d부터 · 마감 전 전송 필요$/.test((await step.getAttribute('aria-label')) ?? '')) w.fail(name, '막는 단계 한 줄이 `… 연결 끊김 · …부터 · 마감 전 전송 필요`가 아님');
+    return true;
+  };
+  w.flags = ['viewer=counter'];
+  if (await closingStep('van-closing-counter')) {
+    if (!(await w.top().getByText('권한 없음 · 관리자 확인 필요').count())) w.fail('van-closing-counter', '카운터 역할의 막는 단계에 `권한 없음 · 관리자 확인 필요`가 없음');
+    if (await w.top().getByRole('button', { name: '관리자 승인', exact: true }).count()) w.fail('van-closing-counter', '카운터 역할에 `관리자 승인`이 있음');
+    await w.closeTo(0);
+  }
+  w.flags = [];
+  if (await closingStep('van-closing-step')) {
+    const approve = w.top().getByRole('button', { name: '관리자 승인', exact: true });
+    if (!(await approve.count())) w.fail('van-closing-step', '관리자에게 `관리자 승인`이 없음');
+    else {
+      await w.click(approve);
+      await page.waitForSelector('.sn-numpad', { timeout: 3_000 }).catch(() => {});
+      await w.scene('van-approve-pin', 'dialog');
+      for (const d of '1234') await w.click(w.top().getByRole('button', { name: d, exact: true }));
+      await w.click(w.top().getByRole('button', { name: '입력', exact: true }));
+      await page.waitForSelector('.sn-kb-overlay', { timeout: 3_000 }).catch(() => {});
+      // 입력하면 키보드 자리에 확인 창이 뜬다(then).
+      if (!(await w.keyboardWalk('van-approve-reason', { submit: ['ㅂ', 'ㅏ', 'ㅇ', 'ㅈ', 'ㅓ', 'ㄴ'], then: true }))) w.fail('van-approve-reason', '사유 키보드가 넘기지 않음');
+      else {
+        await w.scene('van-approve-confirm', 'dialog');
+        if (!(await w.top().getByText('사유 · 방전').count())) w.fail('van-approve-confirm', '확인 창에 `사유 · 방전`이 없음');
+        const close = w.top().locator('[data-primary="true"]');
+        if (!/^마감 · /.test(((await close.textContent()) ?? '').trim())) w.fail('van-approve-confirm', '확인 창 주 버튼이 `마감 · …`이 아님');
+        await w.click(close);
+        await page.locator('.pos-closing-sum', { hasText: '마감 완료' }).waitFor({ timeout: 5_000 }).catch(() => {});
+        await w.scene('van-closed');
+        if (!(await page.locator('.pos-closing-sum', { hasText: '마감 완료' }).count())) w.fail('van-closed', '관리자 승인 뒤 마감되지 않음');
+        // 넘긴 마감의 흔적(§17 R3-27): 이월 항목에 막은 차량 · 승인 · 사유(현금 줄이 없는 차량도).
+        if (!(await page.getByText(/^1호 차량 · 전송 대기/).count())) w.fail('van-closed', '마감된 표의 이월 항목에 `1호 차량 · 전송 대기 …`가 없음');
+        if (!(await page.getByText(/사유 · 방전/).count())) w.fail('van-closed', '마감된 표에 넘긴 사유 `사유 · 방전`이 없음');
+      }
+    }
+  }
+  w.flags = [];
+  await reset();
 }
 
 /**
@@ -3882,6 +4559,10 @@ async function deliveryWalk(w) {
       await w.closeTo(0);
     }
     await w.scene('v7-offline-paid');
+    // 보내지 않은 수납은 돈 줄이 `… · 전송 대기`(§17 R3-18), 보내지 않은 배달의 바닥줄은 `배달 완료`가 아니다(R3-16).
+    if (!(await page.locator('.pos-task-money, .pos-task-sheet', { hasText: /수납 · 전송 대기/ }).count())) w.fail('v7-offline-paid', '보내지 않은 수납의 돈 줄에 `· 전송 대기`가 없음');
+    const offlineProgress = ((await page.locator('.pos-task-footer .pos-footer-back').textContent({ timeout: 500 }).catch(() => '')) ?? '').trim();
+    if (w.sizeClass === 'driver_tablet' && /배달 완료/.test(offlineProgress)) w.fail('v7-offline-paid', '보내지 않은 배달의 바닥줄이 `배달 완료`: ' + offlineProgress);
   }
   await driverExit();
   await w.scene('v7-offline-exit');
@@ -3997,14 +4678,33 @@ async function driverFlow(w, list) {
     }
     if (sent < 2) await desk.screenshot({ path: join(OUT, w.tag + '-counter-tab-pin.png') });
   });
-  await w.page.locator('.sn-pin').waitFor({ timeout: 3000 }).catch(() => {});
+  await w.page.locator('.pos-urgent-bar').waitFor({ timeout: 3000 }).catch(() => {});
   await w.settle();
   await w.scene('flow-two-pins');
-  if (sent < 2 || !(await w.page.locator('.sn-pin').count())) w.fail('flow-two-pins', '카운터가 보낸 긴급 요청이 기사 목록에 없음(보낸 수 ' + sent + ')');
-  const open = w.page.locator('.sn-pin button.sn-pin-open');
-  if (await open.count()) { await w.probe(open, 'flow-pin-list'); await w.closeTo(0); }
-  const ack = w.page.locator('.sn-pin').getByRole('button', { name: '확인', exact: true });
-  if (await ack.count()) { await w.click(ack); await w.scene('flow-pin-ack'); }
+  if (sent < 2 || !(await w.page.locator('.pos-urgent-bar').count())) { w.fail('flow-two-pins', '카운터가 보낸 긴급 요청이 기사 목록에 없음(보낸 수 ' + sent + ')'); return; }
+  await w.click(w.page.locator('.pos-urgent-bar'));
+  const before = await urgentListRows(w, 'flow-pin-list');
+  if (before.length < 2 || before.some(row => !row.place.includes('1호 차량'))) w.fail('flow-pin-list', '두 요청 또는 담당 차량 범위가 잘못됨: ' + JSON.stringify(before));
+  const ack = w.page.locator('.pos-urgent-list').getByRole('button', {name:'요청 확인',exact:true}).first();
+  if (!(await ack.count())) w.fail('flow-pin-ack','미확인 개별 요청의 확인 버튼 없음');
+  else {
+    const unread = before.filter(row => row.state.includes('기사 확인 대기')).length;
+    await w.click(ack);
+    const after = await urgentListRows(w, 'flow-pin-ack');
+    if (after.length !== before.length || after.filter(row=>row.state.includes('기사 확인 대기')).length !== unread - 1 || !after.some(row=>row.state.includes('확인함 · 처리 대기'))) w.fail('flow-pin-ack','요청 확인이 업무를 없애거나 다른 요청까지 확인함');
+    await w.closeTo(0);
+    await w.click(w.page.locator('.pos-urgent-bar'));
+    const reentered = await urgentListRows(w, 'flow-pin-reenter');
+    if (JSON.stringify(reentered) !== JSON.stringify(after)) w.fail('flow-pin-reenter','닫고 재진입한 요청 목록/상태가 달라짐');
+  }
+  await w.closeTo(0);
+  await w.counterTab(async desk => {
+    await desk.goto(BASE + '#/collections/' + w.date + '?vehicle=v2');
+    await desk.waitForSelector('.sn-ledger');
+    await desk.evaluate(() => document.fonts.ready);
+    if (await desk.locator('.pos-urgent-bar').count()) w.fail('flow-pin-scope','1호 차량 요청이 2호 차량 목록에 보임');
+  });
+
 }
 
 async function driverNight(w, list) {

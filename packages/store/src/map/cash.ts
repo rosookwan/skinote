@@ -78,7 +78,7 @@ function writeClosing(ctx: WriteContext, c: FxClosing, state: ShopState): void {
   insert(ctx.db, 'closings', {
     shop_id: ctx.shopId, id, closing_scope_id: MAIN_SCOPE, business_date: c.date, version_no: version,
     opening_cash_amount: counterPrev ? num(counterPrev.counted_amount) : state.settings.openingCash, expected_cash_amount: expected, counted_cash_amount: counted,
-    difference_amount: counted - expected, as_of_rev: ctx.rev, basis_json: '{}',
+    difference_amount: counted - expected, as_of_rev: ctx.rev, basis_json: '{}', override_reason: c.overrideReason,
     report_json: canonicalJson({ schema: 1, counts: c.counts, deferredTransferIds: c.deferredTransferIds, ...(c.sheet ? { sheet: c.sheet } : {}) }), report_schema: 1,
     closed_at: isoOf(c.closedAt), actor_key: ctx.actor.key, actor_name: ctx.actor.name, device_id: ctx.actor.deviceId, request_id: ctx.requestId, created_rev: ctx.rev,
   });
@@ -116,12 +116,13 @@ export function loadCash(db: Db, shopId: string): { cashTransfers: FxCashTransfe
       } : {}),
     };
   });
-  const closings: FxClosing[] = all(db, `SELECT c.business_date, c.closed_at, c.report_json FROM closings c JOIN business_days d ON d.shop_id = c.shop_id
+  const closings: FxClosing[] = all(db, `SELECT c.business_date, c.closed_at, c.report_json, c.override_reason FROM closings c JOIN business_days d ON d.shop_id = c.shop_id
       AND d.closing_scope_id = c.closing_scope_id AND d.business_date = c.business_date AND d.active_closing_id = c.id WHERE c.shop_id = ? ORDER BY c.rowid`, shopId).map((r) => {
     const report = JSON.parse(str(r.report_json)) as { counts: FxClosing['counts']; deferredTransferIds: string[]; sheet?: FxClosing['sheet'] };
     return {
       date: str(r.business_date), closedAt: msOf(str(r.closed_at)), counts: report.counts, deferredTransferIds: report.deferredTransferIds,
       ...(report.sheet ? { sheet: report.sheet } : {}),
+      ...(text(r.override_reason) !== undefined ? { overrideReason: str(r.override_reason) } : {}),
     };
   });
   return { cashTransfers, closings };

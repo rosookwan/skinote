@@ -6,13 +6,17 @@ import {
   ACTION_LABELS, DomainError, STAMP_RULE_SCOPE, resolveLedgerView, stampStepMap, statusTerm, visibleView, type PhoneRevealView,
   type ConfirmDraftParams, type ConfirmDraftView, type ConfirmStep, type DeviceClassKey, type DisabledAction, type FindResult, type FitPart, type LedgerCell,
   type LedgerColumnRow, type LedgerRow, type LedgerTabRow, type LedgerViewResult, type MetricValue, type OrderSlip, type PinRow,
-  type ResolvedLedgerView, type SlipLine, type StampCell, type StampStepRow, type UiConfig, type ViewParams,
+  type CounterTeam, type ResolvedLedgerView, type SlipLine, type StampCell, type StampStepRow, type UiConfig, type ViewParams, type DeviceGap, type VehicleLink,
 } from '@skinote/contract';
 import type { DomainLines, FxLine, FxOrder, ShopRegistry, ShopState } from './model.ts';
 import { linesOf } from './lines.ts';
+import { linkChipParts, linkOf, linkWarningParts, partsText, vanLinksChip } from './links.ts';
 import { notReceived, notReceivedText } from './closing.ts';
 import { backHeldRefund, depositDueAtIssue, depositDueForIssued, orderDepositHeld } from './deposits.ts';
-import { collectDepositStep, deliverDone, deliverTasks, figureWords, findDeliverTask, onVanToDeliver, spareTickets, type FxDeliverTask } from './driver.ts';
+import {
+  DEVICE_OUTCOME_NOTES, collectDepositStep, deliverDone, deliverTasks, figureWords, findDeliverTask, onVanToDeliver, pendingNote, spareTickets, type DeviceOutcome,
+  type FxDeliverTask,
+} from './driver.ts';
 import { lineNames, payMethodOf, productOf } from './catalog.ts';
 import { lineGross, sectionDiscountNow, slipAdjustments } from './discounts.ts';
 import { CANCEL_WORDS } from './cancel-words.ts';
@@ -21,9 +25,9 @@ import { maskPhone, phoneText } from './order-draft.ts';
 import { backOf, hasSwaps, lineVariants, namesNow, swappedLabel, variantRange, type SizePhase } from './variants.ts';
 import { currentReturn, findTask, openReturns, orderTasks, taskOrder, type FxTask } from './promises.ts';
 import {
-  anyIssued, backCount, bizDay, collectDone, collectLeft, coveredOrders, deliverTaskId, findOrder, isCancelledOrder, isDeliverTaskId, isFinished, isVehiclePickup,
+  anyIssued, backCount, bizDay, collectDone, collectFinished, collectLeft, coveredOrders, deliverTaskId, findOrder, isCancelledOrder, isDeliverTaskId, isFinished, isVehiclePickup,
   isVehicleReturn, lastReturnSlotAt, lateAtOf, leftover, liveQty, moneyLateAt, nextDue, nightNoticeBefore, nightPrepSlotAt, onVan, openPins, orderConditions,
-  listTasks, orderIdOfTask, othersDue, ownDue, dueFor, paidTotal, pendingIssue, pendingReturn, pinTask, pinTaskId, placeLabel, placeShortLabel, promisedPayer, refunded, routeTasks,
+  listTasks, returnQty, orderIdOfTask, othersDue, ownDue, dueFor, paidTotal, pendingIssue, pendingReturn, pinTask, pinTaskId, placeLabel, placeShortLabel, promisedPayer, refunded, routeTasks,
   selfDue, slotKey,
   sortTasks, unitCount, vehicleLabel, visitOutcomeLabel, visitReasons, charged, type DueKind,
 } from './rules.ts';
@@ -43,12 +47,47 @@ export interface ViewContext {
   now: number;
   /** 기사 기기에서 그릴 때: 보냄 대기로만 받은 업무(점선 도장, '대기' 숫자). */
   pendingTasks?: ReadonlySet<string>;
+  /** 그중 보낸 뒤 답을 잃은 업무(점선 도장의 누름 메모 `{시각} 처리 · 결과 확인 중`, work/impl-offline/plan.md O18). */
+  unconfirmedTasks?: ReadonlySet<string>;
+  /** 업무 · 접수가 사본에 없는 보냄 대기 항목 수(기사 목록 바닥줄의 `전송 대기`에 센다, §5-5: 조용히 버리지 않는다). */
+  unplacedCount?: number;
+  /**
+   * 기사 기기에 남은 기록 수(답을 받지 않은 보냄 대기 + 답을 잃은 온라인 명령, 문구 표 1-2 `전송 대기` = 기기에 남은 기록): 있으면 목록 바닥줄 ·
+   * 업무 판의 `전송 대기 {n}`이 이 수다. 띠 · 더 보기 · 전송 대기 목록 제목과 같은 수(§18 R4-11). 없으면(서버의 온라인 읽기) 점선 업무 수.
+   */
+  pendingRecordCount?: number;
+  /** 기기 자신이 받은 답의 줄 메모(§5-9): 업무 id → `매장 반납 완료` · `수거 수량 확인` · `중복 수납 의심` · `처리 보류 · 관리자 확인 필요`. */
+  deviceOutcomes?: ReadonlyMap<string, DeviceOutcome>;
+  /**
+   * 기사 기기에서 그릴 때: 보냄 대기로만 받은 돈(현장 수납 · 리프트권 추가 · 보증금 반환)이 있는 접수 → 그중 답을 잃었는지. 업무 판의 돈 줄에
+   * `… · 전송 대기` · `… · 결과 확인 중`(§17 R3-18: 보내지 않은 돈이 끝난 것처럼 보이지 않게).
+   */
+  pendingMoney?: ReadonlyMap<string, boolean>;
   /** 거절 · 알림 문구(없으면 운영 문구 PRODUCTION_LINES). */
   lines?: DomainLines;
   /** 보는 사람의 역할 권한(서버: 세션의 역할). 없으면 모두 허락(메모리 어댑터). 읽기 모델은 막힌 것을 회색으로 · 까닭과 함께 그린다(plan E11). */
   viewer?: Viewer;
   /** 매장 설정 `차량 · 직원`의 직원 항목 판에 둘 그 사람이 쓴 기기(서버가 채움, 메모리 어댑터는 없음). */
   staffDevices?: Readonly<Record<string, readonly StaffDevice[]>>;
+  /**
+   * 차량의 연결(서버의 기기 연결 셈, work/impl-offline/plan.md O11): 카운터의 수거 목록 표시 · 일정 변경 · 긴급 요청의 경고 · 마감의 막는 단계.
+   * 없으면(메모리 어댑터) 기사 기기의 보냄 대기(state.driverDevice)로 센다.
+   */
+  vehicleLinks?: readonly VehicleLink[];
+  /** 기기의 번호 빈 곳(확인 필요 `미수신 기록`, O9). */
+  deviceGaps?: readonly DeviceGap[];
+  /** 기기마다 보류된 · 확인 중 기록 수(확인 필요 `공급자 확인 중` · `사용 중지 기기 기록`, O21). */
+  heldCounts?: readonly HeldCount[];
+}
+
+
+/** 기기 하나의 보류된 기록 수(O21): 끊긴 기기의 기록(revoked) · 그 밖의 보류(held) · 적용했지만 공급자 확인 중(flagged). */
+export interface HeldCount {
+  deviceId: string;
+  label: string;
+  revoked: number;
+  held: number;
+  flagged: number;
 }
 
 /** 보는 사람(역할과 권한 key). */
@@ -185,13 +224,13 @@ function vehicleCell(ctx: ViewContext, o: FxOrder): LedgerCell | null {
 function cellFor(ctx: ViewContext, o: FxOrder, column: LedgerColumnRow): LedgerCell | null {
   switch (column.renderer_key) {
     case 'time': return timeCell(ctx, o);
-    case 'team': return { renderer: 'team', name: o.teamName, last4: o.last4 };
+    case 'team': return { renderer: 'team', name: o.teamName, last4: o.last4, ...(o.customerPickup ? { parts: [{ text: '손님 픽업', drop: 0 }] } : {}) };
     case 'items': return { renderer: 'items', items: itemsOf(o.lines) };
     case 'promise': return { renderer: 'promise', parts: promiseParts(ctx, o) };
     case 'place': return placeCell(ctx, o);
     case 'vehicle': return vehicleCell(ctx, o);
     case 'money': return moneyCell(ctx, o);
-    case 'stamp': return { renderer: 'stamp', stamp: columnStamp(ctx.state, o, column.step_keys ?? [], steps(ctx)) };
+    case 'stamp': return { renderer: 'stamp', stamp: withVanLink(ctx, columnStamp(ctx.state, o, column.step_keys ?? [], steps(ctx))) };
     // 전화 칸은 가린 번호만(누를 수 있는지의 표시): 온전한 번호는 전화 창의 phoneReveal(열람 기록)로만 준다(2026-09-27 점검, deployment 10-4).
     case 'action': return column.action_key === 'call' ? { renderer: 'action', actionKey: 'call', enabled: o.phone !== '', ...(o.phone ? { phone: maskPhone(o.phone) } : {}) } : null;
     // 매장 속성 칸 · 뜻을 모르는 글 칸: 상태에 값이 없다(빈칸).
@@ -259,6 +298,39 @@ function nightPrep(ctx: ViewContext, orders: readonly FxOrder[]): LedgerViewResu
   return top ? { slotAt: iso(slotAt), placeLabel: placeLabel(ctx.state.registry, top[0]), teams: top[1] } : undefined;
 }
 
+/** 표시용 세 단계. 완료는 미입고·보증금·환불까지 확인하며 기존 처리 명령의 조건으로 쓰지 않는다. */
+export function counterTeam(ctx: ViewContext, o: FxOrder): CounterTeam {
+  const issue = pendingIssue(o);
+  const returning = pendingReturn(o);
+  const left = o.lines.reduce((n, l) => n + (l.returnable ? Math.max(0, returnQty(l) - backCount(l)) : 0), 0);
+  const received = o.lines.reduce((n, l) => n + Math.max(0, l.collected - l.received), 0);
+  const startedReturn = o.lines.some((l) => backCount(l) > 0);
+  const deposit = orderDepositHeld(ctx.state, o);
+  const due = ownDue(o) + othersDue(ctx.state, o);
+  const refund = Math.max(0, paidTotal(o) - charged(o));
+  const cancelled = isCancelledOrder(o);
+  const complete = !issue && !returning && received === 0 && due === 0 && refund === 0 && deposit === 0;
+  const deadline = complete ? undefined : nextDue(ctx.state, o)?.lateAt;
+  const phase = cancelled || startedReturn || !issue && (!returning || currentReturn(o).at <= ctx.now) ? 'settlement' : issue ? 'intake' : 'rental';
+  const facts = [
+    ...(issue ? [{ text: anyIssued(o) ? '부분 지급' : '지급 대기', drop: 0 }] : []),
+    ...(startedReturn && returning ? [{ text: '미반납 ' + left, drop: 0 }] : []),
+    ...(received > 0 ? [{ text: '미입고 ' + received, drop: 0 }] : []),
+    ...(due > 0 ? [{ text: '미수 ' + won(due), drop: 0 }] : []),
+    ...(refund > 0 ? [{ text: '환불 ' + won(refund), drop: 0 }] : []),
+    ...(deposit > 0 ? [{ text: '보증금 ' + won(deposit), drop: 1 }] : []),
+  ];
+  return {
+    orderId: o.id, name: o.teamName, party: o.party > 0 ? o.party + '명' : '', receiptNo: o.receiptNo,
+    phase, complete, customerPickup: o.customerPickup === true, items: itemsOf(o.lines),
+    ...(deadline !== undefined ? { lateAt: iso(deadline) } : {}),
+    returnWhen: whenIn(ctx, currentReturn(o).at),
+    returnPlace: currentReturn(o).mode === 'store' ? '매장 반납' : placeLabel(ctx.state.registry, currentReturn(o).placeId),
+    status: cancelled ? CANCEL_WORDS.status : facts[0]?.text ?? (complete ? '완료' : '렌탈 중'),
+    facts,
+  };
+}
+
 export function dayLedger(ctx: ViewContext, params: ViewParams): LedgerViewResult {
   const date = params.date ?? ctx.state.businessDate;
   const deviceClass = params.deviceClass ?? 'pos';
@@ -275,6 +347,7 @@ export function dayLedger(ctx: ViewContext, params: ViewParams): LedgerViewResul
     const due = finished ? null : nextDue(ctx.state, o);
     const cells: LedgerRow['cells'] = {};
     for (const column of v.columns) {
+      // 도장 칸은 cellFor가 차량이 할 반납 도장(보라 `차량 22:00`)의 알림에 그 차량의 연결 사실을 더한다(§17 R3-23).
       const cell = cellFor(ctx, o, column);
       if (cell) cells[column.column_key] = cell;
     }
@@ -303,6 +376,14 @@ export function dayLedger(ctx: ViewContext, params: ViewParams): LedgerViewResul
   return {
     ...head(ctx),
     viewKey: 'day_ledger',
+    counter: (() => {
+      const teams = sortOrders(ctx, dayOrders).map((o) => counterTeam(ctx, o));
+      return { teams, stages: [
+        { key: 'intake', label: '방문·접수', count: teams.filter((o) => o.phase === 'intake' && !o.complete).length },
+        { key: 'rental', label: '렌탈 중', count: teams.filter((o) => o.phase === 'rental' && !o.complete).length },
+        { key: 'settlement', label: '반납·정산', count: teams.filter((o) => o.phase === 'settlement' && !o.complete).length },
+      ] };
+    })(),
     deviceClass,
     titleValues: { date },
     activeTabKey: tabKey,
@@ -314,6 +395,13 @@ export function dayLedger(ctx: ViewContext, params: ViewParams): LedgerViewResul
     ...(prep ? { nightPrep: prep } : {}),
     // 이미 마감한 영업일: 제목 옆 이름표(마감 뒤의 기록은 다음 날 마감에 든다, closing.ts postingDate).
     ...(ctx.state.closings.some((c) => c.date === date) ? { closedTag: '마감 완료' } : {}),
+    // 카운터의 첫 화면(장부)에도 끊긴 · 전송 대기 차량의 표시(수거 목록과 같은 노랑, §17 R3-23): 매장 반납을 누르기 전에 본다.
+    // 차량이 여럿이면 모두(끊김이 먼저, §18 R4-16): 밤에는 1호 · 2호가 함께 산에 있다. 좁으면 시각 · 수부터 빠지고 차량마다 사실 조각은 남는다.
+    ...(() => {
+      if (deviceClass !== 'pos' && deviceClass !== 'pos_narrow') return {};
+      const chip = vanLinksChip(ctx.state, ctx.state.registry.vehicles.map((v) => linkOf(ctx.vehicleLinks, v.id)));
+      return chip ? { link: chip } : {};
+    })(),
   };
 }
 
@@ -322,11 +410,30 @@ export function dayLedger(ctx: ViewContext, params: ViewParams): LedgerViewResul
 /** 수거 실패 뒤 다시 갈 시각으로 옮긴 업무(마지막 방문 결과의 재방문 시각이 지금 반납 일정). */
 const isRevisit = (o: FxOrder) => { const last = o.visits?.filter((v) => v.kind !== 'deliver').at(-1); return last?.retryAt === o.giveBack.at; };
 
-const COLLECT_FILTERS: Partial<Record<LedgerTabRow['filter_key'], (o: FxOrder) => boolean>> = {
+/**
+ * 수거 목록의 탭(설정 filter_key): 전체 · 잔여(아직 끝나지 않음) · 완료(끝났고 서버가 받음). 보냄 대기로만 끝난 업무는 `완료`에 세지 않는다(바닥줄
+ * `완료 n · 전송 대기 n`과 같은 셈, §17 R3-15): 전체에만 보이고 점선 도장 · 띠의 `전송 대기`가 그 수를 말한다.
+ */
+const COLLECT_FILTERS: Partial<Record<LedgerTabRow['filter_key'], (o: FxOrder, pending: boolean) => boolean>> = {
   all: () => true,
-  remaining: (o) => !collectDone(o),
-  collected: (o) => collectDone(o),
+  remaining: (o) => !collectFinished(o),
+  collected: (o, pending) => collectFinished(o) && !pending,
 };
+
+/**
+ * 차량이 할 수거 · 반납 도장의 알림(`1호 차량 수거 예정 · 22:00` · `매장 반납 처리`)에 그 차량의 연결 사실을 한 줄 더한다(work/impl-offline/plan.md
+ * §17 R3-23): 끊긴 · 전송 대기 · 조용한 차량은 이미 받았을 수 있다(`1호 차량 연결 끊김 · 21:40부터 · 수거 여부 미확인`). 카운터가 매장 반납을 누르기 바로
+ * 전에 본다. 배달 · 연결이 괜찮은 차량은 그대로. vehicleId를 모르면 도장의 차량 이름(delegatedTo)으로 찾는다.
+ */
+function withVanLink(ctx: ViewContext, cell: StampCell, vehicleId?: string): StampCell {
+  if (!cell.pressNote || !ctx.vehicleLinks?.length) return cell;
+  const rule = steps(ctx).get(cell.stepKey)?.rule_key;
+  if (rule !== 'qty_returned' && rule !== 'qty_collected' && rule !== 'task_received') return cell;
+  const reg = ctx.state.registry;
+  const van = vehicleId ?? reg.vehicles.find((v) => vehicleLabel(reg, v.id) === cell.delegatedTo)?.id;
+  const parts = linkWarningParts(ctx.state, linkOf(ctx.vehicleLinks, van));
+  return parts ? { ...cell, pressNote: { ...cell.pressNote, lines: [...cell.pressNote.lines, partsText(parts)] } } : cell;
+}
 
 /** 기사 기기에서만 찍는 도장(수거 · 입고): 카운터가 누르면 창 대신 한 줄('1호 차량 수거 예정')과 '접수증'. */
 const DRIVER_RULES: ReadonlySet<string> = new Set(['qty_collected', 'task_received']);
@@ -335,26 +442,40 @@ const DRIVER_RULES: ReadonlySet<string> = new Set(['qty_collected', 'task_receiv
  * 수거 목록의 도장 칸: 칸의 단계를 규칙으로 계산하고(수거 · 입고 · 반납 …), 전송 대기로만 받은 업무는 점선.
  * 카운터(포스 판)에서 기사가 찍을 도장을 누르면 창 대신 한 줄(누가 하는지)과 '접수증'이 뜬다.
  */
-function listStamp(ctx: ViewContext, o: FxOrder, column: LedgerColumnRow, counter: boolean, pending: boolean): StampCell {
+function listStamp(ctx: ViewContext, o: FxOrder, column: LedgerColumnRow, counter: boolean, pending: boolean, unconfirmed = false): StampCell {
   const all = steps(ctx);
   const cell = columnStamp(ctx.state, o, column.step_keys ?? [], all);
   const rule = all.get(cell.stepKey)?.rule_key;
   if (cell.state === 'done' && pending) {
-    return {
-      ...cell, pending: true,
-      pressNote: { lines: [(cell.at ? hm(Date.parse(cell.at)) + ' ' : '') + '처리 · 전송 대기'] },
-    };
+    return { ...cell, pending: true, pressNote: { lines: [pendingNote(cell.at, unconfirmed)] } };
   }
   if (counter && rule && DRIVER_RULES.has(rule) && (cell.state === 'todo' || cell.state === 'partial')) {
-    return {
+    return withVanLink(ctx, {
       ...cell,
       pressNote: {
         lines: [vehicleLabel(ctx.state.registry, o.giveBack.vehicleId) + ' 수거 예정'],
         action: { actionKey: 'open_slip', label: ACTION_LABELS.open_slip },
       },
-    };
+    }, o.giveBack.vehicleId);
   }
   return cell;
+}
+
+/**
+ * 매장에 반납된 팀의 남은 줄의 도장(§17 R3-22): 차량의 단계(수거 · 입고) 대신 매장의 반납 단계(설정의 qty_returned 규칙 단계)로 그린다. 반납 단계가
+ * 없는 설정이면 도장 없음(na).
+ */
+function storeReturnStamp(ctx: ViewContext, o: FxOrder, column: LedgerColumnRow): StampCell {
+  const all = steps(ctx);
+  const back = [...all.values()].find((st) => st.rule_key === 'qty_returned');
+  if (!back) return { stepKey: column.step_keys?.[0] ?? '', state: 'na' };
+  return columnStamp(ctx.state, o, [back.key], all);
+}
+
+/** 기기 자신이 받은 답의 줄 메모(§5-9). 없으면 undefined. */
+function deviceOutcomeNote(ctx: ViewContext, taskId: string): string | undefined {
+  const outcome = ctx.deviceOutcomes?.get(taskId);
+  return outcome ? DEVICE_OUTCOME_NOTES[outcome.key] : undefined;
 }
 
 /**
@@ -363,7 +484,7 @@ function listStamp(ctx: ViewContext, o: FxOrder, column: LedgerColumnRow, counte
  */
 function rowDisabled(o: FxOrder, position: { index: number; count: number } | null): DisabledAction[] {
   const out: DisabledAction[] = [];
-  if (collectDone(o)) out.push({ actionKey: 'not_collected', reason: '수거 완료' });
+  if (collectFinished(o)) out.push({ actionKey: 'not_collected', reason: '수거 완료' });
   if (!o.phone) out.push({ actionKey: 'call', reason: '전화번호 없음' });
   if (position === null) {
     for (const actionKey of ['move_up', 'move_down', 'move_top'] as const) out.push({ actionKey, reason: '긴급 고정 · 이동 불가' });
@@ -386,20 +507,32 @@ export function collectionList(ctx: ViewContext, params: ViewParams): LedgerView
   // 줄은 차량 업무(반납 일정)마다: 일정 변경으로 나뉜 팀은 두 줄(22:00 설천 주차장 · 22:00 솔마을 두솔동). 칸 · 도장 · 품목은
   // 그 업무의 몫만 비춘 접수(taskOrder)로 그린다.
   // 손님이 모두 매장에 가져와 차량이 받을 것이 없어진 업무는 빠진다(listTasks, data-model 4-18).
-  const tasks = date === ctx.state.businessDate ? listTasks(ctx.state, vehicleId, date) : [];
+  const listed = date === ctx.state.businessDate ? listTasks(ctx.state, vehicleId, date) : [];
+  // 기사 기기: 끊긴 채 수거했는데 그사이 손님이 매장에 모두 반납한 업무(매장 반납 완료, §5-9)는 목록에서 빠지지 않고 그 메모와 함께 남는다
+  // (기사가 자기 기록이 어떻게 되었는지 본다). 답을 기다리는 보냄 대기 항목의 업무도 남는다(보내는 동안 줄이 사라졌다 돌아오지 않게, §17 R3-17).
+  // 카운터 · 인쇄는 그대로 뺀다.
+  const waiting = (id: string) => pending.has(id) || (ctx.unconfirmedTasks?.has(id) ?? false);
+  const kept = counter || printed || date !== ctx.state.businessDate || (!ctx.deviceOutcomes?.size && pending.size === 0)
+    ? []
+    : routeTasks(ctx.state, vehicleId, date).filter((t) => (waiting(t.id) || ctx.deviceOutcomes?.get(t.id)?.key === 'returned') && !listed.some((x) => x.id === t.id));
+  const keptIds = new Set(kept.map((t) => t.id));
+  const tasks = [...listed, ...kept];
   const projected = new Map(tasks.map((t) => [t.id, taskOrder(t)] as const));
   const po = (t: FxTask) => projected.get(t.id) ?? taskOrder(t);
   const slotOf = (t: FxTask) => slotKey(po(t));
   const tabKey = v.tabs.some((t) => t.tab_key === params.tabKey) ? params.tabKey! : v.tabs[0]?.tab_key ?? 'all';
   const filterOf = (key: string) => COLLECT_FILTERS[v.tabs.find((t) => t.tab_key === key)?.filter_key ?? 'all'] ?? (() => true);
-  const shown = sortTasks(ctx.state, tasks.filter((t) => filterOf(tabKey)(po(t))));
+  const inTab = (key: string) => (t: FxTask) => filterOf(key)(po(t), waiting(t.id));
+  const shown = sortTasks(ctx.state, tasks.filter(inTab(tabKey)));
+  /** 끝났고 서버가 받은 업무(탭 · 묶음 · 바닥줄의 `완료`가 같은 셈, §17 R3-15). */
+  const finishedHere = (t: FxTask) => collectFinished(po(t)) && !waiting(t.id);
   const pinned = new Set(openPins(ctx.state).map((p) => pinTaskId(ctx.state, p)));
   // 묶음 제목은 반납 타임('22:00 반납'). 수거 실패 뒤 다시 갈 시각으로 옮긴 업무만 있는 묶음은 '23:50 재방문'이고,
   // 반납 타임 묶음에 섞인 재방문 업무는 줄에 '재방문'을 붙인다(묶음 제목과 겹쳐 쓰지 않음).
   const revisitSlots = new Set(tasks.filter((t) => tasks.filter((x) => slotOf(x) === slotOf(t)).every((x) => isRevisit(po(x)))).map(slotOf));
   const groups = [...new Map(shown.map((t) => [slotOf(t), t.promise.at] as const)).entries()].map(([key, at]) => {
     const inSlot = tasks.filter((t) => slotOf(t) === key);
-    return { key, label: hm(at) + ' ' + (revisitSlots.has(key) ? '재방문' : '반납'), shortLabel: hm(at), at: iso(at), done: inSlot.filter((t) => collectDone(po(t))).length, total: inSlot.length };
+    return { key, label: hm(at) + ' ' + (revisitSlots.has(key) ? '재방문' : '반납'), shortLabel: hm(at), at: iso(at), done: inSlot.filter(finishedHere).length, total: inSlot.length };
   });
   const rows: LedgerRow[] = shown.map((t, i) => {
     const o = po(t);
@@ -407,7 +540,14 @@ export function collectionList(ctx: ViewContext, params: ViewParams): LedgerView
     const done = collectDone(o);
     const cells: LedgerRow['cells'] = {};
     for (const column of v.columns) {
-      if (column.renderer_key === 'stamp') cells[column.column_key] = { renderer: 'stamp', stamp: listStamp(ctx, o, column, counter, pending.has(taskId)) };
+      if (column.renderer_key === 'stamp') {
+        const returnedHere = keptIds.has(taskId) && !waiting(taskId) && ctx.deviceOutcomes?.get(taskId)?.key === 'returned';
+        cells[column.column_key] = {
+          renderer: 'stamp',
+          // 매장에 반납된 팀의 남은 줄: 차량의 수거 도장이 아니라 매장의 반납 도장(차량이 받은 것처럼 보이지 않게, §17 R3-22).
+          stamp: returnedHere ? storeReturnStamp(ctx, o, column) : listStamp(ctx, o, column, counter, pending.has(taskId), ctx.unconfirmedTasks?.has(taskId) ?? false),
+        };
+      }
       // 수거 목록의 품목은 차량이 받을 것만: 이 업무 몫에서 내준 것 중 매장에 직접 돌아온 것을 뺀 수(받은 것 + 아직 받을 것). 손님이 일부를
       // 카운터에 가져왔으면 줄의 품목이 수거 창과 같은 것만 남는다(박준호 보드 · 헬멧 매장 반납 → `야간권 1매`).
       else if (column.renderer_key === 'items') cells[column.column_key] = { renderer: 'items', items: itemCounts(o.lines.filter((l) => l.returnable), (l) => l.issued - l.returned - (l.lost ?? 0)) };
@@ -423,6 +563,8 @@ export function collectionList(ctx: ViewContext, params: ViewParams): LedgerView
     const siblings = shown.filter((x) => slotOf(x) === slotOf(t) && !pinned.has(x.id));
     const position = pinned.has(taskId) ? null : { index: siblings.indexOf(t), count: siblings.length };
     const disabledActions = rowDisabled(o, position);
+    // 기기 자신이 받은 답의 줄 메모(기사 기기, §5-9)가 `재방문`보다 먼저다.
+    const outcomeNote = counter ? undefined : deviceOutcomeNote(ctx, taskId);
     return {
       id: taskId, orderId: t.order.id, taskId, groupKey: slotOf(t),
       subgroupLabel: placeLabel(ctx.state.registry, t.promise.placeId), subgroupShortLabel: placeShortLabel(ctx.state.registry, t.promise.placeId),
@@ -432,47 +574,35 @@ export function collectionList(ctx: ViewContext, params: ViewParams): LedgerView
       finished: false, cells,
       conditions: orderConditions(ctx.state, t.order),
       ...(disabledActions.length ? { disabledActions } : {}),
-      ...(!done && isRevisit(o) && !revisitSlots.has(slotOf(t)) ? { reviewNote: '재방문' } : {}),
+      ...(outcomeNote ? { reviewNote: outcomeNote } : !done && isRevisit(o) && !revisitSlots.has(slotOf(t)) ? { reviewNote: '재방문' } : {}),
     };
   });
-  const views = tasks.map(po);
   const van = vanStock(ctx, vehicleId, date);
   const onVanItems = van.items;
-  const doneCount = views.filter(collectDone).length;
   const pendingCount = tasks.filter((t) => pending.has(t.id)).length;
+  // 목록에 없는 보냄 대기 업무(옮겨져 사본에서 빠짐 · 차량 일정에서 빠짐)도 `전송 대기`에 센다(띠의 수와 같게, §17 R3-17).
+  const unlisted = [...pending].filter((id) => !tasks.some((t) => t.id === id) && !id.startsWith('deliver:')).length;
   const metrics: MetricValue[] = v.metrics.flatMap((m): MetricValue[] => {
     switch (m.metric_key) {
-      case 'collected_count': return [{ metricKey: m.metric_key, unit: 'count', value: doneCount - pendingCount }];
+      case 'collected_count': return [{ metricKey: m.metric_key, unit: 'count', value: tasks.filter(finishedHere).length }];
       // 전송 대기는 기사 기기의 것이다: 카운터(포스 판)에는 보낼 기록이 없어 숫자를 주지 않는다.
-      case 'pending_count': return counter ? [] : [{ metricKey: m.metric_key, unit: 'count', value: pendingCount }];
-      case 'remaining_count': return [{ metricKey: m.metric_key, unit: 'count', value: tasks.length - doneCount }];
+      case 'pending_count': return counter ? [] : [{ metricKey: m.metric_key, unit: 'count', value: ctx.pendingRecordCount ?? pendingCount + unlisted + (ctx.unplacedCount ?? 0) }];
+      case 'remaining_count': return [{ metricKey: m.metric_key, unit: 'count', value: tasks.filter((t) => !collectFinished(po(t))).length }];
       case 'vehicle_load': return [{ metricKey: m.metric_key, unit: 'items', items: onVanItems }];
       default: return [];
     }
   });
-  const inList = new Set(tasks.map((t) => t.id));
-  const pins: PinRow[] = openPins(ctx.state).flatMap((p) => {
-    const task = pinTask(ctx.state, p);
-    if (!task || !inList.has(task.id)) return [];
-    const o = task.order;
-    // 장소는 기사에게 가장 중요하다: 메모가 먼저 빠지고(시각은 화면이 그 다음에 뺀다), 장소는 짧은 이름('들국화')으로 줄었다가 마지막에 빠진다.
-    return [{
-      pinId: p.id, taskId: task.id, orderId: o.id, at: iso(p.at), ...(o.phone ? { phone: maskPhone(o.phone) } : {}), status: p.status,
-      parts: [
-        { text: placeLabel(ctx.state.registry, task.promise.placeId), short: placeShortLabel(ctx.state.registry, task.promise.placeId), drop: 1 },
-        { text: o.teamName + ' · ' + o.last4, drop: 0 },
-        ...(p.note ? [{ text: p.note, drop: 3 }] : []),
-      ],
-    }];
-  });
+  const pins = urgentRows(ctx, vehicleId);
   const vehicle = { id: vehicleId, label: vehicleLabel(ctx.state.registry, vehicleId) };
+  // 카운터의 수거 목록: 이 차량이 끊겼거나 기록을 보내지 못하면 제목 줄에 표시(work/impl-offline/plan.md §5-6, 줄은 늘지 않는다).
+  const linkParts = counter ? linkChipParts(ctx.state, linkOf(ctx.vehicleLinks, vehicleId)) : undefined;
   return {
     ...head(ctx),
     viewKey: 'collection_list',
     deviceClass,
     titleValues: { date, vehicle: vehicle.label },
     activeTabKey: tabKey,
-    tabCounts: Object.fromEntries(v.tabs.map((t) => [t.tab_key, tasks.filter((x) => filterOf(t.tab_key)(po(x))).length])),
+    tabCounts: Object.fromEntries(v.tabs.map((t) => [t.tab_key, tasks.filter(inTab(t.tab_key)).length])),
     groups,
     rows,
     metrics,
@@ -484,7 +614,30 @@ export function collectionList(ctx: ViewContext, params: ViewParams): LedgerView
     vehicleLoad: van.load,
     visitReasons: visitReasons(ctx.state.registry, 'collect'),
     ...(printed ? { printHead: printHead(ctx.state.registry) } : {}),
+    ...(linkParts ? { link: { vehicleId, parts: linkParts } } : {}),
   };
+}
+
+/** 같은 차량의 배달·수거 긴급을 하나의 목록으로 읽는다. 업무 완료·해제는 openPins가 판단한다. */
+export function urgentRows(ctx: ViewContext, vehicleId?: string): PinRow[] {
+  return openPins(ctx.state).flatMap((p) => {
+    const task = pinTask(ctx.state, p);
+    if (!task || (vehicleId && task.promise.vehicleId !== vehicleId) || !onBizDay(task.promise.at, bizDay(ctx.state))) return [];
+    const o = task.order;
+    const place = placeLabel(ctx.state.registry, task.promise.placeId);
+    return [{ pinId: p.id, taskId: task.id, orderId: o.id, at: iso(task.promise.at), status: p.status,
+      teamName: o.teamName, kindLabel: isDeliverTaskId(task.id) ? '장비 배달' : '반납 수거', placeLabel: place,
+      vehicleLabel: vehicleLabel(ctx.state.registry, task.promise.vehicleId), requestedAt: iso(p.requestedAt ?? p.at),
+      ...(p.pendingAck ? {pendingAck:true} : {}), ...(o.phone ? {phone:maskPhone(o.phone)} : {}),
+      parts: [{text:place, short:placeShortLabel(ctx.state.registry,task.promise.placeId),drop:1},{text:o.teamName + ' · ' + o.last4,drop:0}],
+    }];
+  });
+}
+
+/** 긴급 요청 창의 차량 연결 한 줄(없으면 빈 목록). */
+function pinLinkLine(ctx: ViewContext, vehicleId: string | undefined): string[] {
+  const parts = linkWarningParts(ctx.state, linkOf(ctx.vehicleLinks, vehicleId));
+  return parts ? [partsText(parts)] : [];
 }
 
 /** A4 인쇄 머리(매장 이름 · 매장 전화, features-1 E16). */
@@ -542,10 +695,11 @@ export function leftovers(state: ShopState, vehicleId: string): FxOrder[] {
 
 // ── 배달 목록(delivery_list: 기사 태블릿 · 휴대폰, ui 6-5) ─────────────────────────────
 
-const DELIVER_FILTERS: Partial<Record<LedgerTabRow['filter_key'], (o: FxOrder) => boolean>> = {
+/** 배달 목록의 탭: 보냄 대기로만 끝난 배달은 `완료`에 세지 않는다(수거 목록과 같은 셈, §17 R3-15). */
+const DELIVER_FILTERS: Partial<Record<LedgerTabRow['filter_key'], (o: FxOrder, pending: boolean) => boolean>> = {
   all: () => true,
   remaining: (o) => !deliverDone(o),
-  collected: (o) => deliverDone(o),
+  collected: (o, pending) => deliverDone(o) && !pending,
 };
 
 /**
@@ -565,11 +719,13 @@ export function deliveryList(ctx: ViewContext, params: ViewParams): LedgerViewRe
   const tasks = date === ctx.state.businessDate ? deliverTasks(ctx.state, vehicleId, date) : [];
   const tabKey = v.tabs.some((t) => t.tab_key === params.tabKey) ? params.tabKey! : v.tabs[0]?.tab_key ?? 'all';
   const filterOf = (key: string) => DELIVER_FILTERS[v.tabs.find((t) => t.tab_key === key)?.filter_key ?? 'all'] ?? (() => true);
-  const shown = tasks.filter((t) => filterOf(tabKey)(t.order));
+  const inTab = (key: string) => (t: FxDeliverTask) => filterOf(key)(t.order, pending.has(t.id));
+  const shown = tasks.filter(inTab(tabKey));
+  const deliveredHere = (t: FxDeliverTask) => deliverDone(t.order) && !pending.has(t.id);
   const groupOf = (t: FxDeliverTask) => 'd' + hm(t.promise.at).replace(':', '');
   const groups = [...new Map(shown.map((t) => [groupOf(t), t.promise.at] as const)).entries()].map(([key, at]) => {
     const inSlot = tasks.filter((t) => groupOf(t) === key);
-    return { key, label: hm(at) + ' ' + DELIVER_WORD, shortLabel: hm(at), at: iso(at), done: inSlot.filter((t) => deliverDone(t.order)).length, total: inSlot.length };
+    return { key, label: hm(at) + ' ' + DELIVER_WORD, shortLabel: hm(at), at: iso(at), done: inSlot.filter(deliveredHere).length, total: inSlot.length };
   });
   const rows: LedgerRow[] = shown.map((t, i) => {
     const o = t.order;
@@ -581,7 +737,7 @@ export function deliveryList(ctx: ViewContext, params: ViewParams): LedgerViewRe
         const queued = cell.state === 'done' && pending.has(t.id);
         cells[column.column_key] = {
           renderer: 'stamp',
-          stamp: queued ? { ...cell, pending: true, pressNote: { lines: [(cell.at ? hm(Date.parse(cell.at)) + ' ' : '') + '처리 · 전송 대기'] } } : cell,
+          stamp: queued ? { ...cell, pending: true, pressNote: { lines: [pendingNote(cell.at, ctx.unconfirmedTasks?.has(t.id) ?? false)] } } : cell,
         };
       } else {
         const cell = cellFor(ctx, o, column);
@@ -589,7 +745,9 @@ export function deliveryList(ctx: ViewContext, params: ViewParams): LedgerViewRe
       }
     }
     const late = deliverLateAt(ctx.state, o);
+    const outcomeNote = deviceOutcomeNote(ctx, t.id);
     return {
+      ...(outcomeNote ? { reviewNote: outcomeNote } : {}),
       id: t.id, orderId: o.id, taskId: t.id, groupKey: groupOf(t),
       subgroupLabel: placeLabel(ctx.state.registry, t.promise.placeId), subgroupShortLabel: placeShortLabel(ctx.state.registry, t.promise.placeId),
       rank: String(i).padStart(4, '0'), dueAt: iso(t.promise.at),
@@ -610,8 +768,8 @@ export function deliveryList(ctx: ViewContext, params: ViewParams): LedgerViewRe
     : { actionKey: 'stamp.issue', label: deliverName, alts: [deliverName], enabled: false };
   const metrics: MetricValue[] = v.metrics.flatMap((m): MetricValue[] => {
     switch (m.metric_key) {
-      case 'collected_count': return [{ metricKey: m.metric_key, unit: 'count', value: doneCount - pendingCount }];
-      case 'pending_count': return [{ metricKey: m.metric_key, unit: 'count', value: pendingCount }];
+      case 'collected_count': return [{ metricKey: m.metric_key, unit: 'count', value: tasks.filter(deliveredHere).length }];
+      case 'pending_count': return [{ metricKey: m.metric_key, unit: 'count', value: ctx.pendingRecordCount ?? pendingCount + (ctx.unplacedCount ?? 0) }];
       case 'remaining_count': return [{ metricKey: m.metric_key, unit: 'count', value: tasks.length - doneCount }];
       case 'vehicle_load': return [{ metricKey: m.metric_key, unit: 'items', items: van.items }];
       default: return [];
@@ -623,13 +781,14 @@ export function deliveryList(ctx: ViewContext, params: ViewParams): LedgerViewRe
     deviceClass,
     titleValues: { date, vehicle: vehicleLabel(ctx.state.registry, vehicleId) },
     activeTabKey: tabKey,
-    tabCounts: Object.fromEntries(v.tabs.map((t) => [t.tab_key, tasks.filter((x) => filterOf(t.tab_key)(x.order)).length])),
+    tabCounts: Object.fromEntries(v.tabs.map((t) => [t.tab_key, tasks.filter(inTab(t.tab_key)).length])),
     groups,
     rows,
     metrics,
     activeConditions: [],
     primaryFigure: van.figure,
     nextTask,
+    pins: urgentRows(ctx, vehicleId),
     vehicle: { id: vehicleId, label: vehicleLabel(ctx.state.registry, vehicleId) },
     vehicleLoad: van.load,
     visitReasons: visitReasons(ctx.state.registry, 'deliver'),
@@ -703,7 +862,10 @@ export function orderSlip(ctx: ViewContext, orderId: string, deviceClass: Device
   const today = ctx.state.businessDate;
   const all = steps(ctx);
   const slipSteps = v.columns.filter((c) => c.renderer_key === 'stamp').flatMap((c) => c.step_keys ?? []);
-  const { items, next } = checklist(ctx.state, o, all, slipSteps, bizDay(ctx.state));
+  const listed = checklist(ctx.state, o, all, slipSteps, bizDay(ctx.state));
+  const next = listed.next;
+  // 차량이 할 반납의 알림에 그 차량의 연결 사실(§17 R3-23).
+  const items = listed.items.map((it) => (it.stamp ? { ...it, stamp: withVanLink(ctx, it.stamp) } : it));
   const depositHeld = orderDepositHeld(ctx.state, o);
   const payer = findOrder(ctx.state, o.payerOrderId);
   const due = ownDue(o);
@@ -747,6 +909,7 @@ export function orderSlip(ctx: ViewContext, orderId: string, deviceClass: Device
   const lastGroup = paidGroups.at(-1);
   return {
     ...head(ctx),
+    counter: counterTeam(ctx, o),
     orderId: o.id,
     receiptNo: o.receiptNo,
     businessDate: today,
@@ -755,6 +918,7 @@ export function orderSlip(ctx: ViewContext, orderId: string, deviceClass: Device
     fields: [
       { key: 'date', label: '날짜', value: dateTitle(today), drop: 2 },
       { key: 'channel', label: '구분', value: CHANNEL_LABEL[o.channel], drop: 3 },
+      ...(o.customerPickup ? [{ key: 'customerPickup', label: '손님 픽업', value: '요청', drop: 0 }] : []),
       { key: 'name', label: '대표자', value: o.teamName, drop: 0 },
       // 적지 않은 연락처 · 인원(현장 접수는 대표자만 적기도 한다)은 빈 칸 대신 칸째 뺀다.
       // 가린 번호(화면 · 인쇄 모두): 온전한 번호는 옆 동작 `전화`의 창(phoneReveal, 열람 기록)으로만(2026-09-27 점검).
@@ -790,6 +954,17 @@ export function orderSlip(ctx: ViewContext, orderId: string, deviceClass: Device
     // 다른 팀 몫까지 받을 팀(결제 예정 팀이 딸림): 수납은 보통 수납 창이 아니라 일괄 수납 화면(V5, ui 6-7). 팀 수는 이 팀(제 몫이 있으면) 포함.
     ...(covered.length ? { groupPay: { teams: covered.length + (due > 0 ? 1 : 0), amount: due + others } } : {}),
     checklist: items,
+    customerPickupEditable: !viewer || viewer.permissions.includes('order.create'),
+    ...(!viewer || viewer.permissions.includes('task.pin') ? { urgentTasks: [
+      ...(isVehiclePickup(o) && pendingIssue(o) ? [{ id: deliverTaskId(o), order: o, promise: o.pickup }] : []),
+      ...orderTasks(o).filter((t) => anyIssued(taskOrder(t)) && !collectDone(taskOrder(t))),
+    ].filter((task) => task.promise.vehicleId && onBizDay(task.promise.at, bizDay(ctx.state))).map((task) => {
+      const pin = openPins(ctx.state).find((p) => pinTaskId(ctx.state, p) === task.id);
+      return { taskId: task.id, kindLabel: isDeliverTaskId(task.id) ? '장비 배달' : '반납 수거',
+        placeLabel: placeLabel(ctx.state.registry, task.promise.placeId), vehicleLabel: vehicleLabel(ctx.state.registry, task.promise.vehicleId), at: iso(task.promise.at),
+        connectionNotes: pinLinkLine(ctx, task.promise.vehicleId),
+        ...(pin ? { pin: { id: pin.id, status: pin.status } } : {}) };
+    }) } : {}),
     nextStep: next,
     activeConditions: orderConditions(ctx.state, o),
     ...(adjustments.length ? { adjustments } : {}),
@@ -1043,6 +1218,8 @@ export function confirmDraft(ctx: ViewContext, params: ConfirmDraftParams): Conf
         summary: [
           [hm(at) + ' ' + placeLabel(ctx.state.registry, task.promise.placeId), o.teamName, o.last4, ...(note ? [note] : [])].join(' · '),
           vehicleLabel(ctx.state.registry, task.promise.vehicleId) + ' 수거 목록 맨 위 고정 · 기사 알림',
+          // 그 차량이 끊겼거나 · 기록을 보내지 못하거나 · 조용하면 그 사실(기사가 이미 받았을 수 있다, work/impl-offline/plan.md O11).
+          ...pinLinkLine(ctx, task.promise.vehicleId),
         ],
         confirmLabel: label('pin'),
         command: { type: 'task.pin', payload: { taskId: task.id, ...(note ? { note } : {}) } },

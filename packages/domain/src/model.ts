@@ -153,6 +153,13 @@ export interface FxPayment {
   drawerId?: string;
   /** 품목으로 나눠 낸 몫(줄 · 수량 · 금액). 없으면 접수 전체. */
   lines?: { lineId: string; quantity: number; amount: number }[];
+  /**
+   * 서버가 적은 때(payments.recorded_at): 일어난 때(at)와 다를 때만 — 보냄 대기로 늦게 온 기사 수납(work/impl-offline/plan.md §5-2). 그 영업일을
+   * 마감한 뒤에 적혔으면 다음 열린 날에 올린다(postingDate).
+   */
+  recordedAt?: number;
+  /** 받은 기사 기기(현장 수납만, payments.device_id): 다른 기기의 같은 돈을 `중복 수납 의심`으로 본다(§5-7). */
+  deviceId?: string;
 }
 
 /** 결제 자리: 실제 돈 한 건(카드 한 번, 현금 한 번). 팀마다의 몫은 각 접수의 FxPayment(groupId). */
@@ -179,6 +186,8 @@ export interface FxDepositEntry {
   methodKey?: FxMethodKey;
   drawerId?: string;
   at: number;
+  /** 서버가 적은 때: 일어난 때와 다를 때만(보냄 대기로 늦게 온 현장 보증금, §5-2). */
+  recordedAt?: number;
 }
 
 /** 보증금 보관(팀 · 규칙마다 하나, 규칙 값 복사). 보관 금액 = 입금 + 몰수 취소 − 반환 − 미수 차감 − 몰수. 돈은 접수의 payments에 넣지 않는다. */
@@ -315,6 +324,8 @@ export interface FxClosing {
   counts: { drawerId: string; expected: number; counted: number; reasonKey?: string; reasonNote?: string }[];
   deferredTransferIds: string[];
   sheet?: FxClosingSheet;
+  /** 전송 대기 차량을 넘긴 관리자 승인의 사유(closings.override_reason, work/impl-offline/plan.md O12). */
+  overrideReason?: string;
 }
 
 /** 마감 때 얼린 화면 줄(읽기 모델 조각 그대로). */
@@ -389,6 +400,8 @@ export interface FxOrder {
   receiptNo: string;
   /** 대표자 이름(현장 대여는 대표자만 적는다). */
   teamName: string;
+  /** 접수 때 체크한 손님 픽업. 장비의 수량·일정을 바꾸지 않는다. */
+  customerPickup?: boolean;
   last4: string;
   /** 전화번호(견본 자료는 모두 010-0000-xxxx). */
   phone: string;
@@ -501,7 +514,13 @@ export interface FxPin {
   /** 고정한 차량 업무(일정이 나뉜 접수). 없으면 그 접수의 원래 일정 업무. */
   taskId?: string;
   at: number;
-  /** 매장이 적은 메모('조기 반납'). 없으면 긴급 줄에 메모 칸이 없다. */
+  /** 기존 pinned_at · recipient_vehicle_id · released_at을 읽는다. 옛 사본에는 없을 수 있다. */
+  requestedAt?: number;
+  /** 기기 사본의 겹쳐보기 전용. 서버가 확인을 받은 것으로 표시하지 않는다. */
+  pendingAck?: boolean;
+  vehicleId?: string;
+  releasedAt?: number;
+  /** 과거 메모를 읽기 위한 칸. 새 긴급 화면은 자유 입력을 받지 않는다. */
   note?: string;
   status: 'requested' | 'delivered' | 'acknowledged';
 }

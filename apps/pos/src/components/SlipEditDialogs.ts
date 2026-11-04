@@ -3,3 +3,7 @@
 export { DiscountDialog } from './DiscountDialog.tsx';
 export { CancelDialog } from './CancelDialog.tsx';
 export { ExchangeDialog } from './ExchangeDialog.tsx';
+export { PromiseDialog } from './PromiseDialog.tsx';
+export { ReturnDialog } from './ReturnDialog.tsx';
+export { CustomerPickupDialog } from './CustomerPickupDialog.tsx';
+export { UrgentRequestDialog } from './UrgentRequestDialog.tsx';

@@ -48,7 +48,9 @@ test('0004 applies on a file that holds 0001 ~ 0003 (backup first, then version 
   const first = migrate(file, 'shop', { migrationsDir: upTo3, appVersion: 'test' });
   first.db.prepare(`INSERT INTO shops (id, code, name, created_at, updated_at) VALUES ('S1', 's1', '시험 매장', ?, ?)`).run(T, T);
   first.db.close();
-  const second = migrate(file, 'shop', { appVersion: 'test' });
+  // 이 시험은 0004 자체의 적용만 검사한다. 뒤 마이그레이션은 fresh-file 시험에서 검사한다.
+  copyFileSync(join(MIGRATIONS, '0004_shop_features.sql'), join(upTo3, '0004_shop_features.sql'));
+  const second = migrate(file, 'shop', { migrationsDir: upTo3, appVersion: 'test' });
   try {
     assert.equal(second.status, 'migrated');
     assert.equal(second.version, 4);
@@ -57,7 +59,7 @@ test('0004 applies on a file that holds 0001 ~ 0003 (backup first, then version 
   } finally {
     second.db.close();
   }
-  const third = migrate(file, 'shop', { appVersion: 'test' });
+  const third = migrate(file, 'shop', { migrationsDir: upTo3, appVersion: 'test' });
   try {
     assert.equal(third.version, 4);
     assert.deepEqual(third.applied, []);

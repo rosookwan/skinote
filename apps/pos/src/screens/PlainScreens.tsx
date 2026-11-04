@@ -3,7 +3,8 @@
 // 체험 자료를 처음(12월 26일 15:40)으로 되돌린다. 기사 기기의 나가기(#/exit?from=driver)에서는 기사 기기의 연결을 끊고 이어
 // 보냄 대기(점선 도장)를 볼 수 있다.
 // 서버 모드(로그인한 세션, 계획 work/impl-server/plan.md 6-3): 처음 화면은 없고(기기의 첫 화면으로 간다), 나가기는 오늘 · 직원 이름과
-// `장부`(기사는 `수거 목록`) · `로그아웃`(묻는 창 `로그아웃`)이다. 체험 시계 · 초기화 · 연결 끊기 체험은 체험판에만 있다.
+// `장부`(기사는 `수거 목록`) · `로그아웃`(묻는 창 `로그아웃`)이다. 기사 기기에 보낼 기록이 남으면 로그아웃하지 않고 한 줄(`로그아웃 불가 · 전송
+// 대기 3`, work/impl-offline/plan.md O14 c). 체험 시계 · 초기화 · 연결 끊기 체험은 체험판에만 있다.
 import type { LedgerViewResult } from '@skinote/contract';
 import { formatDateTitle, formatTime, useUi } from '@skinote/ui';
 import { useEffect, useState } from 'react';
@@ -64,6 +65,8 @@ function SessionExit({ session, from }: { session: SessionControls; from: 'pos' 
   const today = useToday(driver);
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
+  /** 로그아웃하지 못한 까닭 한 줄(기사 기기에 보낼 기록이 남음: `로그아웃 불가 · 전송 대기 3`). */
+  const [refused, setRefused] = useState<string | null>(null);
   const who = session.info.staff.name + ' · ' + session.info.device.label;
   const line = [today ? formatDateTitle(today) : '', who].filter(Boolean).join(' · ');
   const toHome = () => {
@@ -77,13 +80,15 @@ function SessionExit({ session, from }: { session: SessionControls; from: 'pos' 
   const logout = () => {
     if (busy) return;
     setBusy(true);
-    void session.logout().finally(() => setBusy(false));
+    setRefused(null);
+    void session.logout().then((line) => { if (line) setRefused(line); }, () => {}).finally(() => setBusy(false));
   };
   return (
     <div className="pos-plain">
       <main className="pos-card">
         <h1 className="pos-card-title">{say('exitTitle')}</h1>
         <p className="pos-card-line">{line}</p>
+        {refused ? <p className="pos-card-note" role="status">{refused}</p> : null}
         <div className="pos-card-row">
           <button type="button" className="sn-primary" data-primary="true" onClick={toHome}>{driver ? say('toList') : say('toLedger')}</button>
           <button type="button" className="sn-button" onClick={() => setAsking(true)}>{say('logout')}</button>

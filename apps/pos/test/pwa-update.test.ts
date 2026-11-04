@@ -20,4 +20,9 @@ describe('safeToApply', () => {
   it('열린 창(대화 상자)이 있으면 언제든 바꾸지 않는다', () => {
     expect(safeToApply(loaded + 1_000, loaded, null, 5, true)).toBe(false);
   });
+  it('기사 기기가 보내는 중이면 바꾸지 않는다(보냄 대기가 비었는지는 보지 않는다, work/impl-offline/plan.md O6)', () => {
+    expect(safeToApply(loaded + 5_000, loaded, null, 14, false, true)).toBe(false);
+    expect(safeToApply(loaded + 10 * 60_000, loaded, loaded + 60_000, 5, false, true)).toBe(false);
+    expect(safeToApply(loaded + 10 * 60_000, loaded, loaded + 60_000, 5, false, false)).toBe(true);
+  });
 });

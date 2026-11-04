@@ -5,18 +5,21 @@
 // `더 보기`에 합친 수). 알림 종은 알림(늦은 반납 · 긴급 요청 · 방문 결과)만 보인다. 아직 없는 화면(사이즈 요청)은 한 문장 알림으로 알린다.
 // 서버에 붙은 카운터가 끊기면 매장 이름 자리에 회색 이름표 `연결 끊김 · 마지막 연결 16:48`(AppHeader connection, 계획 6-4).
 import { menuFor, type MenuEntryRow, type ReviewListView } from '@skinote/contract';
-import { AppHeader, Keypad, t, useDeviceProfile, type AppHeaderMore } from '@skinote/ui';
-import { useMemo, useState, type ReactNode } from 'react';
+import { AppHeader, ConnectionStrip, Icon, Keypad, TextFit, t, useDeviceProfile, type AppHeaderMore } from '@skinote/ui';
+import { lazy, Suspense, useMemo, useState, type ReactNode } from 'react';
 import { useClient, useConfig, useConnection, useLive } from '../app/client.tsx';
 import { go, screenRoute } from '../app/router.ts';
 import { say } from '../app/strings.ts';
 import { ChoiceSheet, NoticeDialog, type Choice } from './NoticeDialog.tsx';
+import { UrgentBar } from './UrgentBar.tsx';
+const UrgentListDialog = lazy(() => import('./UrgentListDialog.tsx').then(m => ({ default: m.UrgentListDialog })));
 
 export interface PosHeader {
   element: ReactNode;
   /** 머리줄의 판 · 창이 열려 있다(그동안 새로 고침을 미룬다). */
   active: boolean;
   overlays: ReactNode;
+  find: () => void;
 }
 
 type Sheet = { title: string; choices: Choice[]; onPick: (key: string) => void };
@@ -32,12 +35,14 @@ export type LeaveGuard = (proceed: () => void) => void;
  * from: 지금 화면. 장부에서 연 접수증은 '‹ 장부'가 뒤로 가기로 그 자리에 돌아간다. currentKey: 켜진 메뉴(관리 화면이면 'management').
  * guard: 떠나기 전에 묻는 곳(없으면 바로 간다).
  */
-export function usePosHeader(from: 'ledger' | 'slip' | 'collection' | 'other', currentKey?: string, guard?: LeaveGuard): PosHeader {
+export function usePosHeader(from: 'ledger' | 'slip' | 'collection' | 'other', currentKey?: string, guard?: LeaveGuard, options: { compact?: boolean; urgent?: boolean } = {}): PosHeader {
+  const { compact = false, urgent = true } = options;
   const client = useClient();
   const config = useConfig();
   const profile = useDeviceProfile();
   const connection = useConnection();
   const [finding, setFinding] = useState(false);
+  const [urgentOpen, setUrgentOpen] = useState(false);
   const [digits, setDigits] = useState('');
   const [note, setNote] = useState<string | undefined>(undefined);
   const [sheet, setSheet] = useState<Sheet | null>(null);
@@ -91,10 +96,24 @@ export function usePosHeader(from: 'ledger' | 'slip' | 'collection' | 'other', c
     });
   };
 
-  const alerts = reviews.data?.notices ?? [];
+  const alerts = (reviews.data?.notices ?? []).filter((n) => n.kindKey !== 'pin');
+  const pins = reviews.data?.pins ?? [];
   // 메뉴 `확인 필요`의 수(열린 확인 필요): 그 화면(screen_key review_list)을 여는 메뉴마다.
   const menuCounts = useMemo(() => Object.fromEntries(menu.filter((m) => m.screen_key === 'review_list').map((m) => [m.key, reviews.data?.count ?? 0])), [menu, reviews.data?.count]);
-  const element = (
+  const openFind = () => { setDigits(''); setNote(undefined); setFinding(true); };
+  const openAlerts = () => setMessage({ title: t('alerts'), lines: alerts.length ? alerts.map((a) => a.message) : [say('noAlerts')] });
+  const element = compact ? <>
+    <header className="pos-counter-header">
+      <button type="button" className="sn-button pos-counter-brand" onClick={() => leave(() => go({ name: 'ledger', date: null }))}>
+        <span className="pos-counter-mark" aria-hidden="true">⌁</span><span>{say('appName')}</span>
+      </button>
+      <TextFit className="pos-counter-shop" input={{ mode: 'parts', parts: [{ text: config?.shopName ?? '', drop: 1 }] }} />
+      <button type="button" className="sn-button" onClick={openAlerts}><Icon name="bell" /><span>{t('alerts')}{alerts.length ? ' ' + alerts.length : ''}</span></button>
+      <button type="button" className="sn-button" onClick={() => onMore({ entries: menu, includesExit: true })}><Icon name="more" /><span>{say('counterMenu')}</span>{reviews.data?.count ? <span className="sn-count">{reviews.data.count}</span> : null}</button>
+    </header>
+    <ConnectionStrip {...connection} />
+    {urgent ? <UrgentBar pins={pins} onOpen={() => setUrgentOpen(true)} /> : null}
+  </> : (<>
     <AppHeader
       shopName={config?.shopName ?? ''}
       menu={menu}
@@ -109,10 +128,12 @@ export function usePosHeader(from: 'ledger' | 'slip' | 'collection' | 'other', c
       onExit={() => leave(() => go({ name: 'exit' }))}
       connection={connection}
     />
-  );
+    {urgent ? <UrgentBar pins={pins} onOpen={() => setUrgentOpen(true)} /> : null}
+  </>);
 
   const overlays = (
     <>
+      {urgentOpen && reviews.data ? <Suspense fallback={null}><UrgentListDialog pins={pins} basis={reviews.data.basis} onClose={() => setUrgentOpen(false)} onOpen={(pin) => { setUrgentOpen(false); if (pin.orderId) openSlip(pin.orderId); }} /></Suspense> : null}
       {finding ? (
         <Keypad
           value={digits}
@@ -129,5 +150,5 @@ export function usePosHeader(from: 'ledger' | 'slip' | 'collection' | 'other', c
     </>
   );
 
-  return { element, overlays, active: finding || sheet !== null || message !== null };
+  return { element, overlays, find: openFind, active: finding || urgentOpen || sheet !== null || message !== null };
 }

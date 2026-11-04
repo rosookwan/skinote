@@ -2,6 +2,8 @@
 // 온전한 번호는 조회(phoneReveal)로만 받는다: 서버가 볼 때마다 개인정보 열람 기록(pii_access_log phone_reveal)을 남기고, 기사는 자기 차량 업무의
 // 접수만 본다. 거는 것은 기기 능력(runtime canDial): 기사 휴대폰 · 태블릿은 주 버튼 `전화 · 010-0000-0026`(`tel:` 링크), 카운터 PC는 번호와 `닫기`만.
 // 체험판은 가짜 번호로 걸지 않는다: 주 버튼이 막히고 한 줄 `체험판 · 전화 연결 없음`.
+// 기사 기기는 산에서 끊겨도 건다(work/impl-offline/plan.md O17): 연결되어 있으면 서버 먼저(열람 기록), 끊겼으면 기기 사본의 번호(오늘 열린 업무만 온전한
+// 번호). 앱이 뒤로 가면 창을 닫는다.
 import { ACTION_LABELS, type PhoneRevealView } from '@skinote/contract';
 import { Icon, PrimaryButton, TextFit, t, useUi } from '@skinote/ui';
 import { useEffect, useId, useRef, useState } from 'react';
@@ -33,8 +35,16 @@ export function CallDialog({ orderId, fallbackTitle, onClose }: CallDialogProps)
   }, [client, orderId]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+    // 앱이 뒤로 가면(다른 앱 · 전화 걸기 · 화면 끔) 창을 닫는다: 앱 전환 화면의 그림에 온전한 번호가 남지 않게(work/impl-offline/plan.md O17, 되는 만큼).
+    const onHide = () => { if (document.visibilityState === 'hidden') onClose(); };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    document.addEventListener('visibilitychange', onHide);
+    window.addEventListener('pagehide', onClose);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.removeEventListener('visibilitychange', onHide);
+      window.removeEventListener('pagehide', onClose);
+    };
   }, [onClose]);
 
   if (!view && !failed) return null;

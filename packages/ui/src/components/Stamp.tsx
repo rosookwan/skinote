@@ -106,8 +106,10 @@ export function StampMark({ cell, step, size = 'full', labelled = false }: { cel
 export function Stamp({ cell, step, size = 'full', onPress, labelled = false, className }: StampProps) {
   const { timezone } = useUi();
   const time = cell.state === 'done' && cell.at ? ' ' + formatTime(cell.at, timezone) : '';
-  const label = stampLabel(cell, step) + time + (cell.pending ? ' · ' + t('pendingStamp') : '') + (cell.processing ? ' · ' + t('processing') : '');
-  const classes = ['sn-stamp-cell', 'is-' + cell.state, className ?? ''].filter(Boolean).join(' ');
+  // 보냄 대기로만 끝난 도장은 `완료`가 아니다(§17 R3-29): `수거 15:40 · 전송 대기`.
+  const head = cell.pending && cell.state === 'done' ? cell.label ?? step?.label ?? '' : stampLabel(cell, step);
+  const label = head + time + (cell.pending ? ' · ' + t('pendingStamp') : '') + (cell.processing ? ' · ' + t('processing') : '');
+  const classes = ['sn-stamp-cell', 'is-' + cell.state, cell.pending ? 'is-pending' : '', className ?? ''].filter(Boolean).join(' ');
   if (cell.state === 'na' || !onPress) {
     return (
       <span className={classes} role="img" aria-label={label}>
